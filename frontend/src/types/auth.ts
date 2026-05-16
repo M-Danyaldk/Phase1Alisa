@@ -1,0 +1,56 @@
+export type SignupFormValues = {
+  full_name: string;
+  email: string;
+  password: string;
+  confirm_password: string;
+  grade_level: string;
+  date_of_birth: string;
+  parent_guardian_email: string;
+};
+
+export type SignupStartResponse = {
+  email: string;
+  demo_code: string;
+  expires_in_minutes: number;
+  message: string;
+};
+
+export type AuthUser = {
+  id: string;
+  email?: string | null;
+};
+
+export type AuthSessionResponse = {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  expires_in?: number | null;
+  token_type?: string | null;
+  user?: AuthUser | null;
+  message: string;
+};
+
+export type ProfileResponse = {
+  id: string;
+  full_name: string;
+  email: string;
+  role?: 'parent' | 'student' | 'admin';
+  grade_level?: string | null;
+  date_of_birth?: string | null;
+  parent_guardian_email?: string | null;
+  avatar_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ProfileUpdateValues = {
+  full_name: string;
+  grade_level: string;
+  date_of_birth: string;
+  parent_guardian_email: string;
+};
+
+export type PendingVerification = {
+  email: string;
+  demo_code: string;
+  expires_in_minutes: number;
+};

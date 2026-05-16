@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+*.db
+__pycache__/
+.venv/
+.venv*/
+venv/
+venv*/
+node_modules/
+dist/
+.env.local
+.DS_Store
+myenv/
+uploads/
+*.tsbuildinfo
+*.log
