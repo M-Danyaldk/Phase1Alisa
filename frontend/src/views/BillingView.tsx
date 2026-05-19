@@ -75,7 +75,6 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
         </div>
         <div className="billing-actions">
           <button className="secondary-button compact" onClick={() => changeStatus(record.child_id, 'trial')} disabled={savingChildId === record.child_id}>Start Trial</button>
-          <button className="secondary-button compact" onClick={() => changeStatus(record.child_id, 'active')} disabled={savingChildId === record.child_id}>Mark Active</button>
           <button className="secondary-button compact danger" onClick={() => changeStatus(record.child_id, 'inactive')} disabled={savingChildId === record.child_id}>Pause Access</button>
         </div>
       </div>)}
@@ -97,7 +96,7 @@ function labelForStatus(status: ChildAccessStatus): string {
   if (status === 'active') return 'Active';
   if (status === 'trial') return 'Trial';
   if (status === 'past_due') return 'Past Due';
-  return 'Inactive';
+  return 'Paused';
 }
 
 function periodText(record: ChildAccess): string {

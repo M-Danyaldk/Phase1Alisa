@@ -44,14 +44,14 @@ function detectSubjectFromMessage(message: string): Subject | null {
   return null;
 }
 
-export function LearningView({ student, accessToken = '', childId = '' }: { student: StudentProfile; accessToken?: string; childId?: string }) {
+export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', studentSession = false }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; studentSession?: boolean }) {
   const initialTutoringState: TutoringState = { active_problem: '', current_step: '', attempt_count: 0, answer_revealed: false, mode: 'solve', status: 'idle', memory_note: '' };
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
-  const [subject, setSubject] = useState<Subject>('Math');
-  const [topic, setTopic] = useState(subjectDefaults.Math);
+  const [subject, setSubject] = useState<Subject>(initialSubject);
+  const [topic, setTopic] = useState(subjectDefaults[initialSubject]);
   const [input, setInput] = useState('I need help understanding this.');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'msalisia', content: subjectGreeting(student.name, 'Math'), subject: 'Math' }
+    { role: 'msalisia', content: subjectGreeting(student.name, initialSubject), subject: initialSubject }
   ]);
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -60,7 +60,7 @@ export function LearningView({ student, accessToken = '', childId = '' }: { stud
   const [historySetupPending, setHistorySetupPending] = useState(false);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null);
-  const [lastAnnouncedSubject, setLastAnnouncedSubject] = useState<Subject>('Math');
+  const [lastAnnouncedSubject, setLastAnnouncedSubject] = useState<Subject>(initialSubject);
   const [tutoringState, setTutoringState] = useState<TutoringState>(initialTutoringState);
 
   function greetingFor(nextSubject: Subject) {
@@ -70,7 +70,7 @@ export function LearningView({ student, accessToken = '', childId = '' }: { stud
   async function refreshThreads() {
     if (!accessToken) return;
     try {
-      const records = childId ? await getChildChatThreads(accessToken, childId) : await getChatThreads(accessToken);
+      const records = childId ? await getChildChatThreads(accessToken, childId, undefined, studentSession) : await getChatThreads(accessToken);
       setThreads(records);
       setHistorySetupPending(false);
     } catch (error) {
@@ -88,9 +88,12 @@ export function LearningView({ student, accessToken = '', childId = '' }: { stud
     setThreadError('');
     setActiveThread(null);
     setTutoringState(initialTutoringState);
-    setMessages(greetingFor(subject));
+    setSubject(initialSubject);
+    setTopic(subjectDefaults[initialSubject]);
+    setLastAnnouncedSubject(initialSubject);
+    setMessages(greetingFor(initialSubject));
     refreshThreads();
-  }, [accessToken, childId]);
+  }, [accessToken, childId, initialSubject]);
 
   useEffect(() => {
     setTopic(prev => prev === subjectDefaults.Math || prev === subjectDefaults.ELA || prev === subjectDefaults.Writing ? subjectDefaults[subject] : prev);
@@ -128,7 +131,7 @@ export function LearningView({ student, accessToken = '', childId = '' }: { stud
     setHistoryLoading(true);
     setThreadError('');
     try {
-      const history = await getChatHistory(accessToken, thread.id, childId || undefined);
+      const history = await getChatHistory(accessToken, thread.id, childId || undefined, studentSession);
       const nextSubject = thread.subject;
       setActiveThread(thread);
       setLastAnnouncedSubject(nextSubject);
@@ -172,7 +175,7 @@ export function LearningView({ student, accessToken = '', childId = '' }: { stud
         thread = null;
         setActiveThread(null);
       }
-      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+      const headers = accessToken ? { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) } : undefined;
       const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, topic: detectedSubject ? subjectDefaults[activeSubject] : topic, message: input, history: messages.slice(-4), tutoring_state: tutoringState, thread_id: thread?.id }, headers);
       setTutoringState(data.tutoring_state);
       if (accessToken && data.history_saved === false) {

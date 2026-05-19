@@ -15,11 +15,13 @@ export function HomeView({
   student,
   accessToken = '',
   childId = '',
+  studentSession = false,
   setView,
 }: {
   student: StudentProfile;
   accessToken?: string;
   childId?: string;
+  studentSession?: boolean;
   setView: (v: View) => void;
 }) {
   const [dashboard, setDashboard] = useState<StudentDashboardData>(() => buildStudentDashboardMock(student));
@@ -35,14 +37,14 @@ export function HomeView({
     }
     setLoading(true);
     setError('');
-    getStudentDashboard(accessToken, childId)
+    getStudentDashboard(accessToken, childId, studentSession)
       .then(setDashboard)
       .catch(err => {
         setDashboard(fallback);
         setError(err instanceof Error ? err.message : 'Could not load student dashboard data.');
       })
       .finally(() => setLoading(false));
-  }, [accessToken, childId, student]);
+  }, [accessToken, childId, student, studentSession]);
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Student Dashboard" title={`${student.name}'s learning home`} desc="A focused view of progress, recent activity, achievements, and the next best learning actions." />

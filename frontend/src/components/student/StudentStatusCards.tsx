@@ -11,7 +11,7 @@ export function StudentStatusCards({
   weeklyFocus: string;
 }) {
   return <div className="card-grid three">
-    <InfoCard icon={<ClipboardCheck />} title="Assessment Status" desc={assessmentStatus} />
+    <InfoCard icon={<ClipboardCheck />} title="Latest Assessment" desc={assessmentStatus} />
     <InfoCard icon={<ImageUp />} title="Homework Status" desc={homeworkStatus} />
     <InfoCard icon={<Target />} title="Weekly Focus" desc={weeklyFocus} />
   </div>;

@@ -49,12 +49,8 @@ export function ReportsView({
   return <div className="page-stack">
     <SectionHeader eyebrow="Parent reports" title={`${childName}'s learning report`} desc="A clear, child-specific view of progress, strengths, areas needing review, and recommended next steps." />
 
-    <div className="report-toolbar">
-      <div>
-        <span>Viewing</span>
-        <strong>{childName}</strong>
+    <div className="report-toolbar report-filters">
         <small>{report?.grade_level || `Grade ${student.grade}`} · Last updated {formatDate(report?.last_updated_at) || 'not yet'}</small>
-      </div>
       <label>Period
         <select value={period} onChange={event => setPeriod(event.target.value as Period)}>
           <option value="week">This week</option>
@@ -101,7 +97,7 @@ export function ReportsView({
       <ReportList title="Recommended Next Steps" items={report?.recommended_next_steps || ['Run a quick assessment.', 'Practice one skill at a time with Ms Alisia.']} />
     </div>
 
-    <AssessmentSection assessments={report?.recent_assessments || []} onStartAssessment={() => setView?.('assessments')} />
+    <AssessmentSection assessments={report?.recent_assessments || []} />
     <SessionHistorySection sessions={report?.recent_tutor_sessions || []} />
 
     <div className="report-grid">
@@ -154,11 +150,11 @@ function SubjectProgressSection({ progress }: { progress: SubjectProgress[] }) {
   </div>;
 }
 
-function AssessmentSection({ assessments, onStartAssessment }: { assessments: AssessmentSummary[]; onStartAssessment: () => void }) {
+function AssessmentSection({ assessments }: { assessments: AssessmentSummary[] }) {
   return <div className="report-card">
     <div className="section-row">
       <h3>Assessment Results</h3>
-      <button className="secondary-button compact" onClick={onStartAssessment}>Start Assessment</button>
+      <span className="muted-note">Results only</span>
     </div>
     {assessments.length ? assessments.map(item => <div className="report-mini-card" key={`${item.subject}-${item.created_at}`}>
       <strong>{item.subject}: {item.estimated_level}</strong>

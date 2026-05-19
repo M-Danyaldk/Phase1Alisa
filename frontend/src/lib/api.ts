@@ -1,7 +1,5 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-export const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_ACCESS_TOKEN || '';
-
 async function errorMessage(response: Response): Promise<string> {
   const text = await response.text();
   if (!text) return 'Request failed';
@@ -41,6 +39,18 @@ export async function apiPatch<T>(path: string, payload: unknown, headers?: Reco
   return response.json();
 }
 
+export async function apiPut<T>(path: string, payload: unknown, headers?: Record<string, string>): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(headers || {}) },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response));
+  }
+  return response.json();
+}
+
 export async function apiDelete<T>(path: string, headers?: Record<string, string>): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'DELETE',
@@ -52,9 +62,10 @@ export async function apiDelete<T>(path: string, headers?: Record<string, string
   return response.json();
 }
 
-export async function apiPostForm<T>(path: string, payload: FormData): Promise<T> {
+export async function apiPostForm<T>(path: string, payload: FormData, headers?: Record<string, string>): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
+    headers,
     body: payload,
   });
   if (!response.ok) {

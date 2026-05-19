@@ -5,7 +5,7 @@ import { assessmentQuestions } from '../constants';
 import { apiPost } from '../lib/api';
 import { AssessmentResult, StudentProfile, Subject } from '../types';
 
-export function AssessmentView({ student, setStudent, childId = '' }: { student: StudentProfile; setStudent: (student: StudentProfile) => void; childId?: string }) {
+export function AssessmentView({ student, setStudent, childId = '', accessToken = '', studentSession = false }: { student: StudentProfile; setStudent: (student: StudentProfile) => void; childId?: string; accessToken?: string; studentSession?: boolean }) {
   const [subject, setSubject] = useState<Subject>('Math');
   const [answers, setAnswers] = useState<string[]>(['', '', '']);
   const [loading, setLoading] = useState(false);
@@ -15,7 +15,7 @@ export function AssessmentView({ student, setStudent, childId = '' }: { student:
     setLoading(true);
     setResult(null);
     try {
-      const data = await apiPost<AssessmentResult>('/api/assessments/evaluate', { student, child_id: childId || undefined, subject, grade: student.grade, answers, questions: assessmentQuestions[subject] });
+      const data = await apiPost<AssessmentResult>('/api/assessments/evaluate', { student, child_id: childId || undefined, subject, grade: student.grade, answers, questions: assessmentQuestions[subject] }, { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) });
       setResult(data);
       const updated = { ...student };
       if (subject === 'Math') updated.math_level = data.estimated_level;

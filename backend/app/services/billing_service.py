@@ -25,6 +25,8 @@ class BillingService:
         return records
 
     async def update_child_access(self, parent_id: str, child_id: str, payload: ChildAccessUpdateRequest) -> dict:
+        if payload.access_status in {'active', 'past_due'}:
+            raise HTTPException(status_code=403, detail='This billing action is handled by admin billing tools.')
         child = await self._child(parent_id, child_id)
         now = datetime.now(UTC)
         update = {

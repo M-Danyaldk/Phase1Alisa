@@ -31,6 +31,12 @@ function authHeaders(accessToken: string): Record<string, string> {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
+function childModeHeaders(accessToken: string, studentSession = false): Record<string, string> {
+  const headers = authHeaders(accessToken);
+  if (!studentSession) headers['x-access-mode'] = 'child';
+  return headers;
+}
+
 export async function getChatThreads(accessToken: string, subject?: Subject): Promise<ChatThread[]> {
   const params = new URLSearchParams();
   if (subject) params.set('subject', subject);
@@ -39,20 +45,20 @@ export async function getChatThreads(accessToken: string, subject?: Subject): Pr
   return data.threads;
 }
 
-export async function getChildChatThreads(accessToken: string, childId: string, subject?: Subject): Promise<ChatThread[]> {
+export async function getChildChatThreads(accessToken: string, childId: string, subject?: Subject, studentSession = false): Promise<ChatThread[]> {
   const params = new URLSearchParams({ child_id: childId });
   if (subject) params.set('subject', subject);
-  const data = await apiGet<{ threads: ChatThread[] }>(`/chat/threads?${params.toString()}`, authHeaders(accessToken));
+  const data = await apiGet<{ threads: ChatThread[] }>(`/chat/threads?${params.toString()}`, childModeHeaders(accessToken, studentSession));
   return data.threads;
 }
 
-export async function createChatThread(accessToken: string, payload: { subject: Subject; topic: string; title?: string; child_id?: string }): Promise<ChatThread> {
-  return apiPost<ChatThread>('/chat/threads', payload, authHeaders(accessToken));
+export async function createChatThread(accessToken: string, payload: { subject: Subject; topic: string; title?: string; child_id?: string }, studentSession = false): Promise<ChatThread> {
+  return apiPost<ChatThread>('/chat/threads', payload, childModeHeaders(accessToken, studentSession));
 }
 
-export async function getChatHistory(accessToken: string, threadId: string, childId?: string): Promise<StoredChatMessage[]> {
+export async function getChatHistory(accessToken: string, threadId: string, childId?: string, studentSession = false): Promise<StoredChatMessage[]> {
   const params = new URLSearchParams({ thread_id: threadId });
   if (childId) params.set('child_id', childId);
-  const data = await apiGet<{ messages: StoredChatMessage[] }>(`/chat/history?${params.toString()}`, authHeaders(accessToken));
+  const data = await apiGet<{ messages: StoredChatMessage[] }>(`/chat/history?${params.toString()}`, childId ? childModeHeaders(accessToken, studentSession) : authHeaders(accessToken));
   return data.messages;
 }

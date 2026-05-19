@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../../types/childProfile';
 
 const subjects: ChildSubject[] = ['Math', 'ELA', 'Writing'];
@@ -45,12 +45,14 @@ export function ChildProfileForm({
   saving,
   onSubmit,
   onCancel,
+  extraFields,
 }: {
   child?: ChildProfile | null;
   submitLabel: string;
   saving: boolean;
   onSubmit: (values: ChildProfileFormValues) => Promise<void> | void;
   onCancel?: () => void;
+  extraFields?: ReactNode;
 }) {
   const [values, setValues] = useState<ChildProfileFormValues>(() => valuesFromChild(child));
   const [error, setError] = useState('');
@@ -82,7 +84,7 @@ export function ChildProfileForm({
   }
 
   return <div className="child-form">
-    <label>Child name or nickname
+    <label>Student Full Name
       <input value={values.name} onChange={event => setValues(prev => ({ ...prev, name: event.target.value }))} />
     </label>
     <label>Grade level
@@ -118,6 +120,7 @@ export function ChildProfileForm({
       <input type="checkbox" checked={values.parental_consent_accepted} onChange={event => setValues(prev => ({ ...prev, parental_consent_accepted: event.target.checked }))} />
       <span>I confirm I am this child&apos;s parent or guardian and consent to creating this learning profile.</span>
     </label>}
+    {extraFields}
     {error && <p className="error-note">{error}</p>}
     <div className="form-actions">
       {onCancel && <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>}

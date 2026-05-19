@@ -35,12 +35,14 @@ type StudentDashboardResponse = {
   recommended_next_actions: string[];
 };
 
-function authHeaders(accessToken: string): Record<string, string> {
-  return { Authorization: `Bearer ${accessToken}` };
+function authHeaders(accessToken: string, studentSession = false): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+  if (!studentSession) headers['x-access-mode'] = 'child';
+  return headers;
 }
 
-export async function getStudentDashboard(accessToken: string, childId: string): Promise<StudentDashboardData> {
-  const data = await apiGet<StudentDashboardResponse>(`/children/${childId}/dashboard`, authHeaders(accessToken));
+export async function getStudentDashboard(accessToken: string, childId: string, studentSession = false): Promise<StudentDashboardData> {
+  const data = await apiGet<StudentDashboardResponse>(`/children/${childId}/dashboard`, authHeaders(accessToken, studentSession));
   return {
     assessmentStatus: data.assessment_status,
     homeworkStatus: data.homework_status,

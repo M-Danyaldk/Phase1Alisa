@@ -2,32 +2,37 @@ import { useEffect, useState } from 'react';
 import { Brain, ShieldCheck, Users } from 'lucide-react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
-import { ADMIN_TOKEN, apiGet } from '../lib/api';
+import { apiGet } from '../lib/api';
 import { AdminOverview } from '../types';
+
+const ADMIN_SESSION_KEY = 'msalisia-admin-access-token';
 
 export function AdminView() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState(() => sessionStorage.getItem(ADMIN_SESSION_KEY) || '');
+  const [tokenInput, setTokenInput] = useState('');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
 
     async function load() {
-      if (!ADMIN_TOKEN) {
-        setError('Admin access token is missing in the frontend environment.');
-        setLoading(false);
-        return;
-      }
+      setLoading(true);
+      setError('');
       try {
-        const data = await apiGet<AdminOverview>('/api/admin/overview', { 'x-admin-token': ADMIN_TOKEN });
+        const data = await apiGet<AdminOverview>('/api/admin/overview', { 'x-admin-token': token });
         if (!cancelled) {
           setOverview(data);
           setError('');
         }
       } catch (fetchError) {
         if (!cancelled) {
-          setError(fetchError instanceof Error ? fetchError.message : 'Could not load admin overview.');
+          setOverview(null);
+          setError('Admin access is separate and protected. The access code was not accepted.');
+          sessionStorage.removeItem(ADMIN_SESSION_KEY);
+          setToken('');
         }
       } finally {
         if (!cancelled) {
@@ -38,7 +43,40 @@ export function AdminView() {
 
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [token]);
+
+  function submitToken() {
+    const nextToken = tokenInput.trim();
+    if (!nextToken) {
+      setError('Enter the admin access code to continue.');
+      return;
+    }
+    sessionStorage.setItem(ADMIN_SESSION_KEY, nextToken);
+    setToken(nextToken);
+    setTokenInput('');
+  }
+
+  function clearToken() {
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    setToken('');
+    setOverview(null);
+    setError('');
+  }
+
+  if (!token) {
+    return <div className="page-stack narrow">
+      <SectionHeader eyebrow="Admin Access" title="Protected back office" desc="Admin tools are separate from parent and student areas." />
+      <section className="form-card admin-access-card">
+        <h3>Enter admin access code</h3>
+        <p className="muted-copy">Admin access is separate and protected.</p>
+        <label>Admin access code
+          <input type="password" value={tokenInput} onChange={event => setTokenInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submitToken(); }} />
+        </label>
+        {error && <p className="error-note">{error}</p>}
+        <button className="primary-button" onClick={submitToken}>Open Admin</button>
+      </section>
+    </div>;
+  }
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Admin visibility" title="Simple monitoring for non-technical operators" desc="Admin screens show the important information without requiring technical knowledge." />
@@ -69,5 +107,6 @@ export function AdminView() {
       </div>
     </div>}
     <div className="report-card"><h3>Launch priorities</h3><ul><li>Assessment engine stability</li><li>Course-aware LLM responses</li><li>Simple parent/student UI</li><li>Basic admin safety and usage visibility</li></ul></div>
+    <button className="secondary-button" onClick={clearToken}>Lock Admin</button>
   </div>;
 }

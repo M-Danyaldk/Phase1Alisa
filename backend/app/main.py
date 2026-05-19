@@ -15,10 +15,11 @@ from .routes.billing import router as billing_router
 from .routes.child_profiles import router as child_profiles_router
 from .routes.child_reports import router as child_reports_router
 from .routes.student_dashboard import router as student_dashboard_router
+from .routes.student_auth import router as student_auth_router
 from .schemas.chat_history import ChatMessageCreateRequest, ChatThreadCreateRequest
+from .services.access_control import require_child_access
 from .services.assessment_service import evaluate_assessment
 from .services.app_data_service import AppDataService
-from .services.auth_user import authenticated_user, bearer_token
 from .services.chat_store import ChatStore
 from .services.llm.router import LLMRouter
 from .services.tutor_answer_checker import TutorAnswerChecker
@@ -35,6 +36,7 @@ app.include_router(billing_router)
 app.include_router(child_profiles_router)
 app.include_router(child_reports_router)
 app.include_router(student_dashboard_router)
+app.include_router(student_auth_router)
 app.include_router(chat_history_router)
 
 @app.on_event('startup')
@@ -65,41 +67,39 @@ async def list_students() -> dict:
 
 
 @app.post('/api/chat', response_model=ChatResponse)
-async def chat(payload: ChatRequest, authorization: str = Header(default='')) -> ChatResponse:
+async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
+    child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
     chat_store: ChatStore | None = None
-    chat_user_id: str | None = None
+    chat_user_id: str | None = child_user['id']
     chat_thread_id: str | None = payload.thread_id
     history_saved = False
     history_error: str | None = None
-    if authorization:
-        try:
-            user = await authenticated_user(bearer_token(authorization))
-            chat_user_id = user['id']
-            chat_store = ChatStore()
-            if not chat_thread_id:
-                thread = await chat_store.create_thread(chat_user_id, ChatThreadCreateRequest(
-                    child_id=payload.child_id,
-                    subject=payload.subject,
-                    topic=payload.topic,
-                    title=payload.message.strip()[:48] or None,
-                ))
-                chat_thread_id = thread['id']
-            if chat_thread_id:
-                await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
-                    thread_id=chat_thread_id,
-                    child_id=payload.child_id,
-                    role='student',
-                    content=payload.message,
-                    subject=payload.subject,
-                    topic=payload.topic,
-                    tutoring_state=payload.tutoring_state.model_dump(),
-                ))
-        except Exception as exc:
-            logger.warning('Chat history setup failed before LLM response: %s', exc)
-            chat_store = None
-            chat_user_id = None
-            chat_thread_id = payload.thread_id
-            history_error = str(exc)
+    try:
+        chat_store = ChatStore()
+        if not chat_thread_id:
+            thread = await chat_store.create_thread(chat_user_id, ChatThreadCreateRequest(
+                child_id=payload.child_id,
+                subject=payload.subject,
+                topic=payload.topic,
+                title=payload.message.strip()[:48] or None,
+            ))
+            chat_thread_id = thread['id']
+        if chat_thread_id:
+            await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
+                thread_id=chat_thread_id,
+                child_id=payload.child_id,
+                role='student',
+                content=payload.message,
+                subject=payload.subject,
+                topic=payload.topic,
+                tutoring_state=payload.tutoring_state.model_dump(),
+            ))
+    except Exception as exc:
+        logger.warning('Chat history setup failed before LLM response: %s', exc)
+        chat_store = None
+        chat_user_id = None
+        chat_thread_id = payload.thread_id
+        history_error = str(exc)
 
     router = LLMRouter()
     directives, active_task, current_step, tutoring_state = build_chat_directives(payload.message, payload.history, payload.tutoring_state)
@@ -186,17 +186,22 @@ async def chat(payload: ChatRequest, authorization: str = Header(default='')) ->
 
 
 @app.post('/api/assessments/evaluate', response_model=AssessmentResult)
-async def assessments(payload: AssessmentRequest) -> AssessmentResult:
+async def assessments(payload: AssessmentRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> AssessmentResult:
+    await require_child_access(authorization, payload.child_id, x_access_mode)
     return await evaluate_assessment(payload)
 
 
 @app.post('/api/homework/lightweight-feedback', response_model=HomeworkFeedbackResponse)
 async def homework_feedback(
     student_json: str = Form(...),
+    child_id: str = Form(...),
     subject: str = Form(...),
     note: str = Form(''),
     file: UploadFile = File(...),
+    authorization: str = Header(default=''),
+    x_access_mode: str = Header(default=''),
 ) -> HomeworkFeedbackResponse:
+    await require_child_access(authorization, child_id, x_access_mode)
     try:
         student = StudentProfile.model_validate_json(student_json)
     except Exception as exc:
@@ -225,7 +230,7 @@ async def homework_feedback(
 @app.get('/api/admin/overview')
 async def admin_overview(x_admin_token: str = Header(default='')) -> dict:
     if not settings.admin_token_valid(x_admin_token):
-        raise HTTPException(status_code=403, detail='Invalid admin access token')
+        raise HTTPException(status_code=403, detail='You do not have permission to view this page.')
     app_data = AppDataService()
     return {
         'students': await app_data.list_students(limit=10),

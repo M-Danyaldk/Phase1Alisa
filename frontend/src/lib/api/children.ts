@@ -28,3 +28,7 @@ export async function updateChild(accessToken: string, childId: string, values: 
 export async function deactivateChild(accessToken: string, childId: string): Promise<ChildProfile> {
   return apiDelete<ChildProfile>(`/children/${childId}`, authHeaders(accessToken));
 }
+
+export async function reactivateChild(accessToken: string, childId: string): Promise<ChildProfile> {
+  return apiPost<ChildProfile>(`/children/${childId}/reactivate`, {}, authHeaders(accessToken));
+}

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Header, Query
 
 from ..schemas.child_report import ChildReportResponse, WeeklyReportEmailPreview
-from ..services.auth_user import authenticated_user, bearer_token
+from ..services.access_control import require_parent_access
 from ..services.child_report_service import ChildReportService
 
 router = APIRouter(prefix='/children', tags=['child reports'])
@@ -13,12 +13,13 @@ async def child_report(
     period: str = Query(default='all', pattern='^(week|month|all)$'),
     subject: str = Query(default='All'),
     authorization: str = Header(default=''),
+    x_access_mode: str = Header(default=''),
 ) -> ChildReportResponse:
-    user = await authenticated_user(bearer_token(authorization))
+    user = await require_parent_access(authorization, x_access_mode)
     return await ChildReportService().report_for_child(user['id'], child_id, period=period, subject=subject)
 
 
 @router.get('/{child_id}/weekly-email-preview', response_model=WeeklyReportEmailPreview)
-async def weekly_email_preview(child_id: str, authorization: str = Header(default='')) -> WeeklyReportEmailPreview:
-    user = await authenticated_user(bearer_token(authorization))
+async def weekly_email_preview(child_id: str, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> WeeklyReportEmailPreview:
+    user = await require_parent_access(authorization, x_access_mode)
     return await ChildReportService().weekly_email_preview(user['id'], child_id)

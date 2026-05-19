@@ -15,7 +15,7 @@ class ChildProfileService:
         try:
             return await self.supabase.select(
                 'child_profiles',
-                f'parent_id=eq.{quote(parent_id)}&status=neq.inactive&order=created_at.asc',
+                f'parent_id=eq.{quote(parent_id)}&order=created_at.asc',
             )
         except SupabaseClientError as exc:
             if self._missing_child_profiles_table(exc):
@@ -84,6 +84,24 @@ class ChildProfileService:
                 'parent_id': f'eq.{parent_id}',
             }, {
                 'status': 'inactive',
+                'updated_at': datetime.now(UTC).isoformat(),
+            })
+        except SupabaseClientError as exc:
+            if self._missing_child_profiles_table(exc):
+                raise HTTPException(status_code=503, detail='Child profiles are not set up yet. Please run the Supabase migration first.') from exc
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not records:
+            raise HTTPException(status_code=404, detail='Child profile not found.')
+        return records[0]
+
+    async def reactivate_child(self, parent_id: str, child_id: str) -> dict:
+        await self._get_child(parent_id, child_id)
+        try:
+            records = await self.supabase.update('child_profiles', {
+                'id': f'eq.{child_id}',
+                'parent_id': f'eq.{parent_id}',
+            }, {
+                'status': 'active',
                 'updated_at': datetime.now(UTC).isoformat(),
             })
         except SupabaseClientError as exc:

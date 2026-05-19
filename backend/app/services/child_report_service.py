@@ -102,7 +102,7 @@ class ChildReportService:
         try:
             records = await self.supabase.select(
                 'child_profiles',
-                f'id=eq.{quote(child_id)}&parent_id=eq.{quote(parent_id)}&status=neq.inactive&limit=1',
+                f'id=eq.{quote(child_id)}&parent_id=eq.{quote(parent_id)}&limit=1',
             )
         except SupabaseClientError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
