@@ -60,9 +60,10 @@ export function ProfileView({
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const isAdminProfile = profile.role === 'admin' || profile.role === 'super_admin';
 
   async function save() {
-    const validationError = validate(values, profile.email);
+    const validationError = isAdminProfile ? (!values.full_name.trim() ? 'Full name is required.' : '') : validate(values, profile.email);
     if (validationError) {
       setError(validationError);
       setSuccess('');
@@ -100,7 +101,7 @@ export function ProfileView({
   }
 
   return <div className="page-stack narrow">
-    <SectionHeader eyebrow="Profile" title="Your learning profile" desc="Review account details and keep learner information up to date." />
+    <SectionHeader eyebrow="Profile" title={isAdminProfile ? 'Admin account' : 'Your learning profile'} desc={isAdminProfile ? 'Review admin account details and profile photo.' : 'Review account details and keep learner information up to date.'} />
     <div className="form-card profile-form">
       <div className="profile-header-row">
         {profile.avatar_url ? <img className="profile-avatar-image" src={profile.avatar_url} alt={`${profile.full_name} profile`} /> : <div className="avatar">{profile.full_name.slice(0, 1).toUpperCase()}</div>}
@@ -115,9 +116,12 @@ export function ProfileView({
       </div>
       <label>Full Name<input value={values.full_name} onChange={e => setValues({ ...values, full_name: e.target.value })} /></label>
       <label>Email Address<input value={profile.email} disabled /></label>
-      <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option><option>Grade 3</option><option>Grade 4</option><option>Grade 5</option><option>Grade 6</option></select></label>
-      <label>Date of Birth<input type="date" value={values.date_of_birth} onChange={e => setValues({ ...values, date_of_birth: e.target.value })} /></label>
-      <label>Parent/Guardian Email<input type="email" value={values.parent_guardian_email} onChange={e => setValues({ ...values, parent_guardian_email: e.target.value })} /></label>
+      {isAdminProfile && <label>Admin Role<input value={profile.role || 'admin'} disabled /></label>}
+      {!isAdminProfile && <>
+        <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option><option>Grade 3</option><option>Grade 4</option><option>Grade 5</option><option>Grade 6</option></select></label>
+        <label>Date of Birth<input type="date" value={values.date_of_birth} onChange={e => setValues({ ...values, date_of_birth: e.target.value })} /></label>
+        <label>Parent/Guardian Email<input type="email" value={values.parent_guardian_email} onChange={e => setValues({ ...values, parent_guardian_email: e.target.value })} /></label>
+      </>}
       <div className="readonly-grid">
         <div><span>Created At</span><strong>{formatDateTime(profile.created_at)}</strong></div>
         <div><span>Updated At</span><strong>{formatDateTime(profile.updated_at)}</strong></div>

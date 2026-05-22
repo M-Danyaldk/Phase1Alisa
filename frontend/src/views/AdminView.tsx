@@ -4,7 +4,7 @@ import { InfoCard } from '../components/InfoCard';
 import { NavItem } from '../components/NavItem';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiGet, apiPatch, apiPost } from '../lib/api';
-import { AdminAuditLog, AdminOverview, AdminSetting, AdminSubscription, AdminUser } from '../types';
+import { AdminAuditLog, AdminOverview, AdminSetting, AdminSubscription, AdminUser, LLMEvent, StoredAssessmentResult } from '../types';
 import { ProfileResponse } from '../types/auth';
 
 type AdminSection = 'dashboard' | 'users' | 'subscriptions' | 'reports' | 'settings' | 'admins';
@@ -25,6 +25,8 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [subscriptions, setSubscriptions] = useState<AdminSubscription[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [reportAssessments, setReportAssessments] = useState<StoredAssessmentResult[]>([]);
+  const [reportLlmEvents, setReportLlmEvents] = useState<LLMEvent[]>([]);
   const [settings, setSettings] = useState<AdminSetting[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,8 +54,12 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
           if (!cancelled) setSubscriptions(data.subscriptions);
         }
         if (section === 'reports') {
-          const data = await apiGet<{ audit_logs: AdminAuditLog[] }>('/api/admin/reports', authHeaders);
-          if (!cancelled) setAuditLogs(data.audit_logs);
+          const data = await apiGet<{ assessments: StoredAssessmentResult[]; llm_events: LLMEvent[]; audit_logs: AdminAuditLog[] }>('/api/admin/reports', authHeaders);
+          if (!cancelled) {
+            setReportAssessments(data.assessments);
+            setReportLlmEvents(data.llm_events);
+            setAuditLogs(data.audit_logs);
+          }
         }
         if (section === 'settings') {
           const data = await apiGet<{ settings: AdminSetting[] }>('/api/admin/settings', authHeaders);
@@ -132,9 +138,9 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
       {error && <p className="error-note app-error">{error}</p>}
       {loading && <p className="muted-copy">Loading admin data...</p>}
       {section === 'dashboard' && overview && <Dashboard overview={overview} />}
-      {section === 'users' && <UsersSection users={users} search={search} onSearch={setSearch} onStatus={updateUserStatus} />}
+      {section === 'users' && <UsersSection users={users} currentUserId={profile.id} search={search} onSearch={setSearch} onStatus={updateUserStatus} />}
       {section === 'subscriptions' && <SubscriptionsSection subscriptions={subscriptions} onStatus={updateSubscription} />}
-      {section === 'reports' && <AuditLogSection logs={auditLogs} />}
+      {section === 'reports' && <ReportsSection assessments={reportAssessments} llmEvents={reportLlmEvents} logs={auditLogs} />}
       {section === 'settings' && <SettingsSection settings={settings} />}
       {section === 'admins' && <AdminsSection users={adminUsers} inviteEmail={inviteEmail} inviteName={inviteName} invitePassword={invitePassword} onEmail={setInviteEmail} onName={setInviteName} onPassword={setInvitePassword} onInvite={inviteAdmin} />}
     </main>
@@ -156,12 +162,15 @@ function Dashboard({ overview }: { overview: AdminOverview }) {
   </div>;
 }
 
-function UsersSection({ users, search, onSearch, onStatus }: { users: AdminUser[]; search: string; onSearch: (value: string) => void; onStatus: (id: string, status: AdminUser['status']) => void }) {
+function UsersSection({ users, currentUserId, search, onSearch, onStatus }: { users: AdminUser[]; currentUserId: string; search: string; onSearch: (value: string) => void; onStatus: (id: string, status: AdminUser['status']) => void }) {
   return <div className="page-stack">
     <label>Search users<input value={search} onChange={event => onSearch(event.target.value)} placeholder="Name or email" /></label>
     <div className="report-card">
       <h3>User accounts</h3>
-      <ul>{users.map(user => <li key={user.id}>{user.full_name} - {user.email} - {user.role} - {user.status} <button className="secondary-button" onClick={() => onStatus(user.id, user.status === 'active' ? 'suspended' : 'active')}>{user.status === 'active' ? 'Suspend' : 'Reactivate'}</button></li>)}</ul>
+      <ul>{users.map(user => {
+        const isSelf = user.id === currentUserId;
+        return <li key={user.id}>{user.full_name} - {user.email} - {user.role} - {user.status} {isSelf ? <span className="muted-copy">Current admin</span> : <button className="secondary-button" onClick={() => onStatus(user.id, user.status === 'active' ? 'suspended' : 'active')}>{user.status === 'active' ? 'Suspend' : 'Reactivate'}</button>}</li>;
+      })}</ul>
     </div>
   </div>;
 }
@@ -194,8 +203,14 @@ function AdminsSection({ users, inviteEmail, inviteName, invitePassword, onEmail
   </div>;
 }
 
-function AuditLogSection({ logs }: { logs: AdminAuditLog[] }) {
-  return <ListCard title="Audit logs" items={logs.map(log => `${log.created_at || ''} - ${log.action} - ${log.target_type}`)} empty="No audit logs yet." />;
+function ReportsSection({ assessments, llmEvents, logs }: { assessments: StoredAssessmentResult[]; llmEvents: LLMEvent[]; logs: AdminAuditLog[] }) {
+  return <div className="page-stack">
+    <div className="admin-grid">
+      <ListCard title="Learning activity" items={assessments.map(item => `${item.student_name || 'Student'} - ${item.subject} - ${item.estimated_level}`)} empty="No assessment activity yet." />
+      <ListCard title="AI usage" items={llmEvents.map(event => `${event.provider} - ${event.model} - ${event.purpose}${event.fallback_used ? ' - fallback used' : ''}`)} empty="No AI usage events yet." />
+      <ListCard title="Audit logs" items={logs.map(log => `${log.created_at || ''} - ${log.action} - ${log.target_type}`)} empty="No audit logs yet." />
+    </div>
+  </div>;
 }
 
 function ListCard({ title, items, empty }: { title: string; items: string[]; empty: string }) {

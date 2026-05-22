@@ -86,6 +86,8 @@ class AdminService:
         return normalized
 
     async def update_user_status(self, admin: dict, user_id: str, payload: AdminUserStatusUpdateRequest) -> dict:
+        if user_id == admin.get('id'):
+            raise HTTPException(status_code=403, detail='Admins cannot change their own account status.')
         target = await self._profile(user_id)
         if target.get('role') == 'super_admin' and admin.get('role') != 'super_admin':
             raise HTTPException(status_code=403, detail='Only a super admin can change a super admin account.')
