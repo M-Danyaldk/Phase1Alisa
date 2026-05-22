@@ -1,6 +1,5 @@
 from functools import lru_cache
 from pathlib import Path
-from secrets import compare_digest
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ENV_FILE = Path(__file__).resolve().parents[1] / '.env'
@@ -12,7 +11,6 @@ class Settings(BaseSettings):
     cors_origins: str = 'http://localhost:5173,http://127.0.0.1:5173'
     database_path: str = './msalisia_phase1.db'
     uploads_path: str = './uploads'
-    admin_access_token: str = 'msalisia-admin-demo'
 
     primary_llm_provider: str = 'claude'
     fallback_llm_provider: str = 'groq'
@@ -42,11 +40,6 @@ class Settings(BaseSettings):
 
     def cors_list(self) -> list[str]:
         return [x.strip() for x in self.cors_origins.split(',') if x.strip()]
-
-    def admin_token_valid(self, token: str) -> bool:
-        expected = self.admin_access_token.strip()
-        provided = token.strip()
-        return bool(expected) and compare_digest(expected, provided)
 
     def normalized_llm_provider(self, provider_name: str) -> str:
         return provider_name.strip().lower()

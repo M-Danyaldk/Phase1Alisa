@@ -73,7 +73,59 @@ export type LLMEvent = {
 };
 
 export type AdminOverview = {
+  totals: {
+    users: number;
+    admins: number;
+    parents: number;
+    students: number;
+    active_subscriptions: number;
+    past_due_subscriptions: number;
+  };
   students: StudentProfile[];
   assessments: StoredAssessmentResult[];
   llm_events: LLMEvent[];
+  audit_logs: AdminAuditLog[];
+};
+
+export type AdminUser = {
+  id: string;
+  full_name: string;
+  email: string;
+  role: 'parent' | 'student' | 'admin' | 'super_admin';
+  status: 'active' | 'suspended' | 'inactive';
+  admin_permissions: string[];
+  admin_2fa_enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AdminAuditLog = {
+  id?: string;
+  admin_user_id?: string;
+  action: string;
+  target_type: string;
+  target_id?: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+};
+
+export type AdminSubscription = {
+  id: string;
+  child_id: string;
+  parent_id: string;
+  child_name?: string;
+  grade_level?: string;
+  access_status: 'trial' | 'active' | 'inactive' | 'past_due';
+  plan_name: string;
+  trial_ends_at?: string | null;
+  current_period_ends_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AdminSetting = {
+  key: string;
+  value: Record<string, unknown>;
+  updated_by?: string | null;
+  updated_at?: string;
 };

@@ -54,6 +54,9 @@ class ProfileResponse(BaseModel):
     full_name: str
     email: EmailStr
     role: str = 'parent'
+    status: str = 'active'
+    admin_permissions: list[str] = []
+    admin_2fa_enabled: bool = False
     grade_level: str | None = None
     date_of_birth: date | None = None
     parent_guardian_email: EmailStr | None = None

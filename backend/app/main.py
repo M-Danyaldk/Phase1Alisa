@@ -10,6 +10,7 @@ from .database import init_db
 from .models import AssessmentRequest, AssessmentResult, ChatRequest, ChatResponse, HomeworkFeedbackResponse, StudentProfile
 from .prompts import compact_chat_system_prompt, homework_prompt
 from .routers.chat_history import router as chat_history_router
+from .routes.admin import router as admin_router
 from .routes.auth import router as auth_router
 from .routes.billing import router as billing_router
 from .routes.child_profiles import router as child_profiles_router
@@ -31,6 +32,7 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 app = FastAPI(title='MsAlisia Phase 1 MVP API', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_list(), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
+app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(child_profiles_router)
@@ -225,18 +227,6 @@ async def homework_feedback(
     )
     result = await router.generate(system=system, user=user, purpose='homework')
     return HomeworkFeedbackResponse(feedback=result.text, provider=result.provider, model=result.model)
-
-
-@app.get('/api/admin/overview')
-async def admin_overview(x_admin_token: str = Header(default='')) -> dict:
-    if not settings.admin_token_valid(x_admin_token):
-        raise HTTPException(status_code=403, detail='You do not have permission to view this page.')
-    app_data = AppDataService()
-    return {
-        'students': await app_data.list_students(limit=10),
-        'assessments': await app_data.list_assessments(limit=10),
-        'llm_events': await app_data.list_llm_events(limit=20),
-    }
 
 
 @app.get('/api/future-modules')

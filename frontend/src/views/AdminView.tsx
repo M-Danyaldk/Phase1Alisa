@@ -1,112 +1,220 @@
-import { useEffect, useState } from 'react';
-import { Brain, ShieldCheck, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BarChart3, FileText, Settings, ShieldCheck, Users, WalletCards } from 'lucide-react';
 import { InfoCard } from '../components/InfoCard';
+import { NavItem } from '../components/NavItem';
 import { SectionHeader } from '../components/SectionHeader';
-import { apiGet } from '../lib/api';
-import { AdminOverview } from '../types';
+import { apiGet, apiPatch, apiPost } from '../lib/api';
+import { AdminAuditLog, AdminOverview, AdminSetting, AdminSubscription, AdminUser } from '../types';
+import { ProfileResponse } from '../types/auth';
 
-const ADMIN_SESSION_KEY = 'msalisia-admin-access-token';
+type AdminSection = 'dashboard' | 'users' | 'subscriptions' | 'reports' | 'settings' | 'admins';
 
-export function AdminView() {
+type Props = {
+  accessToken: string;
+  profile: ProfileResponse;
+  section: AdminSection;
+  onSectionChange: (section: AdminSection) => void;
+  onLogout: () => void;
+};
+
+const permissions = ['manage_users', 'manage_subscriptions', 'manage_courses', 'view_analytics', 'refund_payments', 'manage_admins', 'manage_settings'];
+
+export function AdminView({ accessToken, profile, section, onSectionChange, onLogout }: Props) {
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${accessToken}` }), [accessToken]);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
-  const [token, setToken] = useState(() => sessionStorage.getItem(ADMIN_SESSION_KEY) || '');
-  const [tokenInput, setTokenInput] = useState('');
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [subscriptions, setSubscriptions] = useState<AdminSubscription[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [settings, setSettings] = useState<AdminSetting[]>([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [invitePassword, setInvitePassword] = useState('');
 
   useEffect(() => {
-    if (!token) return;
     let cancelled = false;
-
     async function load() {
       setLoading(true);
       setError('');
       try {
-        const data = await apiGet<AdminOverview>('/api/admin/overview', { 'x-admin-token': token });
-        if (!cancelled) {
-          setOverview(data);
-          setError('');
+        if (section === 'dashboard') {
+          const data = await apiGet<AdminOverview>('/api/admin/overview', authHeaders);
+          if (!cancelled) setOverview(data);
         }
-      } catch (fetchError) {
-        if (!cancelled) {
-          setOverview(null);
-          setError('Admin access is separate and protected. The access code was not accepted.');
-          sessionStorage.removeItem(ADMIN_SESSION_KEY);
-          setToken('');
+        if (section === 'users' || section === 'admins') {
+          const data = await apiGet<{ users: AdminUser[] }>(`/api/admin/users${search ? `?search=${encodeURIComponent(search)}` : ''}`, authHeaders);
+          if (!cancelled) setUsers(data.users);
         }
+        if (section === 'subscriptions') {
+          const data = await apiGet<{ subscriptions: AdminSubscription[] }>('/api/admin/subscriptions', authHeaders);
+          if (!cancelled) setSubscriptions(data.subscriptions);
+        }
+        if (section === 'reports') {
+          const data = await apiGet<{ audit_logs: AdminAuditLog[] }>('/api/admin/reports', authHeaders);
+          if (!cancelled) setAuditLogs(data.audit_logs);
+        }
+        if (section === 'settings') {
+          const data = await apiGet<{ settings: AdminSetting[] }>('/api/admin/settings', authHeaders);
+          if (!cancelled) setSettings(data.settings);
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Admin request failed.');
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
-
     load();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [authHeaders, section, search]);
 
-  function submitToken() {
-    const nextToken = tokenInput.trim();
-    if (!nextToken) {
-      setError('Enter the admin access code to continue.');
+  async function updateUserStatus(userId: string, status: AdminUser['status']) {
+    await apiPatch<AdminUser>(`/api/admin/users/${userId}/status`, { status, reason: `Changed from admin ${profile.email}` }, authHeaders);
+    const data = await apiGet<{ users: AdminUser[] }>('/api/admin/users', authHeaders);
+    setUsers(data.users);
+  }
+
+  async function updateSubscription(subscriptionId: string, accessStatus: AdminSubscription['access_status']) {
+    await apiPatch<AdminSubscription>(`/api/admin/subscriptions/${subscriptionId}`, {
+      access_status: accessStatus,
+      plan_name: 'Phase 1 MVP',
+      reason: `Changed from admin ${profile.email}`,
+    }, authHeaders);
+    const data = await apiGet<{ subscriptions: AdminSubscription[] }>('/api/admin/subscriptions', authHeaders);
+    setSubscriptions(data.subscriptions);
+  }
+
+  async function inviteAdmin() {
+    const email = inviteEmail.trim().toLowerCase();
+    const fullName = inviteName.trim();
+    if (!email || !fullName || invitePassword.length < 8) {
+      setError('Admin name, email, and an 8+ character temporary password are required.');
       return;
     }
-    sessionStorage.setItem(ADMIN_SESSION_KEY, nextToken);
-    setToken(nextToken);
-    setTokenInput('');
+    await apiPost('/api/admin/admins/invite', {
+      email,
+      full_name: fullName,
+      role: 'admin',
+      permissions: ['manage_users', 'manage_subscriptions', 'view_analytics'],
+      temporary_password: invitePassword,
+    }, authHeaders);
+    setInviteEmail('');
+    setInviteName('');
+    setInvitePassword('');
+    const data = await apiGet<{ users: AdminUser[] }>('/api/admin/users', authHeaders);
+    setUsers(data.users);
   }
 
-  function clearToken() {
-    sessionStorage.removeItem(ADMIN_SESSION_KEY);
-    setToken('');
-    setOverview(null);
-    setError('');
-  }
+  const adminUsers = users.filter(user => user.role === 'admin' || user.role === 'super_admin');
 
-  if (!token) {
-    return <div className="page-stack narrow">
-      <SectionHeader eyebrow="Admin Access" title="Protected back office" desc="Admin tools are separate from parent and student areas." />
-      <section className="form-card admin-access-card">
-        <h3>Enter admin access code</h3>
-        <p className="muted-copy">Admin access is separate and protected.</p>
-        <label>Admin access code
-          <input type="password" value={tokenInput} onChange={event => setTokenInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submitToken(); }} />
-        </label>
-        {error && <p className="error-note">{error}</p>}
-        <button className="primary-button" onClick={submitToken}>Open Admin</button>
-      </section>
-    </div>;
-  }
-
-  return <div className="page-stack">
-    <SectionHeader eyebrow="Admin visibility" title="Simple monitoring for non-technical operators" desc="Admin screens show the important information without requiring technical knowledge." />
-    <div className="card-grid three">
-      <InfoCard icon={<Users />} title="Recent students" desc={loading ? 'Loading student records...' : `${overview?.students.length || 0} student records visible in the latest admin snapshot.`} />
-      <InfoCard icon={<Brain />} title="AI usage" desc={loading ? 'Loading provider activity...' : `${overview?.llm_events.length || 0} recent LLM events and fallback signals are available.`} />
-      <InfoCard icon={<ShieldCheck />} title="Assessment history" desc={loading ? 'Loading assessment results...' : `${overview?.assessments.length || 0} recent assessment results are visible for review.`} />
-    </div>
-    {error && <div className="report-card"><h3>Admin access</h3><p>{error}</p></div>}
-    {!error && <div className="admin-grid">
-      <div className="report-card">
-        <h3>Recent students</h3>
-        {loading && <p>Loading recent students...</p>}
-        {!loading && !(overview?.students.length) && <p>No student profiles yet.</p>}
-        {!loading && !!overview?.students.length && <ul>{overview.students.map(student => <li key={`${student.id ?? student.name}-${student.created_at ?? ''}`}>{student.name} - Grade {student.grade} - Math: {student.math_level} - ELA: {student.ela_level} - Writing: {student.writing_level}</li>)}</ul>}
+  return <div className="app-shell admin-shell">
+    <aside className="sidebar">
+      <div className="brand-block">
+        <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+        <div>
+          <h1>Admin</h1>
+          <p>{profile.full_name}</p>
+        </div>
       </div>
-      <div className="report-card">
-        <h3>Recent assessments</h3>
-        {loading && <p>Loading assessments...</p>}
-        {!loading && !(overview?.assessments.length) && <p>No assessment results yet.</p>}
-        {!loading && !!overview?.assessments.length && <ul>{overview.assessments.map(assessment => <li key={`${assessment.id ?? assessment.student_name}-${assessment.created_at ?? ''}`}>{assessment.student_name || 'Student'} - {assessment.subject} - {assessment.estimated_level}</li>)}</ul>}
-      </div>
-      <div className="report-card">
-        <h3>Recent AI events</h3>
-        {loading && <p>Loading provider events...</p>}
-        {!loading && !(overview?.llm_events.length) && <p>No AI events yet.</p>}
-        {!loading && !!overview?.llm_events.length && <ul>{overview.llm_events.map(event => <li key={`${event.id ?? event.provider}-${event.created_at ?? ''}`}>{event.provider} - {event.model} - {event.purpose}{event.fallback_used ? ' - fallback used' : ''}</li>)}</ul>}
-      </div>
-    </div>}
-    <div className="report-card"><h3>Launch priorities</h3><ul><li>Assessment engine stability</li><li>Course-aware LLM responses</li><li>Simple parent/student UI</li><li>Basic admin safety and usage visibility</li></ul></div>
-    <button className="secondary-button" onClick={clearToken}>Lock Admin</button>
+      <nav aria-label="Admin navigation">
+        <NavItem icon={<BarChart3 />} label="Dashboard" active={section === 'dashboard'} onClick={() => onSectionChange('dashboard')} />
+        <NavItem icon={<Users />} label="Users" active={section === 'users'} onClick={() => onSectionChange('users')} />
+        <NavItem icon={<WalletCards />} label="Subscriptions" active={section === 'subscriptions'} onClick={() => onSectionChange('subscriptions')} />
+        <NavItem icon={<FileText />} label="Reports" active={section === 'reports'} onClick={() => onSectionChange('reports')} />
+        <NavItem icon={<Settings />} label="Settings" active={section === 'settings'} onClick={() => onSectionChange('settings')} />
+        <NavItem icon={<ShieldCheck />} label="Admins" active={section === 'admins'} onClick={() => onSectionChange('admins')} />
+      </nav>
+      <button className="logout-button" onClick={onLogout}>Logout</button>
+    </aside>
+    <main>
+      <SectionHeader eyebrow="Admin Console" title={titleFor(section)} desc="Role-based access is enforced by the backend for every admin request." />
+      {error && <p className="error-note app-error">{error}</p>}
+      {loading && <p className="muted-copy">Loading admin data...</p>}
+      {section === 'dashboard' && overview && <Dashboard overview={overview} />}
+      {section === 'users' && <UsersSection users={users} search={search} onSearch={setSearch} onStatus={updateUserStatus} />}
+      {section === 'subscriptions' && <SubscriptionsSection subscriptions={subscriptions} onStatus={updateSubscription} />}
+      {section === 'reports' && <AuditLogSection logs={auditLogs} />}
+      {section === 'settings' && <SettingsSection settings={settings} />}
+      {section === 'admins' && <AdminsSection users={adminUsers} inviteEmail={inviteEmail} inviteName={inviteName} invitePassword={invitePassword} onEmail={setInviteEmail} onName={setInviteName} onPassword={setInvitePassword} onInvite={inviteAdmin} />}
+    </main>
   </div>;
 }
+
+function Dashboard({ overview }: { overview: AdminOverview }) {
+  return <div className="page-stack">
+    <div className="card-grid three">
+      <InfoCard icon={<Users />} title="Users" desc={`${overview.totals.users} total users, including ${overview.totals.admins} admins.`} />
+      <InfoCard icon={<WalletCards />} title="Subscriptions" desc={`${overview.totals.active_subscriptions} active and ${overview.totals.past_due_subscriptions} past due.`} />
+      <InfoCard icon={<BarChart3 />} title="AI Usage" desc={`${overview.llm_events.length} recent LLM events available for review.`} />
+    </div>
+    <div className="admin-grid">
+      <ListCard title="Recent Students" items={overview.students.map(student => `${student.name} - Grade ${student.grade}`)} empty="No student profiles yet." />
+      <ListCard title="Recent Assessments" items={overview.assessments.map(item => `${item.student_name || 'Student'} - ${item.subject} - ${item.estimated_level}`)} empty="No assessments yet." />
+      <ListCard title="Recent Admin Actions" items={overview.audit_logs.map(log => `${log.action} - ${log.target_type}`)} empty="No admin actions yet." />
+    </div>
+  </div>;
+}
+
+function UsersSection({ users, search, onSearch, onStatus }: { users: AdminUser[]; search: string; onSearch: (value: string) => void; onStatus: (id: string, status: AdminUser['status']) => void }) {
+  return <div className="page-stack">
+    <label>Search users<input value={search} onChange={event => onSearch(event.target.value)} placeholder="Name or email" /></label>
+    <div className="report-card">
+      <h3>User accounts</h3>
+      <ul>{users.map(user => <li key={user.id}>{user.full_name} - {user.email} - {user.role} - {user.status} <button className="secondary-button" onClick={() => onStatus(user.id, user.status === 'active' ? 'suspended' : 'active')}>{user.status === 'active' ? 'Suspend' : 'Reactivate'}</button></li>)}</ul>
+    </div>
+  </div>;
+}
+
+function SubscriptionsSection({ subscriptions, onStatus }: { subscriptions: AdminSubscription[]; onStatus: (id: string, status: AdminSubscription['access_status']) => void }) {
+  return <div className="report-card">
+    <h3>Subscriptions</h3>
+    <ul>{subscriptions.map(item => <li key={item.id}>{item.child_name || item.child_id} - {item.plan_name} - {item.access_status} <button className="secondary-button" onClick={() => onStatus(item.id, item.access_status === 'active' ? 'inactive' : 'active')}>{item.access_status === 'active' ? 'Pause' : 'Activate'}</button></li>)}</ul>
+  </div>;
+}
+
+function SettingsSection({ settings }: { settings: AdminSetting[] }) {
+  return <div className="report-card">
+    <h3>Platform settings</h3>
+    {!settings.length && <p>No settings configured yet.</p>}
+    <ul>{settings.map(setting => <li key={setting.key}>{setting.key}: {JSON.stringify(setting.value)}</li>)}</ul>
+  </div>;
+}
+
+function AdminsSection({ users, inviteEmail, inviteName, invitePassword, onEmail, onName, onPassword, onInvite }: { users: AdminUser[]; inviteEmail: string; inviteName: string; invitePassword: string; onEmail: (value: string) => void; onName: (value: string) => void; onPassword: (value: string) => void; onInvite: () => void }) {
+  return <div className="page-stack">
+    <section className="form-card">
+      <h3>Create admin</h3>
+      <label>Name<input value={inviteName} onChange={event => onName(event.target.value)} /></label>
+      <label>Email<input type="email" value={inviteEmail} onChange={event => onEmail(event.target.value)} /></label>
+      <label>Temporary password<input type="password" value={invitePassword} onChange={event => onPassword(event.target.value)} /></label>
+      <button className="primary-button" onClick={onInvite}>Create Admin</button>
+    </section>
+    <ListCard title="Admin accounts" items={users.map(user => `${user.full_name} - ${user.email} - ${user.role}`)} empty="No admin accounts found." />
+  </div>;
+}
+
+function AuditLogSection({ logs }: { logs: AdminAuditLog[] }) {
+  return <ListCard title="Audit logs" items={logs.map(log => `${log.created_at || ''} - ${log.action} - ${log.target_type}`)} empty="No audit logs yet." />;
+}
+
+function ListCard({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+  return <div className="report-card">
+    <h3>{title}</h3>
+    {!items.length && <p>{empty}</p>}
+    {!!items.length && <ul>{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>}
+  </div>;
+}
+
+function titleFor(section: AdminSection): string {
+  return {
+    dashboard: 'Admin dashboard',
+    users: 'User management',
+    subscriptions: 'Subscription management',
+    reports: 'Reports and audit logs',
+    settings: 'Platform settings',
+    admins: 'Admin management',
+  }[section];
+}
+
+export type { AdminSection };

@@ -33,7 +33,10 @@ export type ProfileResponse = {
   id: string;
   full_name: string;
   email: string;
-  role?: 'parent' | 'student' | 'admin';
+  role?: 'parent' | 'student' | 'admin' | 'super_admin';
+  status?: 'active' | 'suspended' | 'inactive';
+  admin_permissions?: string[];
+  admin_2fa_enabled?: boolean;
   grade_level?: string | null;
   date_of_birth?: string | null;
   parent_guardian_email?: string | null;

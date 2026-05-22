@@ -9,6 +9,10 @@ from .supabase_client import SupabaseClient, SupabaseClientError
 
 
 class VerificationService:
+    _failed_login_attempts: dict[str, dict] = {}
+    _max_login_attempts = 5
+    _lockout_minutes = 15
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.supabase = SupabaseClient()
@@ -145,11 +149,18 @@ class VerificationService:
         }
 
     async def login(self, email: str, password: str) -> dict:
+        normalized_email = email.lower()
+        self._ensure_login_not_locked(normalized_email)
         try:
-            data = await self.supabase.login_with_password(email.lower(), password)
+            data = await self.supabase.login_with_password(normalized_email, password)
         except SupabaseClientError as exc:
+            await self._record_failed_login(normalized_email, str(exc))
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        self._clear_failed_login(normalized_email)
         user = data.get('user') or {}
+        profile = await self.current_profile(data.get('access_token', '')) if data.get('access_token') else None
+        if profile and profile.get('status') in {'suspended', 'inactive'}:
+            raise HTTPException(status_code=403, detail='This account is not active.')
         return {
             'access_token': data.get('access_token'),
             'refresh_token': data.get('refresh_token'),
@@ -320,3 +331,31 @@ class VerificationService:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
+
+    def _ensure_login_not_locked(self, email: str) -> None:
+        state = self._failed_login_attempts.get(email)
+        if not state:
+            return
+        locked_until = state.get('locked_until')
+        if locked_until and locked_until > datetime.now(UTC):
+            raise HTTPException(status_code=429, detail='Too many failed login attempts. Please try again later.')
+        if locked_until:
+            self._failed_login_attempts.pop(email, None)
+
+    async def _record_failed_login(self, email: str, reason: str) -> None:
+        now = datetime.now(UTC)
+        state = self._failed_login_attempts.setdefault(email, {'count': 0, 'locked_until': None})
+        state['count'] += 1
+        if state['count'] >= self._max_login_attempts:
+            state['locked_until'] = now + timedelta(minutes=self._lockout_minutes)
+        try:
+            await self.supabase.insert('login_security_events', {
+                'email': email,
+                'event_type': 'failed_login',
+                'detail': {'reason': reason, 'attempt_count': state['count']},
+            })
+        except SupabaseClientError:
+            return
+
+    def _clear_failed_login(self, email: str) -> None:
+        self._failed_login_attempts.pop(email, None)

@@ -8,6 +8,7 @@ import { ChildShell } from './layouts/ChildShell';
 import { ParentShell } from './layouts/ParentShell';
 import { AssessmentView } from './views/AssessmentView';
 import { AdminView } from './views/AdminView';
+import type { AdminSection } from './views/AdminView';
 import { BillingView } from './views/BillingView';
 import { FutureView } from './views/FutureView';
 import { HomeView } from './views/HomeView';
@@ -75,6 +76,7 @@ export function App() {
     const profile = await getCurrentProfile(nextSession.access_token);
     setCurrentProfile(profile);
     setStudent(profileToStudent(profile));
+    return profile;
   }
 
   async function loadChildren(nextSession: AuthSessionResponse) {
@@ -99,8 +101,9 @@ export function App() {
     setChildrenLoading(true);
     setProfileError('');
     setChildrenError('');
+    let profile: ProfileResponse;
     try {
-      await loadProfile(nextSession);
+      profile = await loadProfile(nextSession);
     } catch (error) {
       localStorage.removeItem(AUTH_SESSION_KEY);
       setProfileError(error instanceof Error ? error.message : 'Could not load profile. Please log in again.');
@@ -108,6 +111,16 @@ export function App() {
       setAuthView('login');
       setProfileLoading(false);
       setChildrenLoading(false);
+      return;
+    }
+    const isAdmin = profile.role === 'admin' || profile.role === 'super_admin';
+    if (isAdmin) {
+      setSession(nextSession);
+      setPendingVerification(null);
+      setAuthView('login');
+      setProfileLoading(false);
+      setChildrenLoading(false);
+      window.location.assign('/admin/dashboard');
       return;
     }
     try {
@@ -263,15 +276,54 @@ export function App() {
     setActiveLearningChildId('');
   }
 
-  const adminPath = window.location.pathname.replace(/\/+$/, '') === '/admin';
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  const adminPath = pathname === '/admin' || pathname.startsWith('/admin/');
   if (adminPath) {
-    return <div className="app-shell admin-shell">
-      <main>
-        <AdminOnly allowed>
-          <AdminView />
-        </AdminOnly>
-      </main>
-    </div>;
+    if (!session) {
+      return <div className="auth-shell">
+        <div className="auth-brand">
+          <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+          <span>MsAlisia Admin</span>
+        </div>
+        <Login onLoggedIn={completeAuth} onSignup={() => setAuthView('signup')} />
+        {profileError && <p className="error-note auth-error">{profileError}</p>}
+      </div>;
+    }
+    if (profileLoading || !currentProfile) {
+      return <div className="auth-shell">
+        <div className="auth-panel">
+          <div className="auth-heading">
+            <span>Admin</span>
+            <h2>Checking access</h2>
+            <p>{profileError || 'We are verifying your admin permissions.'}</p>
+          </div>
+          {profileError && <button className="primary-button" onClick={logout}>Login Again</button>}
+        </div>
+      </div>;
+    }
+    const allowed = currentProfile.role === 'admin' || currentProfile.role === 'super_admin';
+    if (!allowed) {
+      return <div className="auth-shell">
+        <div className="auth-panel">
+          <div className="auth-heading">
+            <span>Access denied</span>
+            <h2>Admin permission is required</h2>
+            <p>This account does not have access to the admin console.</p>
+          </div>
+          <button className="primary-button" onClick={logout}>Logout</button>
+        </div>
+      </div>;
+    }
+    const section = adminSectionFromPath(pathname);
+    return <AdminOnly allowed>
+      <AdminView
+        accessToken={session.access_token || ''}
+        profile={currentProfile}
+        section={section}
+        onSectionChange={(nextSection) => window.location.assign(`/admin/${nextSection}`)}
+        onLogout={logout}
+      />
+    </AdminOnly>;
   }
 
   const studentPath = window.location.pathname.replace(/\/+$/, '') === '/student';
@@ -442,4 +494,12 @@ export function App() {
 
 function preferredChildId(children: ChildProfile[]): string {
   return children.find(child => child.status !== 'inactive')?.id || children[0]?.id || '';
+}
+
+function adminSectionFromPath(pathname: string): AdminSection {
+  const section = pathname.split('/')[2] as AdminSection | undefined;
+  if (section === 'users' || section === 'subscriptions' || section === 'reports' || section === 'settings' || section === 'admins') {
+    return section;
+  }
+  return 'dashboard';
 }
