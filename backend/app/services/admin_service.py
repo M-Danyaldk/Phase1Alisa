@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
@@ -52,12 +53,14 @@ class AdminService:
         return profile
 
     async def overview(self, admin: dict) -> dict:
-        students = await self._safe_select('students', 'order=created_at.desc&limit=10')
-        assessments = await self._safe_select('assessment_results', 'order=created_at.desc&limit=10')
-        llm_events = await self._safe_select('llm_events', 'order=created_at.desc&limit=20')
-        users = await self._safe_select('profiles', 'order=created_at.desc&limit=500')
-        subscriptions = await self._safe_select('child_access', 'order=created_at.desc&limit=500')
-        audit_logs = await self.audit_logs(admin, limit=10)
+        students, assessments, llm_events, users, subscriptions, audit_logs = await asyncio.gather(
+            self._safe_select('students', 'order=created_at.desc&limit=10'),
+            self._safe_select('assessment_results', 'order=created_at.desc&limit=10'),
+            self._safe_select('llm_events', 'order=created_at.desc&limit=20'),
+            self._safe_select('profiles', 'order=created_at.desc&limit=500'),
+            self._safe_select('child_access', 'order=created_at.desc&limit=500'),
+            self.audit_logs(admin, limit=10),
+        )
         return {
             'totals': {
                 'users': len(users),
@@ -145,11 +148,88 @@ class AdminService:
         return records[0]
 
     async def reports(self, admin: dict) -> dict:
+        learning_activity, assessments, llm_events, audit_logs = await asyncio.gather(
+            self.learning_activity(),
+            self._safe_select('assessment_results', 'order=created_at.desc&limit=100'),
+            self._safe_select('llm_events', 'order=created_at.desc&limit=100'),
+            self.audit_logs(admin, limit=50),
+        )
         return {
-            'assessments': await self._safe_select('assessment_results', 'order=created_at.desc&limit=100'),
-            'llm_events': await self._safe_select('llm_events', 'order=created_at.desc&limit=100'),
-            'audit_logs': await self.audit_logs(admin, limit=50),
+            'learning_activity': learning_activity,
+            'assessments': assessments,
+            'llm_events': llm_events,
+            'audit_logs': audit_logs,
         }
+
+    async def learning_activity(self) -> list[dict]:
+        children, assessments, sessions, threads = await asyncio.gather(
+            self._safe_select('child_profiles', 'order=created_at.desc&limit=500'),
+            self._safe_select('assessment_results', 'order=created_at.desc&limit=500'),
+            self._safe_select('learning_sessions', 'order=created_at.desc&limit=500'),
+            self._safe_select('chat_threads', 'order=updated_at.desc&limit=500'),
+        )
+
+        latest_assessment_by_child: dict[str, dict] = {}
+        latest_session_by_child: dict[str, dict] = {}
+        latest_thread_by_child: dict[str, dict] = {}
+        assessments_by_name: dict[str, dict] = {}
+        assessment_count_by_child: dict[str, int] = {}
+        assessment_count_by_name: dict[str, int] = {}
+
+        for assessment in assessments:
+            child_id = assessment.get('child_id')
+            if child_id and child_id not in latest_assessment_by_child:
+                latest_assessment_by_child[child_id] = assessment
+            if child_id:
+                assessment_count_by_child[child_id] = assessment_count_by_child.get(child_id, 0) + 1
+            student_name = (assessment.get('student_name') or '').strip().lower()
+            if student_name and student_name not in assessments_by_name:
+                assessments_by_name[student_name] = assessment
+            if student_name:
+                assessment_count_by_name[student_name] = assessment_count_by_name.get(student_name, 0) + 1
+
+        for session in sessions:
+            child_id = session.get('child_id')
+            if child_id and child_id not in latest_session_by_child:
+                latest_session_by_child[child_id] = session
+
+        for thread in threads:
+            child_id = thread.get('child_id')
+            if child_id and child_id not in latest_thread_by_child:
+                latest_thread_by_child[child_id] = thread
+
+        rows = []
+        for child in children:
+            child_id = child.get('id')
+            latest_assessment = latest_assessment_by_child.get(child_id) or assessments_by_name.get((child.get('name') or '').strip().lower())
+            latest_session = latest_session_by_child.get(child_id)
+            latest_thread = latest_thread_by_child.get(child_id)
+            latest_activity_at = self._latest_date([
+                latest_assessment.get('created_at') if latest_assessment else None,
+                latest_session.get('created_at') if latest_session else None,
+                latest_thread.get('updated_at') if latest_thread else None,
+                child.get('updated_at'),
+                child.get('created_at'),
+            ])
+            subject = (
+                (latest_assessment or {}).get('subject')
+                or (latest_session or {}).get('subject')
+                or (latest_thread or {}).get('subject')
+                or self._first_subject(child.get('subjects'))
+                or 'Not started'
+            )
+            rows.append({
+                'child_id': child_id,
+                'student_name': child.get('name') or 'Student',
+                'grade_level': child.get('grade_level') or 'Not set',
+                'status': child.get('status') or 'active',
+                'subject': subject,
+                'latest_activity_at': latest_activity_at,
+                'latest_activity_type': self._activity_type(latest_assessment, latest_session, latest_thread),
+                'latest_level': (latest_assessment or {}).get('estimated_level'),
+                'assessment_count': assessment_count_by_child.get(child_id, 0) or assessment_count_by_name.get((child.get('name') or '').strip().lower(), 0),
+            })
+        return rows
 
     async def settings(self, admin: dict) -> list[dict]:
         return await self._safe_select('app_settings', 'order=key.asc&limit=100')
@@ -283,3 +363,30 @@ class AdminService:
         if not isinstance(permissions, list):
             return []
         return sorted({permission for permission in permissions if permission in ALL_ADMIN_PERMISSIONS})
+
+    def _latest_date(self, values: list[str | None]) -> str | None:
+        dates = []
+        for value in values:
+            if not value:
+                continue
+            try:
+                dates.append(datetime.fromisoformat(value.replace('Z', '+00:00')))
+            except ValueError:
+                continue
+        if not dates:
+            return None
+        return max(dates).isoformat()
+
+    def _first_subject(self, subjects: object) -> str | None:
+        if isinstance(subjects, list) and subjects:
+            return str(subjects[0])
+        return None
+
+    def _activity_type(self, assessment: dict | None, session: dict | None, thread: dict | None) -> str:
+        if assessment:
+            return 'Assessment Saved'
+        if session:
+            return 'Learning Session'
+        if thread:
+            return 'Chat Activity'
+        return 'No Activity Yet'

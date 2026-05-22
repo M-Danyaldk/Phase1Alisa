@@ -129,3 +129,15 @@ export type AdminSetting = {
   updated_by?: string | null;
   updated_at?: string;
 };
+
+export type AdminLearningActivity = {
+  child_id: string;
+  student_name: string;
+  grade_level: string;
+  status: 'active' | 'inactive' | 'pending_consent' | string;
+  subject: string;
+  latest_activity_at?: string | null;
+  latest_activity_type: string;
+  latest_level?: string | null;
+  assessment_count: number;
+};

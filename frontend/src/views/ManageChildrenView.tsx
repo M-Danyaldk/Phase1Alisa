@@ -157,7 +157,7 @@ export function ManageChildrenView({
   </div>;
 }
 
-function StudentAccessCreateFields({
+export function StudentAccessCreateFields({
   username,
   pin,
   onUsernameChange,

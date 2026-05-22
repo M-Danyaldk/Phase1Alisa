@@ -36,7 +36,19 @@ type AccessMode = 'parent' | 'child';
 const AUTH_SESSION_KEY = 'msalisia-auth-session';
 const STUDENT_SESSION_KEY = 'msalisia-student-session';
 
+function readStoredJson<T>(key: string): T | null {
+  const stored = localStorage.getItem(key);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as T;
+  } catch {
+    localStorage.removeItem(key);
+    return null;
+  }
+}
+
 export function App() {
+  const [pathname, setPathname] = useState(() => window.location.pathname.replace(/\/+$/, '') || '/');
   const [accessMode, setAccessMode] = useState<AccessMode>('parent');
   const [parentView, setParentView] = useState<ParentView>('home');
   const [childView, setChildView] = useState<ChildView>('home');
@@ -44,10 +56,7 @@ export function App() {
   const [connected, setConnected] = useState<'checking' | 'online' | 'offline'>('checking');
   const [authView, setAuthView] = useState<AuthView>('login');
   const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
-  const [session, setSession] = useState<AuthSessionResponse | null>(() => {
-    const stored = localStorage.getItem(AUTH_SESSION_KEY);
-    return stored ? JSON.parse(stored) as AuthSessionResponse : null;
-  });
+  const [session, setSession] = useState<AuthSessionResponse | null>(() => readStoredJson<AuthSessionResponse>(AUTH_SESSION_KEY));
   const [profileLoading, setProfileLoading] = useState(() => Boolean(localStorage.getItem(AUTH_SESSION_KEY)));
   const [profileError, setProfileError] = useState('');
   const [currentProfile, setCurrentProfile] = useState<ProfileResponse | null>(null);
@@ -57,10 +66,7 @@ export function App() {
   const [childrenError, setChildrenError] = useState('');
   const [showParentOnboarding, setShowParentOnboarding] = useState(false);
   const [activeLearningChildId, setActiveLearningChildId] = useState('');
-  const [studentSession, setStudentSession] = useState<StudentSession | null>(() => {
-    const stored = localStorage.getItem(STUDENT_SESSION_KEY);
-    return stored ? JSON.parse(stored) as StudentSession : null;
-  });
+  const [studentSession, setStudentSession] = useState<StudentSession | null>(() => readStoredJson<StudentSession>(STUDENT_SESSION_KEY));
   const [studentMe, setStudentMe] = useState<StudentMe | null>(null);
   const [studentSessionLoading, setStudentSessionLoading] = useState(() => Boolean(localStorage.getItem(STUDENT_SESSION_KEY)));
   const [studentSessionError, setStudentSessionError] = useState('');
@@ -68,6 +74,19 @@ export function App() {
   useEffect(() => {
     checkHealth().then(() => setConnected('online')).catch(() => setConnected('offline'));
   }, []);
+
+  useEffect(() => {
+    function syncPathname() {
+      setPathname(window.location.pathname.replace(/\/+$/, '') || '/');
+    }
+    window.addEventListener('popstate', syncPathname);
+    return () => window.removeEventListener('popstate', syncPathname);
+  }, []);
+
+  function navigate(path: string) {
+    window.history.pushState(null, '', path);
+    setPathname(path.replace(/\/+$/, '') || '/');
+  }
 
   async function loadProfile(nextSession: AuthSessionResponse) {
     if (!nextSession.access_token) {
@@ -120,7 +139,7 @@ export function App() {
       setAuthView('login');
       setProfileLoading(false);
       setChildrenLoading(false);
-      window.location.assign('/admin/dashboard');
+      navigate('/admin/dashboard');
       return;
     }
     try {
@@ -276,7 +295,6 @@ export function App() {
     setActiveLearningChildId('');
   }
 
-  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
   const adminPath = pathname === '/admin' || pathname.startsWith('/admin/');
   if (adminPath) {
     if (!session) {
@@ -320,13 +338,13 @@ export function App() {
         accessToken={session.access_token || ''}
         profile={currentProfile}
         section={section}
-        onSectionChange={(nextSection) => window.location.assign(`/admin/${nextSection}`)}
+        onSectionChange={(nextSection) => navigate(`/admin/${nextSection}`)}
         onLogout={logout}
       />
     </AdminOnly>;
   }
 
-  const studentPath = window.location.pathname.replace(/\/+$/, '') === '/student';
+  const studentPath = pathname === '/student';
   if (studentPath) {
     if (studentSessionLoading) {
       return <div className="auth-shell">
