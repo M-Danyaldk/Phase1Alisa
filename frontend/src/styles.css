@@ -38,6 +38,7 @@ main { padding: 40px; overflow: auto; }
 .onboarding-shell { display: block; }
 .onboarding-shell main { min-height: 100vh; display: grid; place-items: center; }
 .admin-shell main { min-height: 100vh; min-width: 0; }
+.admin-shell .report-card li { overflow-wrap: anywhere; }
 .app-error { margin: 0 auto 16px; max-width: 1180px; }
 .page-stack { display: grid; gap: 24px; max-width: 1180px; margin: 0 auto; }
 .page-stack:has(.learning-layout) { max-width: 1500px; }
@@ -68,6 +69,7 @@ main { padding: 40px; overflow: auto; }
 .admin-table-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px 14px; }
 .admin-table-heading h3 { display: flex; align-items: center; gap: 10px; margin: 0; }
 .admin-table-heading h3 svg { width: 20px; height: 20px; color: var(--purple-dark); }
+.admin-table-note { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .admin-table-scroll { overflow-x: auto; }
 .admin-table { width: 100%; border-collapse: collapse; min-width: 680px; }
 .admin-table th, .admin-table td { padding: 13px 16px; border-top: 1px solid var(--border); text-align: left; vertical-align: middle; color: var(--muted); font-size: 13px; }
@@ -335,6 +337,22 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .child-switcher { align-items: stretch; flex-direction: column; }
   .child-switcher label { min-width: 0; }
   .student-summary-card { align-items: flex-start; flex-direction: column; }
+  .admin-shell main { padding: 18px 14px 28px; }
+  .admin-shell .page-stack { gap: 16px; }
+  .admin-shell .section-header { margin-bottom: 2px; }
+  .admin-shell .section-header h2 { font-size: 34px; letter-spacing: 0; line-height: 1.06; }
+  .admin-shell .section-header p { font-size: 14px; line-height: 1.55; }
+  .admin-shell .card-grid, .admin-shell .admin-grid, .admin-shell .report-metric-grid, .admin-shell .report-split-grid { gap: 14px; }
+  .admin-shell .info-card, .admin-shell .report-card, .admin-shell .form-card { border-radius: 22px; padding: 18px; }
+  .admin-shell .info-card { display: grid; grid-template-columns: 48px 1fr; column-gap: 14px; align-items: center; }
+  .admin-shell .info-card .card-icon { margin: 0; width: 48px; height: 48px; border-radius: 16px; grid-row: span 2; }
+  .admin-shell .info-card h3 { margin: 0; font-size: 18px; }
+  .admin-shell .info-card p { margin: 6px 0 0; font-size: 14px; line-height: 1.45; }
+  .admin-shell .admin-report-table-card { padding: 0; }
+  .admin-shell .admin-table-heading { align-items: flex-start; flex-direction: column; padding: 16px 16px 12px; }
+  .admin-shell .admin-table-scroll { margin: 0; max-width: 100%; }
+  .admin-shell .report-filter-card { padding: 14px; gap: 12px; border-radius: 20px; }
+  .admin-shell .report-actions { justify-content: stretch; }
   main { padding: 22px 16px 28px; overflow: visible; }
 }
 
@@ -348,5 +366,30 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .chat-window { padding: 16px; }
   .chat-input { grid-template-columns: 1fr; }
   .primary-button, .secondary-button { width: 100%; }
+  .admin-shell .secondary-button.compact, .admin-shell .primary-button.compact-admin-action { width: auto; }
+  .admin-shell .report-actions .secondary-button, .admin-shell .report-filter-actions .secondary-button { width: 100%; }
+  .admin-shell main { padding: 16px 12px 26px; }
+  .admin-shell .mobile-topbar { min-height: 62px; padding: 9px 12px; }
+  .admin-shell .mobile-topbar strong { font-size: 16px; }
+  .admin-shell .section-header span { font-size: 11px; letter-spacing: .1em; }
+  .admin-shell .section-header h2 { font-size: 31px; line-height: 1.08; }
+  .admin-shell .section-header p { font-size: 13px; }
+  .admin-shell .page-stack { gap: 14px; }
+  .admin-shell .info-card, .admin-shell .report-card, .admin-shell .form-card { border-radius: 20px; padding: 16px; }
+  .admin-shell .info-card { grid-template-columns: 42px 1fr; column-gap: 12px; }
+  .admin-shell .info-card .card-icon { width: 42px; height: 42px; border-radius: 14px; }
+  .admin-shell .info-card h3 { font-size: 16px; }
+  .admin-shell .info-card p { font-size: 13px; }
+  .admin-shell .report-metric-card { padding: 16px; border-radius: 20px; gap: 12px; }
+  .admin-shell .report-metric-icon { width: 46px; height: 46px; border-radius: 15px; }
+  .admin-shell .report-metric-icon svg { width: 22px; height: 22px; }
+  .admin-shell .report-metric-card span { font-size: 12px; }
+  .admin-shell .report-metric-card strong { font-size: 24px; }
+  .admin-shell .report-metric-card small { font-size: 12px; }
+  .admin-shell .admin-table { min-width: 640px; }
+  .admin-shell .admin-table th, .admin-shell .admin-table td { padding: 11px 12px; font-size: 12px; }
+  .admin-shell .admin-table-footnote { padding: 10px 14px 14px; }
+  .admin-shell .setting-group-header, .admin-shell .setting-row { align-items: stretch; flex-direction: column; }
+  .admin-shell .compact-admin-action { margin-left: 0; }
   .mobile-drawer .logout-button { width: 100%; }
 }

@@ -175,6 +175,8 @@ class AdminService:
         assessments_by_name: dict[str, dict] = {}
         assessment_count_by_child: dict[str, int] = {}
         assessment_count_by_name: dict[str, int] = {}
+        child_ids: set[str] = {str(child.get('id')) for child in children if child.get('id')}
+        child_names: set[str] = {(child.get('name') or '').strip().lower() for child in children if child.get('name')}
 
         for assessment in assessments:
             child_id = assessment.get('child_id')
@@ -228,6 +230,22 @@ class AdminService:
                 'latest_activity_type': self._activity_type(latest_assessment, latest_session, latest_thread),
                 'latest_level': (latest_assessment or {}).get('estimated_level'),
                 'assessment_count': assessment_count_by_child.get(child_id, 0) or assessment_count_by_name.get((child.get('name') or '').strip().lower(), 0),
+            })
+        for name, assessment in assessments_by_name.items():
+            child_id = assessment.get('child_id')
+            if (child_id and str(child_id) in child_ids) or name in child_names:
+                continue
+            enrolled_grade = assessment.get('enrolled_grade')
+            rows.append({
+                'child_id': child_id or f'assessment:{assessment.get("id") or name}',
+                'student_name': assessment.get('student_name') or 'Student',
+                'grade_level': f'Grade {enrolled_grade}' if enrolled_grade else 'Not set',
+                'status': 'assessment_only',
+                'subject': assessment.get('subject') or 'Assessment',
+                'latest_activity_at': assessment.get('created_at'),
+                'latest_activity_type': 'Assessment Saved',
+                'latest_level': assessment.get('estimated_level'),
+                'assessment_count': assessment_count_by_name.get(name, 1),
             })
         return rows
 

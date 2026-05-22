@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BarChart3, Bot, BookOpen, Calendar, Download, FileText, Settings, ShieldCheck, Users, WalletCards } from 'lucide-react';
+import { NavigationDrawer } from '../components/navigation/NavigationDrawer';
 import { InfoCard } from '../components/InfoCard';
 import { NavItem } from '../components/NavItem';
 import { SectionHeader } from '../components/SectionHeader';
@@ -39,6 +40,7 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,25 +148,45 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
   }
 
   const adminUsers = users.filter(user => user.role === 'admin' || user.role === 'super_admin');
+  const brand = <div className="brand-block">
+    <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+    <div>
+      <h1>Admin</h1>
+      <p>{profile.full_name}</p>
+    </div>
+  </div>;
+  function changeSection(nextSection: AdminSection, closeAfterClick = false) {
+    onSectionChange(nextSection);
+    if (closeAfterClick) setMenuOpen(false);
+  }
+  const navItems = (closeAfterClick = false) => <>
+    <NavItem icon={<BarChart3 />} label="Dashboard" active={section === 'dashboard'} onClick={() => changeSection('dashboard', closeAfterClick)} />
+    <NavItem icon={<Users />} label="Users" active={section === 'users'} onClick={() => changeSection('users', closeAfterClick)} />
+    <NavItem icon={<WalletCards />} label="Subscriptions" active={section === 'subscriptions'} onClick={() => changeSection('subscriptions', closeAfterClick)} />
+    <NavItem icon={<FileText />} label="Reports" active={section === 'reports'} onClick={() => changeSection('reports', closeAfterClick)} />
+    <NavItem icon={<Settings />} label="Settings" active={section === 'settings'} onClick={() => changeSection('settings', closeAfterClick)} />
+    <NavItem icon={<ShieldCheck />} label="Admins" active={section === 'admins'} onClick={() => changeSection('admins', closeAfterClick)} />
+  </>;
+  const logoutButton = <button className="logout-button" onClick={onLogout}>Logout</button>;
 
   return <div className="app-shell admin-shell">
+    <NavigationDrawer
+      title="MsAlisia Admin"
+      subtitle={profile.full_name}
+      open={menuOpen}
+      onOpen={() => setMenuOpen(true)}
+      onClose={() => setMenuOpen(false)}
+      brand={brand}
+      footer={logoutButton}
+    >
+      {navItems(true)}
+    </NavigationDrawer>
     <aside className="sidebar">
-      <div className="brand-block">
-        <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
-        <div>
-          <h1>Admin</h1>
-          <p>{profile.full_name}</p>
-        </div>
-      </div>
+      {brand}
       <nav aria-label="Admin navigation">
-        <NavItem icon={<BarChart3 />} label="Dashboard" active={section === 'dashboard'} onClick={() => onSectionChange('dashboard')} />
-        <NavItem icon={<Users />} label="Users" active={section === 'users'} onClick={() => onSectionChange('users')} />
-        <NavItem icon={<WalletCards />} label="Subscriptions" active={section === 'subscriptions'} onClick={() => onSectionChange('subscriptions')} />
-        <NavItem icon={<FileText />} label="Reports" active={section === 'reports'} onClick={() => onSectionChange('reports')} />
-        <NavItem icon={<Settings />} label="Settings" active={section === 'settings'} onClick={() => onSectionChange('settings')} />
-        <NavItem icon={<ShieldCheck />} label="Admins" active={section === 'admins'} onClick={() => onSectionChange('admins')} />
+        {navItems()}
       </nav>
-      <button className="logout-button" onClick={onLogout}>Logout</button>
+      {logoutButton}
     </aside>
     <main>
       <SectionHeader eyebrow="Admin Console" title={titleFor(section)} desc="Role-based access is enforced by the backend for every admin request." />
@@ -436,9 +458,9 @@ function ReportsSection({ learningActivity, assessments, llmEvents, logs }: { le
   const [subjectFilter, setSubjectFilter] = useState('All');
   const [gradeFilter, setGradeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
-  const subjects = useMemo(() => uniqueOptions(learningActivity.map(item => item.subject).filter(Boolean)), [learningActivity]);
-  const grades = useMemo(() => uniqueOptions(learningActivity.map(item => item.grade_level).filter(Boolean)), [learningActivity]);
-  const statuses = useMemo(() => uniqueOptions(learningActivity.map(item => item.status).filter(Boolean)), [learningActivity]);
+  const subjects = useMemo(() => uniqueOptions(learningActivity.map(item => item.subject).filter(isRealFilterValue)), [learningActivity]);
+  const grades = useMemo(() => uniqueOptions(learningActivity.map(item => item.grade_level).filter(isRealFilterValue)), [learningActivity]);
+  const statuses = useMemo(() => uniqueOptions(learningActivity.map(item => item.status).filter(isRealFilterValue)), [learningActivity]);
 
   useEffect(() => {
     if (subjectFilter !== 'All' && !subjects.includes(subjectFilter)) setSubjectFilter('All');
@@ -457,6 +479,7 @@ function ReportsSection({ learningActivity, assessments, llmEvents, logs }: { le
   const dataRange = reportDateRange([...learningActivity.map(item => item.latest_activity_at), ...llmEvents.map(item => item.created_at), ...logs.map(item => item.created_at)]);
   const activeStudents = learningActivity.filter(item => item.status === 'active').length;
   const filtersActive = Boolean(studentFilter.trim()) || subjectFilter !== 'All' || gradeFilter !== 'All' || statusFilter !== 'All';
+  const hasLearningActivity = learningActivity.length > 0;
   function clearFilters() {
     setStudentFilter('');
     setSubjectFilter('All');
@@ -478,18 +501,22 @@ function ReportsSection({ learningActivity, assessments, llmEvents, logs }: { le
       <ReportMetric icon={<Users />} title="Active Students" value={activeStudents} accent="green" />
       <ReportMetric icon={<ShieldCheck />} title="Admin Actions" value={logs.length} accent="gold" />
     </div>
-    <div className="report-filter-card">
+    {hasLearningActivity ? <div className="report-filter-card">
       <label>Search student<input value={studentFilter} onChange={event => setStudentFilter(event.target.value)} placeholder="Student name" /></label>
-      <label>Subject<select value={subjectFilter} onChange={event => setSubjectFilter(event.target.value)} disabled={!subjects.length}><option>All</option>{subjects.map(subject => <option key={subject}>{subject}</option>)}</select></label>
-      <label>Grade<select value={gradeFilter} onChange={event => setGradeFilter(event.target.value)} disabled={!grades.length}><option>All</option>{grades.map(grade => <option key={grade}>{grade}</option>)}</select></label>
-      <label>Status<select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} disabled={!statuses.length}><option>All</option>{statuses.map(status => <option key={status} value={status}>{statusLabel(status)}</option>)}</select></label>
+      {!!subjects.length && <label>Subject<select value={subjectFilter} onChange={event => setSubjectFilter(event.target.value)}><option>All</option>{subjects.map(subject => <option key={subject}>{subject}</option>)}</select></label>}
+      {!!grades.length && <label>Grade<select value={gradeFilter} onChange={event => setGradeFilter(event.target.value)}><option>All</option>{grades.map(grade => <option key={grade}>{grade}</option>)}</select></label>}
+      {!!statuses.length && <label>Status<select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option>All</option>{statuses.map(status => <option key={status} value={status}>{statusLabel(status)}</option>)}</select></label>}
       {filtersActive && <div className="report-filter-actions"><button className="secondary-button compact" onClick={clearFilters}>Clear Filters</button></div>}
-    </div>
+    </div> : <div className="report-card report-filter-empty">
+      <h3>Learning activity filters</h3>
+      <p className="muted-copy">Filters will appear after student learning activity is available.</p>
+    </div>}
     <ReportTableCard
       title="Learning activity"
       icon={<BookOpen />}
       columns={['Student', 'Subject', 'Grade', 'Status', 'Last Activity']}
-      empty={learningActivity.length ? 'No students match these filters.' : 'No student profiles found yet.'}
+      empty={learningActivity.length ? 'No students match these filters.' : 'No learning activity found yet. Create a child profile or complete an assessment to populate this table.'}
+      note="Learning activity includes child profiles, completed assessments, tutoring/chat activity, and saved learning sessions."
       expanded={Boolean(expandedTables['Learning activity'])}
       onToggle={() => toggleTable('Learning activity')}
       rows={filteredLearning.map(item => [
@@ -544,11 +571,14 @@ function ReportMetric({ icon, title, value, accent }: { icon: ReactNode; title: 
   </div>;
 }
 
-function ReportTableCard({ title, icon, columns, rows, empty, expanded, onToggle }: { title: string; icon: ReactNode; columns: string[]; rows: ReactNode[][]; empty: string; expanded: boolean; onToggle: () => void }) {
+function ReportTableCard({ title, icon, columns, rows, empty, note, expanded, onToggle }: { title: string; icon: ReactNode; columns: string[]; rows: ReactNode[][]; empty: string; note?: string; expanded: boolean; onToggle: () => void }) {
   const visibleRows = expanded ? rows : rows.slice(0, 8);
   return <section className="report-card admin-report-table-card">
     <div className="admin-table-heading">
-      <h3>{icon}{title}</h3>
+      <div>
+        <h3>{icon}{title}</h3>
+        {note && <p className="admin-table-note">{note}</p>}
+      </div>
       {rows.length > 8 && <button className="secondary-button compact" onClick={onToggle}>{expanded ? 'Show Less' : 'View All'}</button>}
     </div>
     {!rows.length && <p className="muted-copy">{empty}</p>}
@@ -584,6 +614,7 @@ function statusLabel(value: string): string {
     inactive: 'Inactive',
     pending_consent: 'Pending consent',
     suspended: 'Suspended',
+    assessment_only: 'Assessment only',
   };
   return labels[value] || humanAction(value);
 }
@@ -630,6 +661,12 @@ function reportDateRange(values: Array<string | undefined | null>): string {
 
 function uniqueOptions(values: string[]): string[] {
   return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
+}
+
+function isRealFilterValue(value?: string | null): value is string {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return Boolean(normalized) && !['not set', 'not started', 'unknown', 'n/a', 'none'].includes(normalized);
 }
 
 function exportReportCsv(assessments: StoredAssessmentResult[], llmEvents: LLMEvent[], logs: AdminAuditLog[]) {
