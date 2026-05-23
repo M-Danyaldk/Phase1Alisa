@@ -269,9 +269,11 @@ def compact_chat_system_prompt(
     subject: str,
     topic: str,
     extra_instructions: list[str] | None = None,
-    active_task: str = ''
+    active_task: str = '',
+    assessment_context: dict | None = None,
 ) -> str:
     directives = '\n'.join(f'- {item}' for item in (extra_instructions or [])) or '- No extra runtime tutoring directives.'
+    assessment_block = assessment_context_prompt(assessment_context)
     return f"""
 {COMPACT_CHAT_RULES}
 Subject: {subject}
@@ -286,6 +288,7 @@ Student:
 - Confidence notes: {student.confidence}
 - Focus notes: {student.focus_notes}
 
+{assessment_block}
 Runtime tutoring directives:
 {directives}
 """
@@ -315,6 +318,7 @@ Return concise JSON only with this schema:
   "strengths": ["..."],
   "learning_gaps": ["..."],
   "recommended_progression": ["..."],
+  "recommended_next_topics": ["..."],
   "parent_summary": "..."
 }}
 Do not wrap in markdown.
@@ -347,4 +351,23 @@ HANDWRITING / WORKSHEET IMAGE BEHAVIOR
 - Use simple words. For handwriting, useful ideas include {handwriting}.
 - Mention honestly that deeper file analysis will be added in the next phase.
 - If helpful, end with one tiny practice step such as rewriting one line, fixing one sentence, or solving one short related problem.
+"""
+
+
+def assessment_context_prompt(assessment_context: dict | None) -> str:
+    if not assessment_context:
+        return ''
+    gaps = ', '.join((assessment_context.get('learning_gaps') or [])[:3]) or 'none recorded'
+    strengths = ', '.join((assessment_context.get('strengths') or [])[:3]) or 'none recorded'
+    next_steps = assessment_context.get('recommended_next_steps') or []
+    next_step = next_steps[0] if next_steps else 'Continue with one short guided practice step.'
+    return f"""
+Assessment context:
+- Enrolled grade remains profile information only.
+- Current subject: {assessment_context.get('subject') or 'Unknown'}
+- Assessed subject level: {assessment_context.get('assessed_level') or 'Not assessed yet'}
+- Learning gaps: {gaps}
+- Strengths: {strengths}
+- Recommended next step: {next_step}
+- Teach at the assessed subject level when available. Do not assume enrolled grade equals current skill level.
 """

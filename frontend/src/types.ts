@@ -17,6 +17,7 @@ export type StudentProfile = {
 };
 
 export type ChatMessage = { role: 'student' | 'msalisia'; content: string; provider?: string; subject?: string };
+export type TopicSource = 'manual' | 'default' | 'assessment';
 
 export type TutoringState = {
   active_problem: string;
@@ -49,6 +50,7 @@ export type AssessmentResult = {
   strengths: string[];
   learning_gaps: string[];
   recommended_progression: string[];
+  recommended_next_topics?: string[];
   parent_summary: string;
 };
 

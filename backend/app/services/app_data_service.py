@@ -50,10 +50,16 @@ class AppDataService:
             try:
                 await self.supabase.insert('assessment_results', payload)
                 return
-            except SupabaseClientError:
-                pass
+            except SupabaseClientError as exc:
+                if 'recommended_next_topics' in str(exc).lower():
+                    retry_payload = {key: value for key, value in payload.items() if key != 'recommended_next_topics'}
+                    try:
+                        await self.supabase.insert('assessment_results', retry_payload)
+                        return
+                    except SupabaseClientError:
+                        pass
         execute(
-            'INSERT INTO assessment_results(child_id, student_name, subject, estimated_level, learning_gaps, recommended_progression, parent_summary) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO assessment_results(child_id, student_name, subject, estimated_level, learning_gaps, recommended_progression, recommended_next_topics, parent_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 payload.get('child_id'),
                 payload.get('student_name'),
@@ -61,6 +67,7 @@ class AppDataService:
                 payload.get('estimated_level'),
                 self._json_text(payload.get('learning_gaps')),
                 self._json_text(payload.get('recommended_progression')),
+                self._json_text(payload.get('recommended_next_topics')),
                 payload.get('parent_summary'),
             ),
         )

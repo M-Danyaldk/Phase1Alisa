@@ -5,7 +5,7 @@ import { LearningContextPanel } from '../components/LearningContextPanel';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiPost } from '../lib/api';
 import { ChatThread, getChatHistory, getChatThreads, getChildChatThreads } from '../lib/chatApi';
-import { ChatMessage, StudentProfile, Subject, TutoringState } from '../types';
+import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState } from '../types';
 
 const subjectDefaults: Record<Subject, string> = {
   Math: 'fractions',
@@ -49,6 +49,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
   const [subject, setSubject] = useState<Subject>(initialSubject);
   const [topic, setTopic] = useState(subjectDefaults[initialSubject]);
+  const [topicSource, setTopicSource] = useState<TopicSource>('default');
   const [input, setInput] = useState('I need help understanding this.');
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'msalisia', content: subjectGreeting(student.name, initialSubject), subject: initialSubject }
@@ -90,6 +91,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setTutoringState(initialTutoringState);
     setSubject(initialSubject);
     setTopic(subjectDefaults[initialSubject]);
+    setTopicSource('default');
     setLastAnnouncedSubject(initialSubject);
     setMessages(greetingFor(initialSubject));
     refreshThreads();
@@ -114,6 +116,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   function applySubjectChange(nextSubject: Subject) {
     setSubject(nextSubject);
     setTopic(subjectDefaults[nextSubject]);
+    setTopicSource('default');
   }
 
   async function startNewChat(nextSubject = subject) {
@@ -124,6 +127,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setLastAnnouncedSubject(nextSubject);
     setSubject(nextSubject);
     setTopic(subjectDefaults[nextSubject]);
+    setTopicSource('default');
   }
 
   async function openThread(thread: ChatThread) {
@@ -137,6 +141,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       setLastAnnouncedSubject(nextSubject);
       setSubject(nextSubject);
       setTopic(thread.topic || subjectDefaults[nextSubject]);
+      setTopicSource('manual');
       setMessages(history.length ? history.map(message => ({
         role: message.role,
         content: message.content,
@@ -176,7 +181,9 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         setActiveThread(null);
       }
       const headers = accessToken ? { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) } : undefined;
-      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, topic: detectedSubject ? subjectDefaults[activeSubject] : topic, message: input, history: messages.slice(-4), tutoring_state: tutoringState, thread_id: thread?.id }, headers);
+      const outgoingTopic = detectedSubject ? subjectDefaults[activeSubject] : topic;
+      const outgoingTopicSource: TopicSource = detectedSubject ? 'default' : topicSource;
+      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, topic: outgoingTopic, topic_source: outgoingTopicSource, message: input, history: messages.slice(-4), tutoring_state: tutoringState, thread_id: thread?.id }, headers);
       setTutoringState(data.tutoring_state);
       if (accessToken && data.history_saved === false) {
         setHistorySetupPending(true);
@@ -186,14 +193,17 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         setThreadError('');
       }
       if (data.thread_id && (!thread || thread.id !== data.thread_id)) {
+        const nextTopic = data.resolved_topic || outgoingTopic;
         setActiveThread({
           id: data.thread_id,
           user_id: '',
           child_id: childId || null,
           subject: activeSubject,
-          topic: detectedSubject ? subjectDefaults[activeSubject] : topic,
+          topic: nextTopic,
           title: input.trim().slice(0, 48),
         });
+        setTopic(nextTopic);
+        setTopicSource('manual');
       }
       setMessages(prev => [...prev, { role: 'msalisia', content: data.reply, provider: data.provider, subject: activeSubject }]);
       if (data.history_saved !== false) {
@@ -240,7 +250,10 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         subject={subject}
         topic={topic}
         onSubjectChange={applySubjectChange}
-        onTopicChange={setTopic}
+        onTopicChange={(nextTopic) => {
+          setTopic(nextTopic);
+          setTopicSource('manual');
+        }}
       />
     </div>
   </div>;

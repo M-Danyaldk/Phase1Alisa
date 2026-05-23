@@ -17,6 +17,7 @@ import { LearningView } from './views/LearningView';
 import { ManageChildrenView } from './views/ManageChildrenView';
 import { ParentOnboardingView } from './views/ParentOnboardingView';
 import { ParentDashboardView } from './views/ParentDashboardView';
+import { PrelaunchLandingView } from './views/PrelaunchLandingView';
 import { ProfileView } from './views/ProfileView';
 import { ReportsView } from './views/ReportsView';
 import { ChildView, ParentView, StudentProfile } from './types';
@@ -82,6 +83,12 @@ export function App() {
     window.addEventListener('popstate', syncPathname);
     return () => window.removeEventListener('popstate', syncPathname);
   }, []);
+
+  useEffect(() => {
+    if (pathname === '/login') setAuthView('login');
+    if (pathname === '/signup') setAuthView('signup');
+    if (pathname === '/verify') setAuthView('verify');
+  }, [pathname]);
 
   function navigate(path: string) {
     window.history.pushState(null, '', path);
@@ -158,6 +165,7 @@ export function App() {
     setChildView('home');
     setProfileLoading(false);
     setChildrenLoading(false);
+    navigate('/dashboard');
   }
 
   function logout() {
@@ -186,10 +194,11 @@ export function App() {
     setAccessMode('parent');
     setAuthView('login');
     setStudentSessionError('');
-    window.location.assign('/');
+    window.location.assign('/login');
   }
 
   function completeStudentLogin(nextSession: StudentSession) {
+    const levels = nextSession.learning_levels || {};
     localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(nextSession));
     setStudentSession(nextSession);
     setStudentMe({
@@ -199,6 +208,7 @@ export function App() {
       student_name: nextSession.student_name,
       grade_level: nextSession.grade_level,
       subjects: ['Math', 'ELA', 'Writing'],
+      learning_levels: levels,
       session_expires_at: nextSession.expires_at,
     });
     setChildView('home');
@@ -295,6 +305,11 @@ export function App() {
     setActiveLearningChildId('');
   }
 
+  const landingPath = pathname === '/';
+  if (landingPath) {
+    return <PrelaunchLandingView onLogin={() => navigate('/login')} />;
+  }
+
   const adminPath = pathname === '/admin' || pathname.startsWith('/admin/');
   if (adminPath) {
     if (!session) {
@@ -365,12 +380,13 @@ export function App() {
       </>;
     }
 
+    const levels = studentMe.learning_levels || {};
     const sessionStudent: StudentProfile = {
       name: studentMe.student_name,
       grade: Number(studentMe.grade_level.replace(/\D/g, '')) || 4,
-      math_level: 'Not assessed yet',
-      ela_level: 'Not assessed yet',
-      writing_level: 'Not assessed yet',
+      math_level: levels.Math || 'Not assessed yet',
+      ela_level: levels.ELA || 'Not assessed yet',
+      writing_level: levels.Writing || 'Not assessed yet',
       confidence: 'Ready to learn',
       focus_notes: 'Student login session',
       parent_notes: '',
@@ -407,18 +423,23 @@ export function App() {
     </ChildShell>;
   }
 
+  const authPath = pathname === '/login' || pathname === '/signup' || pathname === '/verify';
   if (!session) {
+    if (!authPath) {
+      return <PrelaunchLandingView onLogin={() => navigate('/login')} />;
+    }
     return <div className="auth-shell">
       <div className="auth-brand">
         <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
         <span>MsAlisia</span>
       </div>
-      {authView === 'login' && <Login onLoggedIn={completeAuth} onSignup={() => setAuthView('signup')} />}
-      {authView === 'signup' && <Signup onLogin={() => setAuthView('login')} onPendingVerification={(pending) => {
+      {authView === 'login' && <Login onLoggedIn={completeAuth} onSignup={() => { setAuthView('signup'); navigate('/signup'); }} />}
+      {authView === 'signup' && <Signup onLogin={() => { setAuthView('login'); navigate('/login'); }} onPendingVerification={(pending) => {
         setPendingVerification(pending);
         setAuthView('verify');
+        navigate('/verify');
       }} />}
-      {authView === 'verify' && pendingVerification && <VerifyEmail pending={pendingVerification} onPendingChange={setPendingVerification} onVerified={completeAuth} onBack={() => setAuthView('signup')} />}
+      {authView === 'verify' && pendingVerification && <VerifyEmail pending={pendingVerification} onPendingChange={setPendingVerification} onVerified={completeAuth} onBack={() => { setAuthView('signup'); navigate('/signup'); }} />}
       {profileError && <p className="error-note auth-error">{profileError}</p>}
     </div>;
   }

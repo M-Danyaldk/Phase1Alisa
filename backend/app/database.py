@@ -24,8 +24,31 @@ CREATE TABLE IF NOT EXISTS assessment_results (
   estimated_level TEXT,
   learning_gaps TEXT,
   recommended_progression TEXT,
+  recommended_next_topics TEXT,
   parent_summary TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS child_learning_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  child_id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  assessed_level TEXT NOT NULL,
+  learning_gaps TEXT,
+  strengths TEXT,
+  recommended_next_steps TEXT,
+  recommended_next_topics TEXT,
+  last_assessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(child_id, subject)
+);
+CREATE TABLE IF NOT EXISTS waitlist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  source TEXT DEFAULT 'prelaunch_landing',
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS llm_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,6 +74,8 @@ def init_db() -> None:
         columns = [row['name'] for row in conn.execute('PRAGMA table_info(assessment_results)').fetchall()]
         if 'child_id' not in columns:
             conn.execute('ALTER TABLE assessment_results ADD COLUMN child_id TEXT')
+        if 'recommended_next_topics' not in columns:
+            conn.execute('ALTER TABLE assessment_results ADD COLUMN recommended_next_topics TEXT')
         conn.commit()
 
 def execute(query: str, params: tuple[Any, ...] = ()) -> int:

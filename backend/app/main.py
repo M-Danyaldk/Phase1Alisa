@@ -17,13 +17,16 @@ from .routes.child_profiles import router as child_profiles_router
 from .routes.child_reports import router as child_reports_router
 from .routes.student_dashboard import router as student_dashboard_router
 from .routes.student_auth import router as student_auth_router
+from .routes.waitlist import router as waitlist_router
 from .schemas.chat_history import ChatMessageCreateRequest, ChatThreadCreateRequest
 from .services.access_control import require_child_access
 from .services.assessment_service import evaluate_assessment
 from .services.app_data_service import AppDataService
 from .services.chat_store import ChatStore
 from .services.llm.router import LLMRouter
+from .services.learning_profile_service import LearningProfileService
 from .services.tutor_answer_checker import TutorAnswerChecker
+from .services.topic_resolver import TopicResolver
 from .tutoring_logic import build_chat_directives, update_tutoring_state_after_reply
 from .utils.multi_step_progress import build_progress_tracker_directives, update_multi_step_progress
 from .utils.tutor_response import format_student_reply, looks_incomplete_response
@@ -40,6 +43,7 @@ app.include_router(child_reports_router)
 app.include_router(student_dashboard_router)
 app.include_router(student_auth_router)
 app.include_router(chat_history_router)
+app.include_router(waitlist_router)
 
 @app.on_event('startup')
 def startup() -> None:
@@ -71,6 +75,15 @@ async def list_students() -> dict:
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
     child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
+    assessment_context = await LearningProfileService().context_for_child_subject(payload.child_id, payload.subject)
+    topic_resolution = TopicResolver().resolve(
+        subject=payload.subject,
+        topic=payload.topic,
+        topic_source=payload.topic_source,
+        assessment_context=assessment_context,
+    )
+    resolved_topic = topic_resolution['topic']
+    prompt_student = _student_with_assessed_level(payload.student, payload.subject, assessment_context)
     chat_store: ChatStore | None = None
     chat_user_id: str | None = child_user['id']
     chat_thread_id: str | None = payload.thread_id
@@ -82,7 +95,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             thread = await chat_store.create_thread(chat_user_id, ChatThreadCreateRequest(
                 child_id=payload.child_id,
                 subject=payload.subject,
-                topic=payload.topic,
+                topic=resolved_topic,
                 title=payload.message.strip()[:48] or None,
             ))
             chat_thread_id = thread['id']
@@ -93,7 +106,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 role='student',
                 content=payload.message,
                 subject=payload.subject,
-                topic=payload.topic,
+                topic=resolved_topic,
                 tutoring_state=payload.tutoring_state.model_dump(),
             ))
     except Exception as exc:
@@ -144,7 +157,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         *build_progress_tracker_directives(tutoring_state),
         *directives,
     ]
-    system = compact_chat_system_prompt(payload.student, payload.subject, payload.topic, directives, active_task)
+    system = compact_chat_system_prompt(prompt_student, payload.subject, resolved_topic, directives, active_task, assessment_context)
     history = '\n'.join([f'{item.role}: {item.content}' for item in payload.history[-4:]])
     state_summary = (
         f"Mode: {tutoring_state.mode}; "
@@ -175,7 +188,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 role='msalisia',
                 content=formatted_reply,
                 subject=payload.subject,
-                topic=payload.topic,
+                topic=resolved_topic,
                 provider=result.provider,
                 model=result.model,
                 tutoring_state=next_state.model_dump(),
@@ -184,7 +197,19 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         except Exception as exc:
             logger.warning('Chat history save failed after LLM response: %s', exc)
             history_error = str(exc)
-    return ChatResponse(reply=formatted_reply, provider=result.provider, model=result.model, fallback_used=result.fallback_used, tutoring_state=next_state, thread_id=chat_thread_id, history_saved=history_saved, history_error=history_error)
+    return ChatResponse(
+        reply=formatted_reply,
+        provider=result.provider,
+        model=result.model,
+        fallback_used=result.fallback_used,
+        tutoring_state=next_state,
+        thread_id=chat_thread_id,
+        history_saved=history_saved,
+        history_error=history_error,
+        resolved_topic=resolved_topic,
+        topic_source=topic_resolution['source'],
+        assessed_level=topic_resolution.get('assessed_level'),
+    )
 
 
 @app.post('/api/assessments/evaluate', response_model=AssessmentResult)
@@ -233,3 +258,17 @@ async def homework_feedback(
 def future_modules() -> dict:
     modules = ['Voice Learning', 'Mobile App', 'Teacher Portal', 'School/LMS Integrations', 'Advanced Analytics', 'Full K-12 Expansion', 'Advanced Handwriting AI', 'Science', 'Social Studies', 'Test Prep']
     return {'modules': [{'name': name, 'status': 'Coming Soon'} for name in modules]}
+
+
+def _student_with_assessed_level(student: StudentProfile, subject: str, assessment_context: dict | None) -> StudentProfile:
+    assessed_level = (assessment_context or {}).get('assessed_level')
+    if not assessed_level:
+        return student
+    updates = {}
+    if subject == 'Math':
+        updates['math_level'] = assessed_level
+    elif subject == 'ELA':
+        updates['ela_level'] = assessed_level
+    elif subject == 'Writing':
+        updates['writing_level'] = assessed_level
+    return student.model_copy(update=updates) if updates else student

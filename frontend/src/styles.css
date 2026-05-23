@@ -309,6 +309,39 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .student-achievement-card p { margin: 0; color: var(--muted); line-height: 1.45; }
 .student-achievement-card.locked { background: #faf7ff; opacity: .78; }
 .student-achievement-card.in_progress { border-color: #f0d88f; background: var(--gold-soft); }
+.prelaunch-page { min-height: 100vh; padding: 28px; background: radial-gradient(circle at 15% 10%, #efe3ff 0, transparent 34%), linear-gradient(135deg, #fffaf2 0%, #fbf8ff 48%, #f5edff 100%); }
+.prelaunch-shell { width: min(1180px, 100%); margin: 0 auto; min-height: calc(100vh - 56px); display: grid; grid-template-rows: auto 1fr; gap: 34px; }
+.prelaunch-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.prelaunch-brand { display: flex; align-items: center; gap: 14px; }
+.prelaunch-brand img { width: 62px; height: 62px; object-fit: contain; border-radius: 18px; background: white; box-shadow: 0 10px 30px rgba(92, 62, 150, .1); }
+.prelaunch-brand strong { display: block; color: var(--purple-dark); font-size: 28px; line-height: 1; }
+.prelaunch-brand span { display: block; margin-top: 5px; color: var(--muted); font-size: 13px; }
+.prelaunch-login { border: 1px solid var(--border); border-radius: 999px; padding: 11px 18px; color: var(--purple-dark); background: rgba(255,255,255,.84); font-weight: 900; cursor: pointer; }
+.prelaunch-content { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .75fr); gap: 30px; align-items: center; }
+.prelaunch-copy { max-width: 730px; }
+.prelaunch-eyebrow { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px; color: #9a690d; background: var(--gold-soft); border: 1px solid #f0d88f; border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.prelaunch-eyebrow svg { width: 16px; height: 16px; }
+.prelaunch-copy h1 { margin: 0; color: var(--purple-dark); font-size: clamp(40px, 6vw, 76px); line-height: 1.02; letter-spacing: 0; max-width: 920px; }
+.prelaunch-copy > p { margin: 22px 0 0; color: var(--muted); font-size: 20px; line-height: 1.65; max-width: 660px; }
+.prelaunch-form { display: grid; grid-template-columns: minmax(260px, 1fr) auto; gap: 12px; align-items: end; margin-top: 30px; max-width: 720px; }
+.prelaunch-form label { gap: 9px; }
+.prelaunch-input-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; min-height: 58px; padding: 0 16px; border: 1px solid var(--border); border-radius: 18px; background: rgba(255,255,255,.92); box-shadow: 0 12px 34px rgba(92, 62, 150, .06); }
+.prelaunch-input-row svg { width: 20px; height: 20px; color: var(--purple); }
+.prelaunch-input-row input { border: none; border-radius: 0; padding: 0; background: transparent; min-width: 0; }
+.prelaunch-form .primary-button { min-height: 58px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 18px; white-space: nowrap; }
+.prelaunch-form .primary-button svg { width: 18px; height: 18px; }
+.prelaunch-success, .prelaunch-error { display: inline-flex; align-items: center; gap: 9px; margin: 18px 0 0; border-radius: 16px; padding: 12px 14px; font-weight: 800; }
+.prelaunch-success { color: var(--success); background: #eaf8f0; border: 1px solid #c9ead8; }
+.prelaunch-success svg { width: 19px; height: 19px; }
+.prelaunch-error { color: #a43c3c; background: #fff0f0; border: 1px solid #ffd2d2; }
+.prelaunch-trust { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.prelaunch-trust span { display: inline-flex; border-radius: 999px; padding: 8px 11px; color: var(--muted); background: rgba(255,255,255,.72); border: 1px solid var(--border); font-size: 13px; font-weight: 800; }
+.prelaunch-card { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 28px; padding: 28px; background: rgba(255,255,255,.86); box-shadow: 0 24px 70px rgba(92, 62, 150, .12); }
+.prelaunch-card:before { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(141,104,210,.11), rgba(255,244,213,.46)); pointer-events: none; }
+.prelaunch-card > * { position: relative; }
+.prelaunch-card-icon { width: 78px; height: 78px; display: grid; place-items: center; border-radius: 24px; color: var(--purple-dark); background: linear-gradient(135deg, var(--purple-soft), var(--gold-soft)); font-size: 38px; font-weight: 900; }
+.prelaunch-card h2 { margin: 24px 0 14px; color: var(--purple-dark); font-size: 32px; line-height: 1.15; }
+.prelaunch-card ul { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.8; font-weight: 700; }
 @media (max-width: 1180px) { .learning-layout { grid-template-columns: minmax(220px, 260px) minmax(0, 1fr); } .learning-context-panel { grid-column: 1 / -1; position: static; max-height: none; } }
 @media (max-width: 980px) {
   .app-shell { display: block; min-height: 100vh; }
@@ -353,6 +386,9 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .admin-shell .admin-table-scroll { margin: 0; max-width: 100%; }
   .admin-shell .report-filter-card { padding: 14px; gap: 12px; border-radius: 20px; }
   .admin-shell .report-actions { justify-content: stretch; }
+  .prelaunch-content { grid-template-columns: 1fr; align-items: start; }
+  .prelaunch-form { grid-template-columns: minmax(260px, 1fr) auto; }
+  .prelaunch-card { max-width: 680px; }
   main { padding: 22px 16px 28px; overflow: visible; }
 }
 
@@ -392,4 +428,13 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .admin-shell .setting-group-header, .admin-shell .setting-row { align-items: stretch; flex-direction: column; }
   .admin-shell .compact-admin-action { margin-left: 0; }
   .mobile-drawer .logout-button { width: 100%; }
+  .prelaunch-page { padding: 18px; }
+  .prelaunch-shell { min-height: calc(100vh - 36px); gap: 24px; }
+  .prelaunch-header { align-items: flex-start; }
+  .prelaunch-content, .prelaunch-form { grid-template-columns: 1fr; }
+  .prelaunch-copy h1 { font-size: 38px; line-height: 1.08; }
+  .prelaunch-copy > p { font-size: 17px; }
+  .prelaunch-form .primary-button { width: 100%; }
+  .prelaunch-card { padding: 22px; border-radius: 22px; }
+  .prelaunch-card h2 { font-size: 25px; }
 }

@@ -62,6 +62,7 @@ class ChildProfileResponse(BaseModel):
     parental_consent_accepted: bool = False
     created_at: str | None = None
     updated_at: str | None = None
+    learning_levels: dict[str, str] = Field(default_factory=dict)
 
 
 class ChildProfilesResponse(BaseModel):

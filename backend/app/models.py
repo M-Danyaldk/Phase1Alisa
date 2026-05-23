@@ -2,6 +2,7 @@ from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
 
 Subject = Literal['Math', 'ELA', 'Writing']
+TopicSource = Literal['manual', 'default', 'assessment']
 
 class StudentProfile(BaseModel):
     id: Optional[int] = None
@@ -47,6 +48,7 @@ class ChatRequest(BaseModel):
     student: StudentProfile
     subject: Subject
     topic: str = 'general practice'
+    topic_source: TopicSource = 'manual'
     message: str
     history: List[ChatHistoryItem] = Field(default_factory=list)
     tutoring_state: TutoringState = Field(default_factory=TutoringState)
@@ -62,6 +64,9 @@ class ChatResponse(BaseModel):
     thread_id: Optional[str] = None
     history_saved: bool = False
     history_error: Optional[str] = None
+    resolved_topic: Optional[str] = None
+    topic_source: Optional[str] = None
+    assessed_level: Optional[str] = None
 
 class AssessmentRequest(BaseModel):
     student: StudentProfile
@@ -79,6 +84,7 @@ class AssessmentResult(BaseModel):
     strengths: list[str]
     learning_gaps: list[str]
     recommended_progression: list[str]
+    recommended_next_topics: list[str] = Field(default_factory=list)
     parent_summary: str
     provider: str = 'local'
     model: str = 'rules'

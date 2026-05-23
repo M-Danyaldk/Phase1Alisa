@@ -31,6 +31,7 @@ class StudentSessionResponse(BaseModel):
     parent_id: str
     student_name: str
     grade_level: str
+    learning_levels: dict[str, str] = Field(default_factory=dict)
     expires_at: str
     message: str
 
@@ -42,6 +43,7 @@ class StudentMeResponse(BaseModel):
     student_name: str
     grade_level: str
     subjects: list[str]
+    learning_levels: dict[str, str] = Field(default_factory=dict)
     session_expires_at: str
 
 

@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from ..core.security import generate_session_token, hash_pin, hash_session_token, verify_pin
 from ..schemas.student_auth import StudentAccessUpsertRequest, StudentLoginRequest
+from .learning_profile_service import LearningProfileService
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 USERNAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9._-]{2,31}$')
@@ -87,6 +88,7 @@ class StudentAuthService:
             'parent_id': child['parent_id'],
             'student_name': child['name'],
             'grade_level': child['grade_level'],
+            'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
             'expires_at': expires_at.isoformat(),
             'message': 'Student login successful.',
         }
@@ -101,6 +103,7 @@ class StudentAuthService:
             'student_name': child['name'],
             'grade_level': child['grade_level'],
             'subjects': child.get('subjects') or [],
+            'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
             'session_expires_at': session['expires_at'],
         }
 

@@ -20,10 +20,14 @@ export function profileToStudent(profile: ProfileResponse): StudentProfile {
 }
 
 export function childToStudent(child: ChildProfile): StudentProfile {
+  const levels = child.learning_levels || {};
   return {
     ...initialStudent,
     name: child.name,
     grade: gradeNumberFromLabel(child.grade_level),
+    math_level: levels.Math || initialStudent.math_level,
+    ela_level: levels.ELA || initialStudent.ela_level,
+    writing_level: levels.Writing || initialStudent.writing_level,
     focus_notes: child.learning_goals || initialStudent.focus_notes,
     parent_notes: child.parent_notes || initialStudent.parent_notes,
     created_at: child.created_at || undefined

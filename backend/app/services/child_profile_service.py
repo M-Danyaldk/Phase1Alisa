@@ -4,6 +4,7 @@ from urllib.parse import quote
 from fastapi import HTTPException
 
 from ..schemas.child_profile import ChildProfileCreateRequest, ChildProfileUpdateRequest
+from .learning_profile_service import LearningProfileService
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 
@@ -13,7 +14,7 @@ class ChildProfileService:
 
     async def list_children(self, parent_id: str) -> list[dict]:
         try:
-            return await self.supabase.select(
+            records = await self.supabase.select(
                 'child_profiles',
                 f'parent_id=eq.{quote(parent_id)}&order=created_at.asc',
             )
@@ -21,6 +22,7 @@ class ChildProfileService:
             if self._missing_child_profiles_table(exc):
                 return []
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return [await self._with_learning_levels(record) for record in records]
 
     async def create_child(self, parent_id: str, payload: ChildProfileCreateRequest) -> dict:
         status = 'active'
@@ -48,7 +50,7 @@ class ChildProfileService:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not records:
             raise HTTPException(status_code=500, detail='Could not create child profile.')
-        return records[0]
+        return await self._with_learning_levels(records[0])
 
     async def update_child(self, parent_id: str, child_id: str, payload: ChildProfileUpdateRequest) -> dict:
         await self._get_child(parent_id, child_id)
@@ -74,7 +76,7 @@ class ChildProfileService:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not records:
             raise HTTPException(status_code=404, detail='Child profile not found.')
-        return records[0]
+        return await self._with_learning_levels(records[0])
 
     async def deactivate_child(self, parent_id: str, child_id: str) -> dict:
         await self._get_child(parent_id, child_id)
@@ -92,7 +94,7 @@ class ChildProfileService:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not records:
             raise HTTPException(status_code=404, detail='Child profile not found.')
-        return records[0]
+        return await self._with_learning_levels(records[0])
 
     async def reactivate_child(self, parent_id: str, child_id: str) -> dict:
         await self._get_child(parent_id, child_id)
@@ -110,7 +112,15 @@ class ChildProfileService:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not records:
             raise HTTPException(status_code=404, detail='Child profile not found.')
-        return records[0]
+        return await self._with_learning_levels(records[0])
+
+    async def _with_learning_levels(self, child: dict) -> dict:
+        child = dict(child)
+        try:
+            child['learning_levels'] = await LearningProfileService().subject_levels_for_child(child['id'])
+        except Exception:
+            child['learning_levels'] = {}
+        return child
 
     async def _get_child(self, parent_id: str, child_id: str) -> dict:
         try:

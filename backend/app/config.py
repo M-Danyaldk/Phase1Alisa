@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     signup_code_ttl_minutes: int = 10
     signup_code_max_attempts: int = 5
 
+    resend_api_key: str = ''
+    resend_from_email: str = 'enrol@msalisia.com'
+    waitlist_notify_email: str = 'enrol@msalisia.com'
+
     def cors_list(self) -> list[str]:
         return [x.strip() for x in self.cors_origins.split(',') if x.strip()]
 
