@@ -1,8 +1,8 @@
 import { FormEvent, useState } from 'react';
-import { ArrowRight, CheckCircle2, Mail, Sparkles } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { joinWaitlist } from '../lib/api/waitlist';
 
-const successMessage = 'Thank you — we will be in touch soon!';
+const successMessage = 'Thank you - we will be in touch soon!';
 
 function validEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -43,7 +43,7 @@ export function PrelaunchLandingView({ onLogin }: { onLogin: () => void }) {
           <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
           <div>
             <strong>MsAlisia</strong>
-            <span>Your tutor, anytime your child needs help</span>
+            <span>Your child gets a patient, seasoned, brilliant educator - available whenever they need one.</span>
           </div>
         </div>
         <button className="prelaunch-login" type="button" onClick={onLogin}>Login</button>
@@ -51,47 +51,46 @@ export function PrelaunchLandingView({ onLogin }: { onLogin: () => void }) {
 
       <div className="prelaunch-content">
         <div className="prelaunch-copy">
-          <span className="prelaunch-eyebrow"><Sparkles /> Pre-launch access</span>
-          <h1 id="prelaunch-title">Be the first to access MsAlisia — sign up now and receive a free 7-day trial when we launch</h1>
+          <span className="prelaunch-eyebrow">Launching Soon</span>
+          <h1 id="prelaunch-title">Join the MsAlisia early access list.</h1>
           <p>
-            A warm AI-powered learning companion for guided tutoring, assessments, and parent-supervised progress.
+            Be the first to access MsAlisia - sign up now and receive a free 7-day trial when we launch.
           </p>
           <form className="prelaunch-form" onSubmit={submit}>
-            <label>Email address
-              <div className="prelaunch-input-row">
-                <Mail aria-hidden="true" />
-                <input
-                  type="email"
-                  inputMode="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={event => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  disabled={loading}
-                  required
-                />
-              </div>
-            </label>
+            <div className="prelaunch-input-row">
+              <input
+                aria-label="Email address"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                value={email}
+                onChange={event => setEmail(event.target.value)}
+                placeholder="Enter your email address"
+                disabled={loading}
+                required
+              />
+            </div>
             <button className="primary-button" type="submit" disabled={loading}>
-              {loading ? 'Joining...' : <>Join Waitlist <ArrowRight aria-hidden="true" /></>}
+              {loading ? 'Joining...' : 'Join Waitlist'}
             </button>
+            <p>No payment information required. We'll only email you about launch access.</p>
           </form>
           {message && <p className="prelaunch-success"><CheckCircle2 aria-hidden="true" />{message}</p>}
           {error && <p className="prelaunch-error">{error}</p>}
-          <div className="prelaunch-trust">
-            <span>No payment required.</span>
-            <span>Free 7-day trial when we launch.</span>
-          </div>
         </div>
 
         <aside className="prelaunch-card" aria-label="MsAlisia launch preview">
-          <div className="prelaunch-card-icon">A</div>
-          <h2>Learning support that meets each child where they are.</h2>
-          <ul>
-            <li>Guided tutoring for Grades 3-6</li>
-            <li>Assessment-informed practice</li>
-            <li>Parent-supervised learning progress</li>
-          </ul>
+          <div className="prelaunch-feature-panel">
+            <span className="prelaunch-trial-pill">Free 7-Day Trial</span>
+            <h2>Built around how your child learns.</h2>
+            <p>MsAlisia learns how your child thinks, adapts to their level, and keeps you informed, so you can relax knowing they are in good hands.</p>
+            <ul>
+              <li>Your child is always taught at the right level, not just their grade</li>
+              <li>You get a weekly progress report - without asking for one</li>
+              <li>Homework help that actually understands the assignment</li>
+              <li>Tell MsAlisia what to focus on - no judgment, ever</li>
+            </ul>
+          </div>
         </aside>
       </div>
     </section>
