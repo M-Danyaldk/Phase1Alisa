@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { gradeLevelOptions } from '../../constants';
 import { SignupFormValues } from '../../types/auth';
 
 const initialValues: SignupFormValues = {
@@ -76,7 +77,7 @@ export function SignupForm({ onSubmit, onLogin }: { onSubmit: (values: SignupFor
       <label>Email Address<input type="email" value={values.email} onChange={e => setValues({ ...values, email: e.target.value })} /></label>
       <label>Password<input type="password" value={values.password} onChange={e => setValues({ ...values, password: e.target.value })} /></label>
       <label>Confirm Password<input type="password" value={values.confirm_password} onChange={e => setValues({ ...values, confirm_password: e.target.value })} /></label>
-      <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option><option>Grade 3</option><option>Grade 4</option><option>Grade 5</option><option>Grade 6</option></select></label>
+      <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option>{gradeLevelOptions.map(grade => <option key={grade}>{grade}</option>)}</select></label>
       <label>Date of Birth<input type="date" value={values.date_of_birth} onChange={e => setValues({ ...values, date_of_birth: e.target.value })} /></label>
       <label>Parent/Guardian Email<input type="email" value={values.parent_guardian_email} onChange={e => setValues({ ...values, parent_guardian_email: e.target.value })} /></label>
       {error && <p className="error-note">{error}</p>}

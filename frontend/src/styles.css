@@ -171,6 +171,16 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .tutor-identity span { display: block; color: var(--muted); font-size: 12px; line-height: 1.35; }
 .lesson-progress { display: grid; gap: 3px; justify-items: end; border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px; background: #faf7ff; color: var(--muted); font-size: 12px; }
 .lesson-progress strong { color: var(--purple-dark); }
+.session-banner, .session-nudge, .brain-break-lockout { margin: 14px 16px 0; border-radius: 18px; padding: 14px 16px; border: 1px solid var(--border); }
+.session-banner { display: grid; gap: 4px; color: #8a6310; background: var(--gold-soft); border-color: #f0d88f; }
+.session-banner strong, .session-nudge strong, .brain-break-lockout strong { color: var(--purple-dark); }
+.session-banner span, .session-nudge p, .brain-break-lockout p { margin: 0; line-height: 1.5; }
+.session-nudge { display: flex; align-items: center; justify-content: space-between; gap: 14px; background: #faf7ff; }
+.session-nudge p { color: var(--muted); }
+.session-nudge .primary-button { min-height: 44px; white-space: nowrap; }
+.brain-break-lockout { display: grid; gap: 8px; background: #eaf8f0; border-color: #c9ead8; color: var(--success); }
+.brain-break-lockout span { font-weight: 900; }
+.dashboard-notice { margin: 0; border: 1px solid #c9ead8; border-radius: 14px; padding: 10px 12px; background: #eaf8f0; }
 .chat-window { overflow: auto; padding: 24px; display: grid; align-content: start; gap: 14px; background: linear-gradient(180deg, rgba(255,255,255,.75), rgba(245,238,255,.54)); }
 .chat-bubble { max-width: 78%; padding: 14px 16px; border-radius: 20px; }
 .chat-bubble p { margin: 0; line-height: 1.55; white-space: pre-wrap; }
@@ -238,8 +248,6 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .link-button { padding: 8px; }
 .error-note { margin: 0; color: #a43c3c; background: #fff0f0; border: 1px solid #ffd2d2; border-radius: 14px; padding: 10px 12px; font-weight: 700; }
 .auth-error { width: min(100%, 560px); }
-.demo-code-box { background: var(--gold-soft); border: 1px solid #f0d88f; color: #7a590d; border-radius: 18px; padding: 14px; margin-bottom: 18px; }
-.demo-code-box p { margin: 6px 0 0; color: #8a6310; line-height: 1.5; }
 .profile-form h3 { margin: 0 0 4px; color: var(--purple-dark); }
 .profile-form p { margin: 0; color: var(--muted); }
 .profile-header-row { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
@@ -403,6 +411,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .chat-bubble { max-width: 92%; }
   .chat-window { padding: 16px; }
   .chat-input { grid-template-columns: 1fr; }
+  .session-nudge { align-items: stretch; flex-direction: column; }
   .primary-button, .secondary-button { width: 100%; }
   .admin-shell .secondary-button.compact, .admin-shell .primary-button.compact-admin-action { width: auto; }
   .admin-shell .report-actions .secondary-button, .admin-shell .report-filter-actions .secondary-button { width: 100%; }

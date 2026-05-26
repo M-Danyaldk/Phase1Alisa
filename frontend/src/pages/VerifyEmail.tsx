@@ -22,8 +22,8 @@ export function VerifyEmail({
     const result = await resendSignupCode(pending.email);
     onPendingChange({
       email: result.email,
-      demo_code: result.demo_code,
-      expires_in_minutes: result.expires_in_minutes
+      expires_in_minutes: result.expires_in_minutes,
+      message: result.message
     });
   }
 

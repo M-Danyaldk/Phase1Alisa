@@ -49,11 +49,8 @@ export function VerificationCodeForm({
     <div className="auth-heading">
       <span>Email Verification</span>
       <h2>Enter your 6-digit code</h2>
-      <p>We generated a verification code for {pending.email}. It expires in {pending.expires_in_minutes} minutes.</p>
-    </div>
-    <div className="demo-code-box">
-      <strong>Demo verification code: {pending.demo_code}</strong>
-      <p>This is shown on screen for demo/testing only. Later this code should be delivered by email.</p>
+      <p>We sent a verification code to {pending.email}. Please check your inbox. It expires in {pending.expires_in_minutes} minutes.</p>
+      {pending.message && <p>{pending.message}</p>}
     </div>
     <div className="auth-form">
       <label>Verification Code<input inputMode="numeric" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} /></label>

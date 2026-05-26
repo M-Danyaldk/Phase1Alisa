@@ -25,7 +25,6 @@ class SignupStartRequest(BaseModel):
 
 class SignupStartResponse(BaseModel):
     email: EmailStr
-    demo_code: str
     expires_in_minutes: int
     message: str
 
@@ -89,6 +88,5 @@ class ResendCodeRequest(BaseModel):
 
 class ResendCodeResponse(BaseModel):
     email: EmailStr
-    demo_code: str
     expires_in_minutes: int
     message: str

@@ -10,7 +10,6 @@ export type SignupFormValues = {
 
 export type SignupStartResponse = {
   email: string;
-  demo_code: string;
   expires_in_minutes: number;
   message: string;
 };
@@ -54,6 +53,6 @@ export type ProfileUpdateValues = {
 
 export type PendingVerification = {
   email: string;
-  demo_code: string;
   expires_in_minutes: number;
+  message?: string;
 };

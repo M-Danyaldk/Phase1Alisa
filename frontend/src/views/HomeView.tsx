@@ -16,12 +16,14 @@ export function HomeView({
   accessToken = '',
   childId = '',
   studentSession = false,
+  notice = '',
   setView,
 }: {
   student: StudentProfile;
   accessToken?: string;
   childId?: string;
   studentSession?: boolean;
+  notice?: string;
   setView: (v: View) => void;
 }) {
   const [dashboard, setDashboard] = useState<StudentDashboardData>(() => buildStudentDashboardMock(student));
@@ -49,6 +51,7 @@ export function HomeView({
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Student Dashboard" title={`${student.name}'s learning home`} desc="A focused view of progress, recent activity, achievements, and the next best learning actions." />
+    {notice && <p className="success-note dashboard-notice">{notice}</p>}
     {loading && <p className="muted-note">Loading student dashboard...</p>}
     {error && <p className="error-note">{error}</p>}
 

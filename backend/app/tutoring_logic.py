@@ -160,7 +160,8 @@ def infer_active_problem(message: str, history: list[ChatHistoryItem], state: Tu
 
 def _base_directives() -> list[str]:
     return [
-        'Keep the reply short and simple for Grades 3 to 6.',
+        'Keep the reply short and appropriate for Grades 3 to 12.',
+        'Use the assessed working level for the active subject when available; otherwise use enrolled grade.',
         'Use easy words and keep most replies to 3 short sentences or less.',
         'If you show steps, keep each step very short.',
         'Use short paragraphs and clear spacing.',

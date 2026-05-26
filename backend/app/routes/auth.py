@@ -28,7 +28,6 @@ def _bearer_token(authorization: str) -> str:
 async def start_signup(payload: SignupStartRequest) -> SignupStartResponse:
     service = VerificationService()
     result = await service.start_signup(payload)
-    # Temporary for demo/testing only. Replace demo_code display with email delivery later.
     return SignupStartResponse(**result)
 
 
@@ -71,5 +70,4 @@ async def upload_avatar(file: UploadFile = File(...), authorization: str = Heade
 async def resend_code(payload: ResendCodeRequest) -> ResendCodeResponse:
     service = VerificationService()
     result = await service.resend_code(str(payload.email))
-    # Temporary for demo/testing only. Replace demo_code display with email delivery later.
     return ResendCodeResponse(**result)

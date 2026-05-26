@@ -1,5 +1,10 @@
 import { StudentProfile, Subject } from './types';
 
+export const supportedGrades = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+export const gradeLevelOptions = supportedGrades.map(grade => `Grade ${grade}`);
+export const launchSubjects: Subject[] = ['Math', 'ELA', 'Writing'];
+export const futureSubjects = ['Science', 'Social Studies'];
+
 export const initialStudent: StudentProfile = {
   name: 'Ava',
   grade: 4,
@@ -35,7 +40,7 @@ export const futureModules = [
   { title: 'Teacher Portal', desc: 'Classroom and educator workflows.' },
   { title: 'School/LMS Integrations', desc: 'School platform integrations in later phases.' },
   { title: 'Advanced Analytics', desc: 'Deeper learning trends and visual analytics.' },
-  { title: 'Full K-12 Expansion', desc: 'Expansion beyond Grades 3-6.' },
+  { title: 'Post-launch Subject Expansion', desc: 'Science and Social Studies support after launch.' },
   { title: 'Advanced Handwriting AI', desc: 'Detailed handwriting scoring beyond lightweight feedback.' },
   { title: 'Science & Social Studies', desc: 'Additional subject support after MVP.' }
 ];

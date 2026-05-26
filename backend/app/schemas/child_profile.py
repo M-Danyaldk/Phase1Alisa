@@ -11,7 +11,7 @@ SubjectName = Literal['Math', 'ELA', 'Writing']
 
 class ChildProfileCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    grade_level: str = Field(pattern=r'^Grade [3-6]$')
+    grade_level: str = Field(pattern=r'^Grade ([3-9]|1[0-2])$')
     date_of_birth: date | None = None
     subjects: list[SubjectName] = Field(default_factory=lambda: ['Math', 'ELA', 'Writing'])
     learning_goals: str = ''
@@ -30,7 +30,7 @@ class ChildProfileCreateRequest(BaseModel):
 
 class ChildProfileUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    grade_level: str = Field(pattern=r'^Grade [3-6]$')
+    grade_level: str = Field(pattern=r'^Grade ([3-9]|1[0-2])$')
     date_of_birth: date | None = None
     subjects: list[SubjectName] = Field(default_factory=lambda: ['Math', 'ELA', 'Writing'])
     learning_goals: str = ''

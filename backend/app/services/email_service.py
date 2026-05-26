@@ -188,6 +188,12 @@ class EmailService:
             metadata=metadata,
         )
 
+    async def send_signup_verification_code(self, *, recipient_email: str, code: str, expires_in_minutes: int) -> str | None:
+        if not self.settings.resend_api_key.strip():
+            raise RuntimeError('RESEND_API_KEY is not configured.')
+        content = self._signup_verification_code(code, expires_in_minutes)
+        return await self._send_resend_email(recipient_email.strip().lower(), content)
+
     async def process_due_events(self, limit: int = 25) -> dict:
         if not self.supabase.configured():
             return {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, 'message': 'Supabase is not configured.'}
@@ -594,6 +600,17 @@ class EmailService:
                 'To get started, create or review your child profile, choose the subjects your child will practice, and begin with a short assessment.',
                 'Ms. Alisia will use that assessment to make tutoring feel helpful, warm, and personalized.',
                 f'Open MsAlisia: {app_url}',
+                'The MsAlisia Team',
+            ],
+        )
+
+    def _signup_verification_code(self, code: str, expires_in_minutes: int) -> EmailContent:
+        return self._content(
+            'Your MsAlisia verification code',
+            [
+                f'Your verification code is: {code}.',
+                f'This code expires in {expires_in_minutes} minutes.',
+                'If you did not request this, you can ignore this email.',
                 'The MsAlisia Team',
             ],
         )

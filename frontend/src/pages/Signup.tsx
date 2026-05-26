@@ -13,8 +13,8 @@ export function Signup({
     const result = await startSignup(values);
     onPendingVerification({
       email: result.email,
-      demo_code: result.demo_code,
-      expires_in_minutes: result.expires_in_minutes
+      expires_in_minutes: result.expires_in_minutes,
+      message: result.message
     });
   }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { SectionHeader } from '../components/SectionHeader';
+import { gradeLevelOptions } from '../constants';
 import { updateCurrentProfile, uploadProfileAvatar } from '../lib/api/auth';
 import { ProfileResponse, ProfileUpdateValues } from '../types/auth';
 
@@ -118,7 +119,7 @@ export function ProfileView({
       <label>Email Address<input value={profile.email} disabled /></label>
       {isAdminProfile && <label>Admin Role<input value={profile.role || 'admin'} disabled /></label>}
       {!isAdminProfile && <>
-        <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option><option>Grade 3</option><option>Grade 4</option><option>Grade 5</option><option>Grade 6</option></select></label>
+        <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option>{gradeLevelOptions.map(grade => <option key={grade}>{grade}</option>)}</select></label>
         <label>Date of Birth<input type="date" value={values.date_of_birth} onChange={e => setValues({ ...values, date_of_birth: e.target.value })} /></label>
         <label>Parent/Guardian Email<input type="email" value={values.parent_guardian_email} onChange={e => setValues({ ...values, parent_guardian_email: e.target.value })} /></label>
       </>}

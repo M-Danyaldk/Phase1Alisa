@@ -68,6 +68,7 @@ export function App() {
   const [studentMe, setStudentMe] = useState<StudentMe | null>(null);
   const [studentSessionLoading, setStudentSessionLoading] = useState(() => Boolean(localStorage.getItem(STUDENT_SESSION_KEY)));
   const [studentSessionError, setStudentSessionError] = useState('');
+  const [childDashboardNotice, setChildDashboardNotice] = useState('');
 
   useEffect(() => {
     checkHealth().then(() => setConnected('online')).catch(() => setConnected('offline'));
@@ -194,6 +195,7 @@ export function App() {
     const levels = nextSession.learning_levels || {};
     localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(nextSession));
     setStudentSession(nextSession);
+    setChildDashboardNotice('');
     setStudentMe({
       role: 'child',
       child_id: nextSession.child_id,
@@ -217,6 +219,7 @@ export function App() {
     localStorage.removeItem(STUDENT_SESSION_KEY);
     setStudentSession(null);
     setStudentMe(null);
+    setChildDashboardNotice('');
     setChildView('home');
     if (token) {
       try { await studentLogout(token); } catch { /* already cleared locally */ }
@@ -403,14 +406,27 @@ export function App() {
             <p>{childBlockedMessage}</p>
           </section>
         </div>}
-        {!childAccessBlocked && childView === 'home' && <HomeView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession setView={(view) => {
+        {!childAccessBlocked && childView === 'home' && <HomeView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession notice={childDashboardNotice} setView={(view) => {
+          setChildDashboardNotice('');
           if (view === 'learn' || view === 'assessments' || view === 'homework') setChildView(view);
         }} />}
-        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
+        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession onInactivePause={(message) => {
+          setChildDashboardNotice(message);
+          setChildView('home');
+        }} />}
         {!childAccessBlocked && childView === 'assessments' && <AssessmentView student={sessionStudent} setStudent={setStudent} childId={studentMe.child_id} accessToken={studentSession.access_token} studentSession />}
-        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession />}
-        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession />}
-        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession />}
+        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession onInactivePause={(message) => {
+          setChildDashboardNotice(message);
+          setChildView('home');
+        }} />}
+        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession onInactivePause={(message) => {
+          setChildDashboardNotice(message);
+          setChildView('home');
+        }} />}
+        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession onInactivePause={(message) => {
+          setChildDashboardNotice(message);
+          setChildView('home');
+        }} />}
         {!childAccessBlocked && childView === 'homework' && <HomeworkView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
       </ChildOnly>
     </ChildShell>;

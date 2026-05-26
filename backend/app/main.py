@@ -5,7 +5,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .curriculum import CURRICULUM
+from .curriculum import curriculum_payload
 from .database import init_db
 from .models import AssessmentRequest, AssessmentResult, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile
 from .prompts import compact_chat_system_prompt, homework_prompt
@@ -16,6 +16,7 @@ from .routes.billing import router as billing_router
 from .routes.child_profiles import router as child_profiles_router
 from .routes.child_reports import router as child_reports_router
 from .routes.internal_email import router as internal_email_router
+from .routes.session_activity import router as session_activity_router
 from .routes.student_dashboard import router as student_dashboard_router
 from .routes.student_auth import router as student_auth_router
 from .routes.waitlist import router as waitlist_router
@@ -26,6 +27,7 @@ from .services.app_data_service import AppDataService
 from .services.chat_store import ChatStore
 from .services.llm.router import LLMRouter
 from .services.learning_profile_service import LearningProfileService
+from .services.session_activity_service import SessionActivityService
 from .services.tutor_answer_checker import TutorAnswerChecker
 from .services.topic_resolver import TopicResolver
 from .tutoring_logic import build_chat_directives, update_tutoring_state_after_reply
@@ -42,6 +44,7 @@ app.include_router(billing_router)
 app.include_router(child_profiles_router)
 app.include_router(child_reports_router)
 app.include_router(internal_email_router)
+app.include_router(session_activity_router)
 app.include_router(student_dashboard_router)
 app.include_router(student_auth_router)
 app.include_router(chat_history_router)
@@ -60,7 +63,7 @@ def health() -> dict:
 
 @app.get('/api/curriculum')
 def curriculum() -> dict:
-    return {'grades': [3, 4, 5, 6], 'subjects': CURRICULUM}
+    return curriculum_payload()
 
 
 @app.post('/api/students')
@@ -79,6 +82,15 @@ async def list_students(authorization: str = Header(default=''), x_access_mode: 
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
     child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
+    if payload.child_id:
+        await SessionActivityService().ensure_can_tutor(child_user['id'], payload.child_id)
+        await SessionActivityService().record_activity(
+            child_user['id'],
+            payload.child_id,
+            subject=payload.subject,
+            topic=payload.topic,
+            event_type='message_sent',
+        )
     assessment_context = await LearningProfileService().context_for_child_subject(payload.child_id, payload.subject)
     topic_resolution = TopicResolver().resolve(
         subject=payload.subject,
@@ -201,6 +213,13 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         except Exception as exc:
             logger.warning('Chat history save failed after LLM response: %s', exc)
             history_error = str(exc)
+    if payload.child_id:
+        await SessionActivityService().exchange_complete(
+            child_user['id'],
+            payload.child_id,
+            subject=payload.subject,
+            topic=resolved_topic,
+        )
     return ChatResponse(
         reply=formatted_reply,
         provider=result.provider,
@@ -294,13 +313,13 @@ def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> 
 
 def _grade_number(value: object) -> int | None:
     if isinstance(value, int):
-        return value if 3 <= value <= 6 else None
+        return value if 3 <= value <= 12 else None
     text = str(value or '')
     digits = ''.join(character for character in text if character.isdigit())
     if not digits:
         return None
     grade = int(digits)
-    return grade if 3 <= grade <= 6 else None
+    return grade if 3 <= grade <= 12 else None
 
 
 def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentResult:

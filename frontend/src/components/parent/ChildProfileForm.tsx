@@ -1,7 +1,8 @@
 import { ReactNode, useMemo, useState } from 'react';
+import { gradeLevelOptions, launchSubjects } from '../../constants';
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../../types/childProfile';
 
-const subjects: ChildSubject[] = ['Math', 'ELA', 'Writing'];
+const subjects = launchSubjects as ChildSubject[];
 
 const defaultValues: ChildProfileFormValues = {
   name: '',
@@ -89,10 +90,7 @@ export function ChildProfileForm({
     </label>
     <label>Grade level
       <select value={values.grade_level} onChange={event => setValues(prev => ({ ...prev, grade_level: event.target.value }))}>
-        <option>Grade 3</option>
-        <option>Grade 4</option>
-        <option>Grade 5</option>
-        <option>Grade 6</option>
+        {gradeLevelOptions.map(grade => <option key={grade}>{grade}</option>)}
       </select>
     </label>
     <label>Date of birth

@@ -45,7 +45,7 @@ class VerificationService:
             'parent_guardian_email': str(payload.parent_guardian_email).lower() if payload.parent_guardian_email else None,
         }
         try:
-            await self.supabase.insert('signup_verification_codes', {
+            records = await self.supabase.insert('signup_verification_codes', {
                 'email': email,
                 'hashed_code': hash_verification_code(code),
                 'expires_at': expires_at.isoformat(),
@@ -55,11 +55,12 @@ class VerificationService:
             })
         except SupabaseClientError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        record_id = records[0].get('id') if records else None
+        await self._send_signup_verification_email(email, code, record_id)
         return {
             'email': email,
-            'demo_code': code,
             'expires_in_minutes': self.settings.signup_code_ttl_minutes,
-            'message': 'Verification code generated.',
+            'message': 'We sent a verification code to your email. Please check your inbox.',
         }
 
     async def resend_code(self, email: str) -> dict:
@@ -71,7 +72,7 @@ class VerificationService:
         expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.signup_code_ttl_minutes)
         await self._expire_existing_codes(email.lower())
         try:
-            await self.supabase.insert('signup_verification_codes', {
+            records = await self.supabase.insert('signup_verification_codes', {
                 'email': email.lower(),
                 'hashed_code': hash_verification_code(code),
                 'expires_at': expires_at.isoformat(),
@@ -81,11 +82,12 @@ class VerificationService:
             })
         except SupabaseClientError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        record_id = records[0].get('id') if records else None
+        await self._send_signup_verification_email(email.lower(), code, record_id)
         return {
             'email': email.lower(),
-            'demo_code': code,
             'expires_in_minutes': self.settings.signup_code_ttl_minutes,
-            'message': 'New verification code generated.',
+            'message': 'We sent a new verification code to your email. Please check your inbox.',
         }
 
     async def verify_signup(self, email: str, code: str) -> dict:
@@ -329,6 +331,22 @@ class VerificationService:
 
     async def _increment_attempts(self, record_id: str, attempts: int) -> None:
         await self.supabase.update('signup_verification_codes', {'id': f'eq.{record_id}'}, {'attempts': attempts})
+
+    async def _send_signup_verification_email(self, email: str, code: str, record_id: str | None) -> None:
+        try:
+            await EmailService().send_signup_verification_code(
+                recipient_email=email,
+                code=code,
+                expires_in_minutes=self.settings.signup_code_ttl_minutes,
+            )
+        except Exception as exc:
+            if record_id:
+                try:
+                    await self._mark_code_used(record_id)
+                except Exception:
+                    pass
+            logger.warning('Signup verification email failed: %s', exc)
+            raise HTTPException(status_code=503, detail='We could not send the verification email. Please try again.') from exc
 
     def _parse_datetime(self, value: str) -> datetime:
         normalized = value.replace('Z', '+00:00')

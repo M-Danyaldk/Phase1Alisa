@@ -142,7 +142,7 @@ class TutorAnswerChecker:
         expected_answer: str,
     ) -> AnswerCheckResult:
         system = (
-            'You are checking a Grades 3-6 tutor practice answer. '
+            'You are checking a Grades 3-12 tutor practice answer. '
             'Return compact JSON only with keys: status, expected_answer, feedback_note. '
             'status must be one of: correct, partially_correct, incorrect, unclear.'
         )
