@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     resend_api_key: str = ''
     resend_from_email: str = 'enrol@msalisia.com'
     waitlist_notify_email: str = 'enrol@msalisia.com'
+    internal_cron_secret: str = ''
+    app_public_url: str = ''
+
+    stripe_secret_key: str = ''
+    stripe_webhook_secret: str = ''
+    stripe_text_monthly_price_id: str = ''
+    stripe_text_annual_price_id: str = ''
+    stripe_voice_monthly_price_id: str = ''
+    stripe_voice_annual_price_id: str = ''
+    stripe_family_discount_coupon_id: str = ''
+    stripe_success_url: str = ''
+    stripe_cancel_url: str = ''
+    stripe_customer_portal_return_url: str = ''
 
     def cors_list(self) -> list[str]:
         return [x.strip() for x in self.cors_origins.split(',') if x.strip()]

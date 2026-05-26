@@ -41,7 +41,8 @@ export function HomeView({
       .then(setDashboard)
       .catch(err => {
         setDashboard(fallback);
-        setError(err instanceof Error ? err.message : 'Could not load student dashboard data.');
+        const message = err instanceof Error ? err.message : 'Could not load student dashboard data.';
+        setError(childFriendlyMessage(message));
       })
       .finally(() => setLoading(false));
   }, [accessToken, childId, student, studentSession]);
@@ -64,4 +65,12 @@ export function HomeView({
       <StudentAchievementCards achievements={dashboard.achievements} />
     </div>
   </div>;
+}
+
+function childFriendlyMessage(message: string): string {
+  if (message.includes('There is something your parent needs to take care of')) return message;
+  if (message.toLowerCase().includes('payment') || message.toLowerCase().includes('billing') || message.toLowerCase().includes('subscription')) {
+    return 'There is something your parent needs to take care of before learning can continue.';
+  }
+  return message;
 }

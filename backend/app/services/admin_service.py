@@ -112,7 +112,7 @@ class AdminService:
         for row in access_rows:
             child = children_by_id.get(row.get('child_id'), {})
             records.append({
-                **row,
+                **self._subscription_admin_view(row),
                 'child_name': child.get('name', 'Student'),
                 'grade_level': child.get('grade_level'),
             })
@@ -381,6 +381,19 @@ class AdminService:
         if not isinstance(permissions, list):
             return []
         return sorted({permission for permission in permissions if permission in ALL_ADMIN_PERMISSIONS})
+
+    def _subscription_admin_view(self, row: dict) -> dict:
+        hidden = {
+            'stripe_customer_id',
+            'stripe_subscription_id',
+            'stripe_price_id',
+            'latest_invoice_id',
+            'latest_payment_intent_id',
+            'stripe_coupon_id',
+            'non_refundable_policy_accepted_at',
+            'non_refundable_policy_version',
+        }
+        return {key: value for key, value in row.items() if key not in hidden}
 
     def _latest_date(self, values: list[str | None]) -> str | None:
         dates = []

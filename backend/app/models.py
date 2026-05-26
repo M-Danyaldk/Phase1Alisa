@@ -89,6 +89,20 @@ class AssessmentResult(BaseModel):
     provider: str = 'local'
     model: str = 'rules'
 
+
+class ChildAssessmentResult(BaseModel):
+    subject: Subject
+    child_message: str
+    estimated_level: str = 'Learning path ready'
+    score_label: str = 'Great job'
+    strengths: list[str] = Field(default_factory=list)
+    learning_gaps: list[str] = Field(default_factory=list)
+    recommended_progression: list[str] = Field(default_factory=list)
+    recommended_next_topics: list[str] = Field(default_factory=list)
+    parent_summary: str = ''
+    provider: str = 'local'
+    model: str = 'rules'
+
 class HomeworkFeedbackResponse(BaseModel):
     feedback: str
     provider: str

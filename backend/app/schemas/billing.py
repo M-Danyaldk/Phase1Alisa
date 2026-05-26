@@ -3,6 +3,9 @@ from typing import Literal
 from pydantic import BaseModel
 
 AccessStatus = Literal['trial', 'active', 'inactive', 'past_due']
+PlanKey = Literal['text_monthly', 'text_annual', 'voice_monthly', 'voice_annual']
+PlanType = Literal['text', 'voice']
+BillingInterval = Literal['monthly', 'annual']
 
 
 class ChildAccessResponse(BaseModel):
@@ -13,8 +16,17 @@ class ChildAccessResponse(BaseModel):
     grade_level: str
     access_status: AccessStatus
     plan_name: str
+    plan_type: PlanType | None = None
+    billing_interval: BillingInterval | None = None
+    voice_enabled: bool = False
+    voice_allowed: bool = False
+    feature_mode: Literal['chat_only', 'chat_and_voice'] = 'chat_only'
     trial_ends_at: str | None = None
+    trial_started_at: str | None = None
     current_period_ends_at: str | None = None
+    current_period_started_at: str | None = None
+    grace_period_ends_at: str | None = None
+    access_paused_reason: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -26,3 +38,73 @@ class ChildAccessListResponse(BaseModel):
 class ChildAccessUpdateRequest(BaseModel):
     access_status: AccessStatus
     plan_name: str = 'Phase 1 MVP'
+    plan_key: PlanKey = 'text_monthly'
+
+
+class BillingPlanResponse(BaseModel):
+    plan_key: PlanKey
+    plan_type: PlanType
+    billing_interval: BillingInterval
+    display_name: str
+    price_label: str
+    annual_discount_label: str | None = None
+    stripe_price_env: str
+    stripe_price_configured: bool
+    voice_enabled: bool
+
+
+class BillingPlansResponse(BaseModel):
+    plans: list[BillingPlanResponse]
+
+
+class BillingStatusResponse(BaseModel):
+    parent_id: str
+    email: str
+    trial_available: bool
+    trial_blocked_reason: str | None = None
+    children: list[ChildAccessResponse]
+    plans: list[BillingPlanResponse]
+
+
+class StartTrialRequest(BaseModel):
+    child_id: str
+    plan_key: PlanKey = 'text_monthly'
+
+
+class StartTrialResponse(BaseModel):
+    child: ChildAccessResponse
+    trial_started_at: str
+    trial_ends_at: str
+    trial_available: bool = False
+    message: str
+
+
+class CheckoutSessionRequest(BaseModel):
+    child_id: str
+    plan_key: PlanKey
+
+
+class CheckoutSessionResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+
+
+class CustomerPortalRequest(BaseModel):
+    child_id: str | None = None
+
+
+class CustomerPortalResponse(BaseModel):
+    portal_url: str
+    session_id: str
+
+
+class StripeWebhookResponse(BaseModel):
+    received: bool
+    event_id: str | None = None
+    event_type: str | None = None
+    status: str
+
+
+class GraceExpirationResponse(BaseModel):
+    paused_count: int
+    checked_at: str

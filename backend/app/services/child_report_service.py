@@ -184,8 +184,11 @@ class ChildReportService:
             id=row.get('id'),
             subject=row.get('subject') or 'Unknown',
             estimated_level=row.get('estimated_level') or 'Not assessed yet',
+            score_label=row.get('score_label'),
+            strengths=self._json_list(row.get('strengths')),
             learning_gaps=self._json_list(row.get('learning_gaps')),
             recommended_progression=self._json_list(row.get('recommended_progression')),
+            recommended_next_topics=self._json_list(row.get('recommended_next_topics')),
             parent_summary=row.get('parent_summary'),
             created_at=row.get('created_at'),
         )
@@ -215,7 +218,9 @@ class ChildReportService:
     def _strengths(self, progress: list[SubjectProgress], assessments: list[AssessmentSummary]) -> list[str]:
         strengths: list[str] = []
         for item in assessments:
-            if item.estimated_level and 'needs review' not in item.estimated_level.lower():
+            if item.strengths:
+                strengths.extend([f'{item.subject}: {strength}' for strength in item.strengths[:2]])
+            elif item.estimated_level and 'needs review' not in item.estimated_level.lower():
                 strengths.append(f'{item.subject}: working at {item.estimated_level}.')
         for item in progress:
             if item.message_count >= 4:

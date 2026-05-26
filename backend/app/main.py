@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .curriculum import CURRICULUM
 from .database import init_db
-from .models import AssessmentRequest, AssessmentResult, ChatRequest, ChatResponse, HomeworkFeedbackResponse, StudentProfile
+from .models import AssessmentRequest, AssessmentResult, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile
 from .prompts import compact_chat_system_prompt, homework_prompt
 from .routers.chat_history import router as chat_history_router
 from .routes.admin import router as admin_router
@@ -15,11 +15,12 @@ from .routes.auth import router as auth_router
 from .routes.billing import router as billing_router
 from .routes.child_profiles import router as child_profiles_router
 from .routes.child_reports import router as child_reports_router
+from .routes.internal_email import router as internal_email_router
 from .routes.student_dashboard import router as student_dashboard_router
 from .routes.student_auth import router as student_auth_router
 from .routes.waitlist import router as waitlist_router
 from .schemas.chat_history import ChatMessageCreateRequest, ChatThreadCreateRequest
-from .services.access_control import require_child_access
+from .services.access_control import require_child_access, require_parent_access, require_student_child_access
 from .services.assessment_service import evaluate_assessment
 from .services.app_data_service import AppDataService
 from .services.chat_store import ChatStore
@@ -40,6 +41,7 @@ app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(child_profiles_router)
 app.include_router(child_reports_router)
+app.include_router(internal_email_router)
 app.include_router(student_dashboard_router)
 app.include_router(student_auth_router)
 app.include_router(chat_history_router)
@@ -62,13 +64,15 @@ def curriculum() -> dict:
 
 
 @app.post('/api/students')
-async def save_student(student: StudentProfile) -> dict:
+async def save_student(student: StudentProfile, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> dict:
+    await require_parent_access(authorization, x_access_mode)
     student_id = await AppDataService().save_student(student)
     return {'ok': True, 'student_id': student_id}
 
 
 @app.get('/api/students')
-async def list_students() -> dict:
+async def list_students(authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> dict:
+    await require_parent_access(authorization, x_access_mode)
     return {'students': await AppDataService().list_students(limit=50)}
 
 
@@ -212,10 +216,18 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     )
 
 
-@app.post('/api/assessments/evaluate', response_model=AssessmentResult)
-async def assessments(payload: AssessmentRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> AssessmentResult:
-    await require_child_access(authorization, payload.child_id, x_access_mode)
-    return await evaluate_assessment(payload)
+@app.post('/api/assessments/evaluate', response_model=ChildAssessmentResult)
+async def assessments(payload: AssessmentRequest, authorization: str = Header(default='')) -> ChildAssessmentResult:
+    student_access = await require_student_child_access(authorization, payload.child_id)
+    child = student_access.get('child') or {}
+    sanitized_student = _student_from_child_for_assessment(payload.student, child)
+    sanitized_payload = payload.model_copy(update={
+        'student': sanitized_student,
+        'grade': sanitized_student.grade,
+        'child_id': student_access['child_id'],
+    })
+    result = await evaluate_assessment(sanitized_payload, parent_id=student_access['id'])
+    return _child_safe_assessment_result(result)
 
 
 @app.post('/api/homework/lightweight-feedback', response_model=HomeworkFeedbackResponse)
@@ -272,3 +284,37 @@ def _student_with_assessed_level(student: StudentProfile, subject: str, assessme
     elif subject == 'Writing':
         updates['writing_level'] = assessed_level
     return student.model_copy(update=updates) if updates else student
+
+
+def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> StudentProfile:
+    child_name = child.get('name') or student.name
+    grade = _grade_number(child.get('grade_level')) or student.grade
+    return student.model_copy(update={'name': child_name, 'grade': grade})
+
+
+def _grade_number(value: object) -> int | None:
+    if isinstance(value, int):
+        return value if 3 <= value <= 6 else None
+    text = str(value or '')
+    digits = ''.join(character for character in text if character.isdigit())
+    if not digits:
+        return None
+    grade = int(digits)
+    return grade if 3 <= grade <= 6 else None
+
+
+def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentResult:
+    message = 'Great job! Ms. Alisia found some fun things to practice with you. Let us get started!'
+    return ChildAssessmentResult(
+        subject=result.subject,
+        child_message=message,
+        estimated_level='Learning path ready',
+        score_label='Great job',
+        strengths=[message],
+        learning_gaps=[],
+        recommended_progression=['Ms. Alisia has picked a helpful next step for you.'],
+        recommended_next_topics=[],
+        parent_summary=message,
+        provider=result.provider,
+        model=result.model,
+    )

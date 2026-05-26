@@ -17,8 +17,11 @@ export type AssessmentSummary = {
   id?: number | string | null;
   subject: string;
   estimated_level: string;
+  score_label?: string | null;
+  strengths: string[];
   learning_gaps: string[];
   recommended_progression: string[];
+  recommended_next_topics: string[];
   parent_summary?: string | null;
   created_at?: string | null;
 };

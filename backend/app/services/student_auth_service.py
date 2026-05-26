@@ -64,6 +64,7 @@ class StudentAuthService:
         if not access or not access.get('is_active') or not verify_pin(payload.pin, access.get('pin_hash') or ''):
             raise HTTPException(status_code=401, detail='Please check the username and PIN, then try again.')
         child = await self._child(access['parent_id'], access['child_id'], require_active=True)
+        access_state = await self._billing_state(child)
         token = generate_session_token()
         expires_at = datetime.now(UTC) + timedelta(hours=SESSION_HOURS)
         token_hash = hash_session_token(token)
@@ -89,6 +90,7 @@ class StudentAuthService:
             'student_name': child['name'],
             'grade_level': child['grade_level'],
             'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
+            **access_state,
             'expires_at': expires_at.isoformat(),
             'message': 'Student login successful.',
         }
@@ -96,6 +98,7 @@ class StudentAuthService:
     async def current_student(self, token: str) -> dict:
         session = await self.session_from_token(token)
         child = await self._child(session['parent_id'], session['child_id'], require_active=True)
+        access_state = await self._billing_state(child)
         return {
             'role': 'child',
             'child_id': child['id'],
@@ -104,6 +107,7 @@ class StudentAuthService:
             'grade_level': child['grade_level'],
             'subjects': child.get('subjects') or [],
             'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
+            **access_state,
             'session_expires_at': session['expires_at'],
         }
 
@@ -177,3 +181,8 @@ class StudentAuthService:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
+
+    async def _billing_state(self, child: dict) -> dict:
+        from .access_control import child_billing_access_state
+
+        return await child_billing_access_state(child['id'], child_name=child.get('name'))

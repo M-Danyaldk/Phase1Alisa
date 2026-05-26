@@ -32,6 +32,11 @@ class StudentSessionResponse(BaseModel):
     student_name: str
     grade_level: str
     learning_levels: dict[str, str] = Field(default_factory=dict)
+    access_allowed: bool = True
+    billing_status: str | None = None
+    blocked_reason: str | None = None
+    voice_allowed: bool = False
+    child_blocked_message: str | None = None
     expires_at: str
     message: str
 
@@ -44,6 +49,11 @@ class StudentMeResponse(BaseModel):
     grade_level: str
     subjects: list[str]
     learning_levels: dict[str, str] = Field(default_factory=dict)
+    access_allowed: bool = True
+    billing_status: str | None = None
+    blocked_reason: str | None = None
+    voice_allowed: bool = False
+    child_blocked_message: str | None = None
     session_expires_at: str
 
 

@@ -40,6 +40,7 @@ class LearningProfileService:
                 return
             except SupabaseClientError as exc:
                 logger.warning('Could not upsert child learning profile: %s', exc)
+                raise
 
         execute(
             '''

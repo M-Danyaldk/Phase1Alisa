@@ -32,7 +32,6 @@ import { listChildren } from './lib/api/children';
 import { ChildProfile } from './types/childProfile';
 
 type AuthView = 'login' | 'signup' | 'verify';
-type AccessMode = 'parent' | 'child';
 
 const AUTH_SESSION_KEY = 'msalisia-auth-session';
 const STUDENT_SESSION_KEY = 'msalisia-student-session';
@@ -50,7 +49,6 @@ function readStoredJson<T>(key: string): T | null {
 
 export function App() {
   const [pathname, setPathname] = useState(() => window.location.pathname.replace(/\/+$/, '') || '/');
-  const [accessMode, setAccessMode] = useState<AccessMode>('parent');
   const [parentView, setParentView] = useState<ParentView>('home');
   const [childView, setChildView] = useState<ChildView>('home');
   const [student, setStudent] = useState<StudentProfile>(initialStudent);
@@ -66,7 +64,6 @@ export function App() {
   const [childrenLoading, setChildrenLoading] = useState(() => Boolean(localStorage.getItem(AUTH_SESSION_KEY)));
   const [childrenError, setChildrenError] = useState('');
   const [showParentOnboarding, setShowParentOnboarding] = useState(false);
-  const [activeLearningChildId, setActiveLearningChildId] = useState('');
   const [studentSession, setStudentSession] = useState<StudentSession | null>(() => readStoredJson<StudentSession>(STUDENT_SESSION_KEY));
   const [studentMe, setStudentMe] = useState<StudentMe | null>(null);
   const [studentSessionLoading, setStudentSessionLoading] = useState(() => Boolean(localStorage.getItem(STUDENT_SESSION_KEY)));
@@ -160,7 +157,6 @@ export function App() {
     setSession(nextSession);
     setPendingVerification(null);
     setAuthView('login');
-    setAccessMode('parent');
     setParentView('home');
     setChildView('home');
     setProfileLoading(false);
@@ -178,8 +174,6 @@ export function App() {
     setChildrenError('');
     setShowParentOnboarding(false);
     setProfileError('');
-    setActiveLearningChildId('');
-    setAccessMode('parent');
     setParentView('home');
     setChildView('home');
     setAuthView('login');
@@ -191,7 +185,6 @@ export function App() {
     setCurrentProfile(null);
     setChildren([]);
     setSelectedChildId('');
-    setAccessMode('parent');
     setAuthView('login');
     setStudentSessionError('');
     window.location.assign('/login');
@@ -209,6 +202,11 @@ export function App() {
       grade_level: nextSession.grade_level,
       subjects: ['Math', 'ELA', 'Writing'],
       learning_levels: levels,
+      access_allowed: nextSession.access_allowed ?? true,
+      billing_status: nextSession.billing_status,
+      blocked_reason: nextSession.blocked_reason,
+      voice_allowed: nextSession.voice_allowed ?? false,
+      child_blocked_message: nextSession.child_blocked_message,
       session_expires_at: nextSession.expires_at,
     });
     setChildView('home');
@@ -260,7 +258,7 @@ export function App() {
         setStudentSession(null);
         setStudentMe(null);
         const message = error instanceof Error ? error.message : '';
-        setStudentSessionError(message.includes('learning access is currently paused') ? message : 'Please log in again to open your classroom.');
+        setStudentSessionError(message.includes('There is something your parent needs to take care of') ? message : 'Please log in again to open your classroom.');
       })
       .finally(() => setStudentSessionLoading(false));
   }, [studentSession?.access_token]);
@@ -278,12 +276,6 @@ export function App() {
     setChildren(nextChildren);
     const selected = nextSelectedChildId || selectedChildId;
     setSelectedChildId(selected && nextChildren.some(child => child.id === selected) ? selected : preferredChildId(nextChildren));
-    const activeLearningChild = nextChildren.find(child => child.id === activeLearningChildId);
-    if (activeLearningChildId && (!activeLearningChild || activeLearningChild.status === 'inactive')) {
-      setActiveLearningChildId('');
-      setAccessMode('parent');
-      setParentView('children');
-    }
   }
 
   function handleOnboardingChildCreated(child: ChildProfile) {
@@ -296,13 +288,6 @@ export function App() {
     if (!child || child.status === 'inactive') return;
     setSelectedChildId(childId);
     window.location.assign('/student');
-  }
-
-  function exitChildSession() {
-    setAccessMode('parent');
-    setParentView('home');
-    setChildView('home');
-    setActiveLearningChildId('');
   }
 
   const landingPath = pathname === '/';
@@ -400,6 +385,8 @@ export function App() {
       status: 'active',
       parental_consent_accepted: true,
     };
+    const childAccessBlocked = studentMe.access_allowed === false;
+    const childBlockedMessage = studentMe.child_blocked_message || 'Hi there! There is something your parent needs to take care of. Go find them and let them know — they will have you back learning in no time!';
 
     return <ChildShell
       child={sessionChild}
@@ -410,15 +397,21 @@ export function App() {
       exitLabel="Logout"
     >
       <ChildOnly allowed>
-        {childView === 'home' && <HomeView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession setView={(view) => {
+        {childAccessBlocked && <div className="page-stack narrow">
+          <section className="report-card access-message">
+            <h3>Almost ready</h3>
+            <p>{childBlockedMessage}</p>
+          </section>
+        </div>}
+        {!childAccessBlocked && childView === 'home' && <HomeView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession setView={(view) => {
           if (view === 'learn' || view === 'assessments' || view === 'homework') setChildView(view);
         }} />}
-        {childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
-        {childView === 'assessments' && <AssessmentView student={sessionStudent} setStudent={setStudent} childId={studentMe.child_id} accessToken={studentSession.access_token} studentSession />}
-        {childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession />}
-        {childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession />}
-        {childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession />}
-        {childView === 'homework' && <HomeworkView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
+        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
+        {!childAccessBlocked && childView === 'assessments' && <AssessmentView student={sessionStudent} setStudent={setStudent} childId={studentMe.child_id} accessToken={studentSession.access_token} studentSession />}
+        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession />}
+        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession />}
+        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession />}
+        {!childAccessBlocked && childView === 'homework' && <HomeworkView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
       </ChildOnly>
     </ChildShell>;
   }
@@ -472,31 +465,6 @@ export function App() {
     </div>;
   }
 
-  const activeLearningChild = children.find(child => child.id === activeLearningChildId);
-  const childStudent = activeLearningChild ? childToStudent(activeLearningChild) : student;
-
-  if (accessMode === 'child' && activeLearningChild) {
-    return <ChildShell
-      child={activeLearningChild}
-      view={childView}
-      connected={connected}
-      onViewChange={setChildView}
-      onExit={exitChildSession}
-    >
-      <ChildOnly allowed={accessMode === 'child' && Boolean(activeLearningChild)}>
-        {childView === 'home' && <HomeView student={childStudent} accessToken={session.access_token || ''} childId={activeLearningChild.id} setView={(view) => {
-          if (view === 'learn' || view === 'assessments' || view === 'homework') setChildView(view);
-        }} />}
-        {childView === 'learn' && <LearningView key="learn" student={childStudent} accessToken={session.access_token || ''} childId={activeLearningChild.id} />}
-        {childView === 'assessments' && <AssessmentView student={childStudent} setStudent={setStudent} childId={activeLearningChild.id} accessToken={session.access_token || ''} />}
-        {childView === 'practice-math' && <LearningView key="practice-math" student={childStudent} accessToken={session.access_token || ''} childId={activeLearningChild.id} initialSubject="Math" />}
-        {childView === 'practice-ela' && <LearningView key="practice-ela" student={childStudent} accessToken={session.access_token || ''} childId={activeLearningChild.id} initialSubject="ELA" />}
-        {childView === 'practice-writing' && <LearningView key="practice-writing" student={childStudent} accessToken={session.access_token || ''} childId={activeLearningChild.id} initialSubject="Writing" />}
-        {childView === 'homework' && <HomeworkView student={childStudent} accessToken={session.access_token || ''} childId={activeLearningChild.id} />}
-      </ChildOnly>
-    </ChildShell>;
-  }
-
   return (
     <ParentShell
       profile={currentProfile}
@@ -510,7 +478,7 @@ export function App() {
       onOpenChildren={() => setParentView('children')}
       onLogout={logout}
     >
-      <ParentOnly allowed={accessMode === 'parent'}>
+      <ParentOnly allowed>
         {parentView === 'home' && <ParentDashboardView
           parentName={currentProfile?.full_name || 'Parent'}
           children={children}

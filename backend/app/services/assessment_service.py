@@ -1,10 +1,15 @@
 import json
 import re
+import logging
+from fastapi import HTTPException
 from ..models import AssessmentRequest, AssessmentResult
 from ..prompts import assessment_prompt
 from ..services.llm.router import LLMRouter
 from ..services.app_data_service import AppDataService
 from ..services.learning_profile_service import LearningProfileService
+from ..services.supabase_client import SupabaseClientError
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_json(text: str) -> dict:
@@ -20,10 +25,14 @@ def _extract_json(text: str) -> dict:
 def _list(value: object) -> list[str]:
     return [str(item) for item in value] if isinstance(value, list) else []
 
-async def evaluate_assessment(payload: AssessmentRequest) -> AssessmentResult:
+async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None = None) -> AssessmentResult:
     router = LLMRouter()
     prompt = assessment_prompt(payload.student, payload.subject, payload.grade, payload.questions, payload.answers)
-    result = await router.generate(system=prompt, user='Evaluate this assessment and return only JSON.', purpose='assessment')
+    try:
+        result = await router.generate(system=prompt, user='Evaluate this assessment and return only JSON.', purpose='assessment')
+    except Exception as exc:
+        logger.warning('Assessment LLM evaluation failed for child %s subject %s: %s', payload.child_id, payload.subject, exc)
+        raise HTTPException(status_code=503, detail='Ms. Alisia could not finish this check-in right now. Please try again in a little while.') from exc
     try:
         parsed = _extract_json(result.text)
     except Exception:
@@ -50,13 +59,17 @@ async def evaluate_assessment(payload: AssessmentRequest) -> AssessmentResult:
         model=result.model
     )
     assessment_payload = {
+        'parent_id': parent_id,
         'child_id': payload.child_id,
         'student_name': payload.student.name,
         'subject': payload.subject,
+        'assessment_type': 'subject_check',
         'enrolled_grade': payload.grade,
         'estimated_level': assessment.estimated_level,
         'score_label': assessment.score_label,
+        'result_summary': assessment.parent_summary,
         'strengths': assessment.strengths,
+        'growth_areas': assessment.learning_gaps,
         'learning_gaps': assessment.learning_gaps,
         'recommended_progression': assessment.recommended_progression,
         'recommended_next_topics': assessment.recommended_next_topics,
@@ -64,6 +77,21 @@ async def evaluate_assessment(payload: AssessmentRequest) -> AssessmentResult:
         'provider': assessment.provider,
         'model': assessment.model,
     }
-    await AppDataService().save_assessment(assessment_payload)
-    await LearningProfileService().upsert_from_assessment(assessment_payload)
+    try:
+        saved_assessment = await AppDataService().save_assessment(assessment_payload)
+    except SupabaseClientError as exc:
+        logger.warning('Assessment save failed for child %s subject %s: %s', payload.child_id, payload.subject, exc)
+        raise HTTPException(status_code=503, detail='Ms. Alisia could not save this check-in right now. Please try again soon.') from exc
+    except Exception as exc:
+        logger.warning('Assessment save failed for child %s subject %s: %s', payload.child_id, payload.subject, exc)
+        raise HTTPException(status_code=503, detail='Ms. Alisia could not save this check-in right now. Please try again soon.') from exc
+    profile_payload = {**assessment_payload, 'assessment_result_id': saved_assessment.get('id')}
+    try:
+        await LearningProfileService().upsert_from_assessment(profile_payload)
+    except SupabaseClientError as exc:
+        logger.warning('Learning profile update failed for child %s subject %s: %s', payload.child_id, payload.subject, exc)
+        raise HTTPException(status_code=503, detail='Ms. Alisia saved the check-in but could not update the learning path yet. Please try again soon.') from exc
+    except Exception as exc:
+        logger.warning('Learning profile update failed for child %s subject %s: %s', payload.child_id, payload.subject, exc)
+        raise HTTPException(status_code=503, detail='Ms. Alisia saved the check-in but could not update the learning path yet. Please try again soon.') from exc
     return assessment

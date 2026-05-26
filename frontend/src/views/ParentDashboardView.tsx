@@ -25,12 +25,12 @@ export function ParentDashboardView({
   const selectedChildPaused = selectedChild?.status === 'inactive';
 
   return <div className="page-stack">
-    <SectionHeader eyebrow="Parent Dashboard" title={`Welcome, ${parentName}`} desc="Manage learning setup, review progress, and open a separate student classroom when a child is ready to learn." />
+    <SectionHeader eyebrow="Parent Dashboard" title={`Welcome, ${parentName}`} desc="Manage learning setup, review progress, and send students to their separate classroom login when they are ready to learn." />
 
     <div className="parent-dashboard-grid">
       <section className="hero-card wide">
         <h3>Parent control center</h3>
-        <p>Use this area for child profiles, reports, billing, and oversight. Live tutoring and assessment-taking happen only inside a child learning session.</p>
+        <p>Use this area for child profiles, reports, billing, and oversight. Live tutoring and assessment-taking happen only after the student logs in with their own username and PIN.</p>
         <div className="parent-action-row">
           <button className="primary-button" onClick={() => onViewChange('reports')} disabled={!selectedChild}>View Reports</button>
           <button className="secondary-button" onClick={() => onViewChange('children')}>Manage Child Profiles</button>
@@ -60,7 +60,7 @@ export function ParentDashboardView({
     </div>
 
     <div className="card-grid four">
-      <InfoCard icon={<FileText />} title="Reports" desc="Review assessment results, summaries, strengths, and learning gaps." />
+      <InfoCard icon={<FileText />} title="Reports" desc="Review completed assessment results, summaries, strengths, and learning gaps." />
       <InfoCard icon={<BarChart3 />} title="Session History" desc="Monitor saved tutoring sessions and recent practice activity." />
       <InfoCard icon={<WalletCards />} title="Billing" desc="Manage child access and subscription readiness from the parent side." />
       <InfoCard icon={<ShieldCheck />} title="Brain Break Visibility" desc="See healthy learning safeguards without changing child-only tutoring behavior." />

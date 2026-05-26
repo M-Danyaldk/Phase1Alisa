@@ -20,8 +20,11 @@ class AssessmentSummary(BaseModel):
     id: int | str | None = None
     subject: str
     estimated_level: str
+    score_label: str | None = None
+    strengths: list[str] = []
     learning_gaps: list[str] = []
     recommended_progression: list[str] = []
+    recommended_next_topics: list[str] = []
     parent_summary: str | None = None
     created_at: str | None = None
 

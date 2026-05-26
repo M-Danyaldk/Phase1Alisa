@@ -1,11 +1,15 @@
 import base64
+import logging
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 from fastapi import HTTPException, UploadFile
 from ..config import get_settings
 from ..core.security import generate_verification_code, hash_verification_code
 from ..schemas.auth import ProfileUpdateRequest, SignupStartRequest
+from .email_service import EmailService
 from .supabase_client import SupabaseClient, SupabaseClientError
+
+logger = logging.getLogger(__name__)
 
 
 class VerificationService:
@@ -133,6 +137,7 @@ class VerificationService:
             })
             await self._mark_code_used(record_id)
             session = await self.supabase.login_with_password(email, pending_data['password'])
+            await self._queue_signup_welcome(user_id, email)
         except SupabaseClientError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except KeyError as exc:
@@ -359,3 +364,9 @@ class VerificationService:
 
     def _clear_failed_login(self, email: str) -> None:
         self._failed_login_attempts.pop(email, None)
+
+    async def _queue_signup_welcome(self, user_id: str, email: str) -> None:
+        try:
+            await EmailService().queue_signup_welcome(parent_id=user_id, recipient_email=email)
+        except Exception as exc:
+            logger.warning('Signup welcome email event failed for parent %s: %s', user_id, exc)

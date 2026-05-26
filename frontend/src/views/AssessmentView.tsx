@@ -3,51 +3,67 @@ import { SectionHeader } from '../components/SectionHeader';
 import { ResultPanel } from '../components/ResultPanel';
 import { assessmentQuestions } from '../constants';
 import { apiPost } from '../lib/api';
-import { AssessmentResult, StudentProfile, Subject } from '../types';
+import { ChildAssessmentResult, StudentProfile, Subject } from '../types';
 
 export function AssessmentView({ student, setStudent, childId = '', accessToken = '', studentSession = false }: { student: StudentProfile; setStudent: (student: StudentProfile) => void; childId?: string; accessToken?: string; studentSession?: boolean }) {
   const [subject, setSubject] = useState<Subject>('Math');
   const [answers, setAnswers] = useState<string[]>(['', '', '']);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AssessmentResult | null>(null);
+  const [result, setResult] = useState<ChildAssessmentResult | null>(null);
+  const [error, setError] = useState('');
 
   async function submit() {
+    if (!studentSession) {
+      setError('Assessments open from the student classroom. Please log in with a Student Username and PIN.');
+      setResult(null);
+      return;
+    }
+    if (!accessToken || !childId) {
+      setError('We could not open this check-in yet. Please log in again.');
+      setResult(null);
+      return;
+    }
     setLoading(true);
     setResult(null);
+    setError('');
     try {
-      const data = await apiPost<AssessmentResult>('/api/assessments/evaluate', { student, child_id: childId || undefined, subject, grade: student.grade, answers, questions: assessmentQuestions[subject] }, { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) });
+      const data = await apiPost<ChildAssessmentResult>('/api/assessments/evaluate', { student, child_id: childId, subject, grade: student.grade, answers, questions: assessmentQuestions[subject] }, { Authorization: `Bearer ${accessToken}` });
       setResult(data);
-      const updated = { ...student };
-      if (subject === 'Math') updated.math_level = data.estimated_level;
-      if (subject === 'ELA') updated.ela_level = data.estimated_level;
-      if (subject === 'Writing') updated.writing_level = data.estimated_level;
-      setStudent(updated);
-    } catch {
-      setResult({
-        subject,
-        enrolled_grade: student.grade,
-        estimated_level: `Grade ${student.grade} - needs review`,
-        score_label: 'Demo result',
-        strengths: ['Attempted the assessment'],
-        learning_gaps: ['Backend unavailable. Connect FastAPI to generate a full evaluation.'],
-        recommended_progression: ['Review one skill at a time with Ms Alisia'],
-        parent_summary: 'This is a local fallback result.'
-      });
+      setStudent({ ...student });
+    } catch (submitError) {
+      setError(friendlyAssessmentError(submitError));
     } finally { setLoading(false); }
   }
 
   return <div className="page-stack">
-    <SectionHeader eyebrow="Assessment center" title="Find current level by subject" desc="MVP assessments cover Math, ELA, and Writing for Grades 3-6 with adaptive progression by subject." />
+    <SectionHeader eyebrow="Assessment center" title="Learning check-in" desc="Complete a short check-in so MsAlisia can choose helpful next steps." />
     <div className="tabs">
-      {(['Math', 'ELA', 'Writing'] as Subject[]).map(s => <button key={s} className={subject === s ? 'selected' : ''} onClick={() => { setSubject(s); setAnswers(['', '', '']); setResult(null); }}>{s}</button>)}
+      {(['Math', 'ELA', 'Writing'] as Subject[]).map(s => <button key={s} className={subject === s ? 'selected' : ''} onClick={() => { setSubject(s); setAnswers(['', '', '']); setResult(null); setError(''); }}>{s}</button>)}
     </div>
+    {!studentSession && <p className="error-note">Assessments are only available from the student classroom.</p>}
+    {error && <p className="error-note">{error}</p>}
     <div className="assessment-grid">
       <div className="form-card">
         <h3>{subject} quick check</h3>
         {assessmentQuestions[subject].map((q, idx) => <label key={q}>{q}<textarea value={answers[idx]} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Student answer..." /></label>)}
-        <button className="primary-button" onClick={submit} disabled={loading}>{loading ? 'Evaluating...' : 'Evaluate Assessment'}</button>
+        <button className="primary-button" onClick={submit} disabled={loading || !studentSession}>{loading ? 'Evaluating...' : studentSession ? 'Evaluate Assessment' : 'Student Login Required'}</button>
       </div>
       <ResultPanel result={result} />
     </div>
   </div>;
+}
+
+function friendlyAssessmentError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  const lower = message.toLowerCase();
+  if (lower.includes('parent') || lower.includes('student session') || lower.includes('another child') || lower.includes('invalid or expired')) {
+    return 'Please log in again from the student classroom to start this check-in.';
+  }
+  if (lower.includes('billing') || lower.includes('paused') || lower.includes('payment') || lower.includes('trial') || lower.includes('parent needs')) {
+    return 'There is something your parent needs to take care of before this check-in can start.';
+  }
+  if (lower.includes('subject')) {
+    return 'This check-in is only for Math, ELA, or Writing.';
+  }
+  return message || 'Ms. Alisia could not finish this check-in right now. Please try again soon.';
 }

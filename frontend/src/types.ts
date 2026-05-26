@@ -54,6 +54,18 @@ export type AssessmentResult = {
   parent_summary: string;
 };
 
+export type ChildAssessmentResult = {
+  subject: Subject;
+  child_message: string;
+  estimated_level: string;
+  score_label: string;
+  strengths: string[];
+  learning_gaps: string[];
+  recommended_progression: string[];
+  recommended_next_topics?: string[];
+  parent_summary: string;
+};
+
 export type StoredAssessmentResult = {
   id?: number | string;
   student_name?: string;

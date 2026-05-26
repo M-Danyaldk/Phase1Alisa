@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Clock, CreditCard, Users } from 'lucide-react';
+import { Clock, CreditCard, Users } from 'lucide-react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
-import { listChildAccess, updateChildAccess } from '../lib/api/billing';
-import { ChildAccess, ChildAccessStatus } from '../types/billing';
+import { createCheckoutSession, createCustomerPortalSession, listBillingPlans, listChildAccess, updateChildAccess } from '../lib/api/billing';
+import { BillingPlan, BillingPlanKey, ChildAccess, ChildAccessStatus } from '../types/billing';
 
 export function BillingView({ accessToken = '' }: { accessToken?: string }) {
   const [records, setRecords] = useState<ChildAccess[]>([]);
+  const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingChildId, setSavingChildId] = useState('');
+  const [checkoutKey, setCheckoutKey] = useState('');
+  const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -17,7 +20,12 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
     setLoading(true);
     setError('');
     try {
-      setRecords(await listChildAccess(accessToken));
+      const [childRecords, billingPlans] = await Promise.all([
+        listChildAccess(accessToken),
+        listBillingPlans(),
+      ]);
+      setRecords(childRecords);
+      setPlans(billingPlans);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Could not load child billing access.');
     } finally {
@@ -44,6 +52,30 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
     }
   }
 
+  async function beginCheckout(childId: string, planKey: BillingPlanKey) {
+    setCheckoutKey(`${childId}:${planKey}`);
+    setError('');
+    setMessage('');
+    try {
+      window.location.href = await createCheckoutSession(accessToken, childId, planKey);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Could not start Stripe checkout.');
+      setCheckoutKey('');
+    }
+  }
+
+  async function openPortal() {
+    setPortalLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      window.location.href = await createCustomerPortalSession(accessToken);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Could not open Stripe billing portal.');
+      setPortalLoading(false);
+    }
+  }
+
   const activeCount = records.filter(record => record.access_status === 'active' || record.access_status === 'trial').length;
 
   return <div className="page-stack">
@@ -54,13 +86,14 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
 
     <div className="card-grid three">
       <InfoCard icon={<Users />} title="Children Covered" desc={`${activeCount} of ${records.length} child profile(s) currently have trial or active access.`} />
-      <InfoCard icon={<CreditCard />} title="Stripe Status" desc="Payment processing is ready for a future Stripe connection. This MVP stores child access in Supabase." />
-      <InfoCard icon={<Clock />} title="Trial Rule" desc="New child profiles can be placed on a 7-day trial before a paid plan is connected." />
+      <InfoCard icon={<CreditCard />} title="Stripe Status" desc="Checkout is connected through the backend. Stripe webhooks will activate access in the next billing step." />
+      <InfoCard icon={<Clock />} title="Trial Rule" desc="Each parent email can use one 7-day free trial." />
     </div>
 
     <div className="pricing-card">
-      <h3>$129/month per student</h3>
-      <p>Family discount: 5% for 2+ students. In production, Stripe subscriptions should update these child access records through a secure backend webhook.</p>
+      <h3>MsAlisia Plans</h3>
+      <p>Chat starts at $129/month. Chat + Audio starts at $159/month. Annual plans include 1 month free.</p>
+      <button className="secondary-button compact" onClick={openPortal} disabled={portalLoading || !records.length}>{portalLoading ? 'Opening...' : 'Manage Payment Method'}</button>
     </div>
 
     <div className="billing-list">
@@ -70,19 +103,33 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
         <div>
           <span className={`access-status ${record.access_status}`}>{labelForStatus(record.access_status)}</span>
           <h3>{record.child_name}</h3>
-          <p>{record.grade_level} · {record.plan_name}</p>
+          <p>{record.grade_level} - {record.plan_name}</p>
           <p>{periodText(record)}</p>
         </div>
         <div className="billing-actions">
           <button className="secondary-button compact" onClick={() => changeStatus(record.child_id, 'trial')} disabled={savingChildId === record.child_id}>Start Trial</button>
           <button className="secondary-button compact danger" onClick={() => changeStatus(record.child_id, 'inactive')} disabled={savingChildId === record.child_id}>Pause Access</button>
         </div>
+        <div className="billing-actions">
+          {plans.map(plan => {
+            const key = `${record.child_id}:${plan.plan_key}`;
+            return <button
+              className="secondary-button compact"
+              key={plan.plan_key}
+              onClick={() => beginCheckout(record.child_id, plan.plan_key)}
+              disabled={!plan.stripe_price_configured || checkoutKey === key}
+              title={plan.stripe_price_configured ? plan.display_name : `${plan.stripe_price_env} is not configured`}
+            >
+              {checkoutKey === key ? 'Opening...' : planButtonText(plan)}
+            </button>;
+          })}
+        </div>
       </div>)}
     </div>
 
     <div className="report-card">
       <h3>How this connects subscriptions to children</h3>
-      <p>Each access row stores both the parent account ID and the child profile ID. Later, when Stripe is added, the webhook should update the matching child access row for the child selected at checkout.</p>
+      <p>Each Stripe Checkout session includes the selected child profile ID. In the next billing step, Stripe webhooks should update the matching child access row after payment succeeds.</p>
       <ul>
         <li>Parent owns the payment account.</li>
         <li>Child access decides which child can use paid learning features.</li>
@@ -103,4 +150,9 @@ function periodText(record: ChildAccess): string {
   if (record.trial_ends_at) return `Trial ends ${new Date(record.trial_ends_at).toLocaleDateString()}`;
   if (record.current_period_ends_at) return `Current period ends ${new Date(record.current_period_ends_at).toLocaleDateString()}`;
   return 'No active billing period.';
+}
+
+function planButtonText(plan: BillingPlan): string {
+  const discount = plan.annual_discount_label ? ` - ${plan.annual_discount_label}` : '';
+  return `${plan.display_name} ${plan.price_label}${discount}`;
 }

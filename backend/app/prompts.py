@@ -361,6 +361,8 @@ def assessment_context_prompt(assessment_context: dict | None) -> str:
     strengths = ', '.join((assessment_context.get('strengths') or [])[:3]) or 'none recorded'
     next_steps = assessment_context.get('recommended_next_steps') or []
     next_step = next_steps[0] if next_steps else 'Continue with one short guided practice step.'
+    next_topics = assessment_context.get('recommended_next_topics') or []
+    next_topic = next_topics[0] if next_topics else 'Use the recommended next step.'
     return f"""
 Assessment context:
 - Enrolled grade remains profile information only.
@@ -368,6 +370,7 @@ Assessment context:
 - Assessed subject level: {assessment_context.get('assessed_level') or 'Not assessed yet'}
 - Learning gaps: {gaps}
 - Strengths: {strengths}
+- Recommended next topic: {next_topic}
 - Recommended next step: {next_step}
 - Teach at the assessed subject level when available. Do not assume enrolled grade equals current skill level.
 """

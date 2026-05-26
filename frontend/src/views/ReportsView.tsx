@@ -154,13 +154,17 @@ function AssessmentSection({ assessments }: { assessments: AssessmentSummary[] }
   return <div className="report-card">
     <div className="section-row">
       <h3>Assessment Results</h3>
-      <span className="muted-note">Results only</span>
+      <span className="muted-note">Parent details</span>
     </div>
     {assessments.length ? assessments.map(item => <div className="report-mini-card" key={`${item.subject}-${item.created_at}`}>
       <strong>{item.subject}: {item.estimated_level}</strong>
+      <p>{formatDate(item.created_at) || 'Assessment date not available'}</p>
+      {item.score_label && <p>Result summary: {item.score_label}</p>}
       <p>{item.parent_summary || 'Assessment saved for this child.'}</p>
-      {!!item.learning_gaps.length && <p>Practice recommended: {item.learning_gaps.slice(0, 2).join(', ')}</p>}
-      {!!item.recommended_progression.length && <p>Learning path: {item.recommended_progression.slice(0, 2).join(', ')}</p>}
+      {!!(item.strengths || []).length && <p>Strengths: {(item.strengths || []).slice(0, 2).join(', ')}</p>}
+      {!!(item.learning_gaps || []).length && <p>Areas for growth: {(item.learning_gaps || []).slice(0, 2).join(', ')}</p>}
+      {!!(item.recommended_next_topics || []).length && <p>Recommended next topics: {(item.recommended_next_topics || []).slice(0, 3).join(', ')}</p>}
+      {!!(item.recommended_progression || []).length && <p>Suggested learning path: {(item.recommended_progression || []).slice(0, 2).join(', ')}</p>}
     </div>) : <p className="muted-copy">No assessment completed yet. Start an assessment to create a personalized learning path.</p>}
   </div>;
 }

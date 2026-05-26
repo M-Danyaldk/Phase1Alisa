@@ -45,20 +45,20 @@ class AppDataService:
                 return []
         return fetch_all('SELECT * FROM students ORDER BY created_at DESC LIMIT ?', (limit,))
 
-    async def save_assessment(self, payload: dict) -> None:
+    async def save_assessment(self, payload: dict) -> dict:
         if self.supabase.configured():
-            try:
-                await self.supabase.insert('assessment_results', payload)
-                return
-            except SupabaseClientError as exc:
-                if 'recommended_next_topics' in str(exc).lower():
-                    retry_payload = {key: value for key, value in payload.items() if key != 'recommended_next_topics'}
-                    try:
-                        await self.supabase.insert('assessment_results', retry_payload)
-                        return
-                    except SupabaseClientError:
-                        pass
-        execute(
+            last_error: SupabaseClientError | None = None
+            for candidate in self._assessment_payload_candidates(payload):
+                try:
+                    records = await self.supabase.insert('assessment_results', candidate)
+                    return records[0] if records else candidate
+                except SupabaseClientError as exc:
+                    last_error = exc
+                    if not self._compatible_assessment_schema_error(exc):
+                        raise
+            if last_error:
+                raise last_error
+        assessment_id = execute(
             'INSERT INTO assessment_results(child_id, student_name, subject, estimated_level, learning_gaps, recommended_progression, recommended_next_topics, parent_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 payload.get('child_id'),
@@ -70,6 +70,30 @@ class AppDataService:
                 self._json_text(payload.get('recommended_next_topics')),
                 payload.get('parent_summary'),
             ),
+        )
+        return {**payload, 'id': assessment_id}
+
+    def _assessment_payload_candidates(self, payload: dict) -> list[dict]:
+        optional_columns = {
+            'parent_id',
+            'assessment_type',
+            'result_summary',
+            'growth_areas',
+        }
+        candidates = [dict(payload)]
+        without_optional = {key: value for key, value in payload.items() if key not in optional_columns}
+        if without_optional != candidates[0]:
+            candidates.append(without_optional)
+        without_next_topics = {key: value for key, value in without_optional.items() if key != 'recommended_next_topics'}
+        if without_next_topics != candidates[-1]:
+            candidates.append(without_next_topics)
+        return candidates
+
+    def _compatible_assessment_schema_error(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        optional_columns = ['parent_id', 'assessment_type', 'result_summary', 'growth_areas', 'recommended_next_topics']
+        return any(column in message for column in optional_columns) and (
+            'schema cache' in message or 'column' in message or 'could not find' in message
         )
 
     def _json_text(self, value: object) -> str:

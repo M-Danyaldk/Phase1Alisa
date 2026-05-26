@@ -21,7 +21,7 @@ export function StudentLoginView({ onLoggedIn, onParentLogin }: { onLoggedIn: (s
       onLoggedIn(session);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : '';
-      setError(message.includes('learning access is currently paused') ? message : 'Please check the username and PIN, then try again.');
+      setError(message.includes('There is something your parent needs to take care of') ? message : 'Please check the username and PIN, then try again.');
     } finally {
       setLoading(false);
     }

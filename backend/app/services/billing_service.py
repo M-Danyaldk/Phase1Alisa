@@ -1,17 +1,96 @@
 from datetime import UTC, datetime, timedelta
+import json
+import logging
+import anyio
 from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from ..schemas.billing import ChildAccessUpdateRequest
+from ..config import get_settings
+from ..schemas.billing import ChildAccessUpdateRequest, PlanKey
+from .email_service import EmailService
 from .supabase_client import SupabaseClient, SupabaseClientError
+
+TRIAL_DAYS = 7
+logger = logging.getLogger(__name__)
+
+PLAN_CATALOG: dict[str, dict] = {
+    'text_monthly': {
+        'plan_type': 'text',
+        'billing_interval': 'monthly',
+        'display_name': 'Chat Monthly',
+        'price_label': '$129/month',
+        'stripe_price_env': 'STRIPE_TEXT_MONTHLY_PRICE_ID',
+        'settings_attr': 'stripe_text_monthly_price_id',
+        'voice_enabled': False,
+    },
+    'text_annual': {
+        'plan_type': 'text',
+        'billing_interval': 'annual',
+        'display_name': 'Chat Annual',
+        'price_label': '$1,419/year',
+        'annual_discount_label': '1 month free',
+        'stripe_price_env': 'STRIPE_TEXT_ANNUAL_PRICE_ID',
+        'settings_attr': 'stripe_text_annual_price_id',
+        'voice_enabled': False,
+    },
+    'voice_monthly': {
+        'plan_type': 'voice',
+        'billing_interval': 'monthly',
+        'display_name': 'Chat + Audio Monthly',
+        'price_label': '$159/month',
+        'stripe_price_env': 'STRIPE_VOICE_MONTHLY_PRICE_ID',
+        'settings_attr': 'stripe_voice_monthly_price_id',
+        'voice_enabled': True,
+    },
+    'voice_annual': {
+        'plan_type': 'voice',
+        'billing_interval': 'annual',
+        'display_name': 'Chat + Audio Annual',
+        'price_label': '$1,749/year',
+        'annual_discount_label': '1 month free',
+        'stripe_price_env': 'STRIPE_VOICE_ANNUAL_PRICE_ID',
+        'settings_attr': 'stripe_voice_annual_price_id',
+        'voice_enabled': True,
+    },
+}
 
 
 class BillingService:
     def __init__(self) -> None:
+        self.settings = get_settings()
         self.supabase = SupabaseClient()
 
-    async def list_child_access(self, parent_id: str) -> list[dict]:
+    def plans(self) -> list[dict]:
+        records = []
+        for plan_key, plan in PLAN_CATALOG.items():
+            stripe_price_id = getattr(self.settings, plan['settings_attr'], '')
+            records.append({
+                'plan_key': plan_key,
+                'plan_type': plan['plan_type'],
+                'billing_interval': plan['billing_interval'],
+                'display_name': plan['display_name'],
+                'price_label': plan['price_label'],
+                'annual_discount_label': plan.get('annual_discount_label'),
+                'stripe_price_env': plan['stripe_price_env'],
+                'stripe_price_configured': bool(stripe_price_id),
+                'voice_enabled': plan['voice_enabled'],
+            })
+        return records
+
+    async def billing_status(self, parent_id: str, email: str) -> dict:
+        trial_record = await self._trial_history_for_email(email)
+        children = await self.list_child_access(parent_id, email=email)
+        return {
+            'parent_id': parent_id,
+            'email': self._normalize_email(email),
+            'trial_available': trial_record is None,
+            'trial_blocked_reason': 'trial_already_used' if trial_record else None,
+            'children': children,
+            'plans': self.plans(),
+        }
+
+    async def list_child_access(self, parent_id: str, email: str | None = None) -> list[dict]:
         children = await self._children(parent_id)
         access_rows = await self._access_rows(parent_id)
         access_by_child = {row['child_id']: row for row in access_rows}
@@ -20,13 +99,17 @@ class BillingService:
         for child in children:
             access = access_by_child.get(child['id'])
             if not access:
-                access = await self._create_default_access(parent_id, child)
+                access = await self._create_default_access(parent_id, child, email=email)
             records.append(self._merge(child, access))
         return records
 
-    async def update_child_access(self, parent_id: str, child_id: str, payload: ChildAccessUpdateRequest) -> dict:
+    async def update_child_access(self, parent_id: str, child_id: str, payload: ChildAccessUpdateRequest, email: str | None = None) -> dict:
         if payload.access_status in {'active', 'past_due'}:
             raise HTTPException(status_code=403, detail='This billing action is handled by admin billing tools.')
+        if payload.access_status == 'trial':
+            if not email:
+                raise HTTPException(status_code=400, detail='Parent email is required to start a trial.')
+            return (await self.start_trial(parent_id, email, child_id, payload.plan_key))['child']
         child = await self._child(parent_id, child_id)
         now = datetime.now(UTC)
         update = {
@@ -57,6 +140,333 @@ class BillingService:
         if not records:
             records = [await self._create_default_access(parent_id, child, update)]
         return self._merge(child, records[0])
+
+    async def start_trial(self, parent_id: str, email: str, child_id: str, plan_key: PlanKey = 'text_monthly') -> dict:
+        child = await self._child(parent_id, child_id)
+        normalized_email = self._normalize_email(email)
+        if not normalized_email:
+            raise HTTPException(status_code=400, detail='Parent email is required to start a trial.')
+        existing_trial = await self._trial_history_for_email(normalized_email)
+        if existing_trial:
+            raise HTTPException(status_code=409, detail='This email has already used its free trial.')
+
+        plan = self._plan(plan_key)
+        now = datetime.now(UTC)
+        trial_ends_at = now + timedelta(days=TRIAL_DAYS)
+        trial_payload = {
+            'parent_id': parent_id,
+            'email': normalized_email,
+            'child_id': child_id,
+            'trial_started_at': now.isoformat(),
+            'trial_ends_at': trial_ends_at.isoformat(),
+            'source': 'billing_trial_start',
+            'metadata': {'plan_key': plan_key},
+        }
+        access_payload = {
+            'parent_id': parent_id,
+            'child_id': child_id,
+            'access_status': 'trial',
+            'plan_name': plan['display_name'],
+            'plan_type': plan['plan_type'],
+            'billing_interval': plan['billing_interval'],
+            'trial_started_at': now.isoformat(),
+            'trial_ends_at': trial_ends_at.isoformat(),
+            'current_period_ends_at': None,
+            'updated_at': now.isoformat(),
+        }
+
+        try:
+            await self.supabase.insert('parent_trial_history', trial_payload)
+            records = await self.supabase.upsert('child_access', {
+                **access_payload,
+                'created_at': now.isoformat(),
+            }, 'child_id')
+        except SupabaseClientError as exc:
+            if self._duplicate_trial_error(exc):
+                raise HTTPException(status_code=409, detail='This email has already used its free trial.') from exc
+            if self._missing_milestone2_table(exc):
+                raise HTTPException(status_code=503, detail='Milestone 2 billing tables are not set up yet. Please run the Supabase migration first.') from exc
+            if self._missing_plan_columns(exc):
+                fallback = {key: value for key, value in access_payload.items() if key not in {'plan_type', 'billing_interval', 'trial_started_at'}}
+                records = await self.supabase.upsert('child_access', {**fallback, 'created_at': now.isoformat()}, 'child_id')
+            else:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+        if not records:
+            raise HTTPException(status_code=500, detail='Could not start trial access.')
+        child_access = self._merge(child, records[0])
+        return {
+            'child': child_access,
+            'trial_started_at': now.isoformat(),
+            'trial_ends_at': trial_ends_at.isoformat(),
+            'trial_available': False,
+            'message': 'Free trial started.',
+        }
+
+    async def create_checkout_session(self, parent_id: str, email: str, child_id: str, plan_key: PlanKey) -> dict:
+        stripe = self._stripe_module()
+        child = await self._child(parent_id, child_id)
+        plan = self._plan(plan_key)
+        stripe_price_id = self._stripe_price_id(plan)
+        customer_id = await self._get_or_create_stripe_customer(parent_id, email)
+        family_discount = await self._family_discount_state(parent_id)
+
+        checkout_payload = {
+            'mode': 'subscription',
+            'customer': customer_id,
+            'line_items': [{'price': stripe_price_id, 'quantity': 1}],
+            'success_url': self.settings.stripe_success_url or 'http://localhost:5173/billing/success',
+            'cancel_url': self.settings.stripe_cancel_url or 'http://localhost:5173/billing/cancel',
+            'client_reference_id': child_id,
+            'subscription_data': {
+                'metadata': {
+                    'parent_id': parent_id,
+                    'child_id': child_id,
+                    'plan_key': plan_key,
+                    'plan_type': plan['plan_type'],
+                    'billing_interval': plan['billing_interval'],
+                },
+            },
+            'metadata': {
+                'parent_id': parent_id,
+                'child_id': child_id,
+                'child_name': child.get('name', ''),
+                'plan_key': plan_key,
+                'plan_type': plan['plan_type'],
+                'billing_interval': plan['billing_interval'],
+            },
+        }
+        if family_discount['eligible'] and self.settings.stripe_family_discount_coupon_id:
+            checkout_payload['discounts'] = [{'coupon': self.settings.stripe_family_discount_coupon_id}]
+        elif family_discount['eligible']:
+            logger.warning('Family discount eligible for parent %s but STRIPE_FAMILY_DISCOUNT_COUPON_ID is not configured.', parent_id)
+            checkout_payload['allow_promotion_codes'] = True
+        else:
+            checkout_payload['allow_promotion_codes'] = True
+
+        session = await anyio.to_thread.run_sync(lambda: stripe.checkout.Session.create(**checkout_payload))
+        return {
+            'checkout_url': session.url,
+            'session_id': session.id,
+        }
+
+    async def create_customer_portal_session(self, parent_id: str, email: str, child_id: str | None = None) -> dict:
+        stripe = self._stripe_module()
+        if child_id:
+            await self._child(parent_id, child_id)
+        customer_id = await self._stripe_customer_id_for_parent(parent_id)
+        if not customer_id:
+            customer_id = await self._get_or_create_stripe_customer(parent_id, email)
+        portal_session = await anyio.to_thread.run_sync(lambda: stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=self.settings.stripe_customer_portal_return_url or 'http://localhost:5173/billing',
+        ))
+        return {
+            'portal_url': portal_session.url,
+            'session_id': portal_session.id,
+        }
+
+    async def handle_stripe_webhook(self, payload: bytes, stripe_signature: str) -> dict:
+        stripe = self._stripe_module(require_webhook_secret=True)
+        try:
+            event = stripe.Webhook.construct_event(payload, stripe_signature, self.settings.stripe_webhook_secret)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail='Invalid Stripe webhook signature.') from exc
+
+        event_data = self._stripe_to_dict(event)
+        event_id = event_data.get('id')
+        event_type = event_data.get('type')
+        if not event_id or not event_type:
+            raise HTTPException(status_code=400, detail='Stripe webhook event is missing id or type.')
+
+        existing_event = await self._stripe_event(event_id)
+        if existing_event and existing_event.get('processing_status') == 'processed':
+            return {'received': True, 'event_id': event_id, 'event_type': event_type, 'status': 'duplicate'}
+        if not existing_event:
+            await self._record_stripe_event(event_data, 'pending')
+
+        try:
+            await self._process_stripe_event(event_data)
+        except Exception as exc:
+            await self._mark_stripe_event(event_id, 'failed', str(exc))
+            raise
+
+        await self._mark_stripe_event(event_id, 'processed')
+        return {'received': True, 'event_id': event_id, 'event_type': event_type, 'status': 'processed'}
+
+    async def expire_unpaid_grace_periods(self) -> dict:
+        now = datetime.now(UTC)
+        checked_at = now.isoformat()
+        try:
+            rows = await self.supabase.select(
+                'child_access',
+                f'grace_period_ends_at=lt.{quote(checked_at)}&access_status=eq.active&order=grace_period_ends_at.asc&limit=500',
+            )
+        except SupabaseClientError as exc:
+            if self._missing_access_table(exc) or self._missing_plan_columns(exc):
+                return {'paused_count': 0, 'checked_at': checked_at}
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+        paused_count = 0
+        for row in rows:
+            child_id = row.get('child_id')
+            if not child_id:
+                continue
+            await self.supabase.update('child_access', {'child_id': f'eq.{child_id}'}, {
+                'access_status': 'inactive',
+                'access_paused_reason': 'payment_failed_grace_expired',
+                'updated_at': checked_at,
+            })
+            paused_count += 1
+        return {'paused_count': paused_count, 'checked_at': checked_at}
+
+    async def _process_stripe_event(self, event: dict) -> None:
+        event_type = event.get('type')
+        obj = ((event.get('data') or {}).get('object') or {})
+        if event_type == 'checkout.session.completed':
+            await self._handle_checkout_completed(obj)
+        elif event_type in {'customer.subscription.created', 'customer.subscription.updated'}:
+            await self._handle_subscription_upsert(obj)
+        elif event_type == 'customer.subscription.deleted':
+            await self._handle_subscription_deleted(obj)
+        elif event_type == 'invoice.paid':
+            await self._handle_invoice_paid(obj)
+        elif event_type == 'invoice.payment_failed':
+            await self._handle_invoice_payment_failed(obj)
+        elif event_type == 'payment_intent.succeeded':
+            await self._record_financial_event_from_payment_intent(obj, 'payment_intent.succeeded')
+        elif event_type == 'payment_intent.payment_failed':
+            await self._record_financial_event_from_payment_intent(obj, 'payment_intent.payment_failed')
+        else:
+            logger.info('Stored unhandled Stripe event type: %s', event_type)
+
+    async def _handle_checkout_completed(self, session: dict) -> None:
+        subscription_id = self._stripe_id(session.get('subscription'))
+        if subscription_id:
+            subscription = await self._retrieve_subscription(subscription_id)
+            await self._handle_subscription_upsert(subscription, checkout_session=session)
+
+    async def _handle_subscription_upsert(self, subscription: dict, checkout_session: dict | None = None) -> None:
+        subscription_id = self._stripe_id(subscription.get('id'))
+        customer_id = self._stripe_id(subscription.get('customer')) or self._stripe_id((checkout_session or {}).get('customer'))
+        metadata = {**(subscription.get('metadata') or {}), **((checkout_session or {}).get('metadata') or {})}
+        parent_id = metadata.get('parent_id')
+        child_id = metadata.get('child_id') or (checkout_session or {}).get('client_reference_id')
+        plan_key = metadata.get('plan_key') or self._plan_key_from_price(subscription)
+        if not subscription_id or not customer_id or not parent_id or not child_id or not plan_key:
+            logger.warning('Stripe subscription sync skipped due to missing metadata: subscription=%s parent=%s child=%s plan=%s', subscription_id, parent_id, child_id, plan_key)
+            return
+
+        plan = self._plan(plan_key)
+        status = subscription.get('status') or 'incomplete'
+        now = datetime.now(UTC).isoformat()
+        current_period_start = self._stripe_timestamp(subscription.get('current_period_start'))
+        current_period_end = self._stripe_timestamp(subscription.get('current_period_end'))
+        trial_start = self._stripe_timestamp(subscription.get('trial_start'))
+        trial_end = self._stripe_timestamp(subscription.get('trial_end'))
+        access_status = self._access_status_from_subscription(status)
+        latest_invoice_id = self._stripe_id(subscription.get('latest_invoice'))
+
+        existing_access = await self._child_access_for_child(child_id)
+        original_due = existing_access.get('original_billing_due_at') if existing_access else None
+        if not original_due:
+            original_due = current_period_end
+
+        billing_payload = {
+            'parent_id': parent_id,
+            'child_id': child_id,
+            'stripe_customer_id': customer_id,
+            'stripe_subscription_id': subscription_id,
+            'stripe_price_id': self._subscription_price_id(subscription),
+            'stripe_latest_invoice_id': latest_invoice_id,
+            'plan_type': plan['plan_type'],
+            'billing_interval': plan['billing_interval'],
+            'subscription_status': status if status in self._subscription_statuses() else 'incomplete',
+            'trial_started_at': trial_start,
+            'trial_ends_at': trial_end,
+            'original_billing_due_at': original_due,
+            'current_period_started_at': current_period_start,
+            'current_period_ends_at': current_period_end,
+            'cancel_at_period_end': bool(subscription.get('cancel_at_period_end')),
+            'canceled_at': self._stripe_timestamp(subscription.get('canceled_at')),
+            'metadata': metadata,
+            'updated_at': now,
+        }
+        await self._upsert_billing_subscription(billing_payload)
+
+        access_payload = {
+            'parent_id': parent_id,
+            'child_id': child_id,
+            'access_status': access_status,
+            'plan_name': plan['display_name'],
+            'plan_type': plan['plan_type'],
+            'billing_interval': plan['billing_interval'],
+            'stripe_customer_id': customer_id,
+            'stripe_subscription_id': subscription_id,
+            'stripe_price_id': billing_payload['stripe_price_id'],
+            'trial_started_at': trial_start,
+            'trial_ends_at': trial_end,
+            'current_period_started_at': current_period_start,
+            'current_period_ends_at': current_period_end,
+            'original_billing_due_at': original_due,
+            'grace_period_started_at': None if access_status == 'active' else (existing_access or {}).get('grace_period_started_at'),
+            'grace_period_ends_at': None if access_status == 'active' else (existing_access or {}).get('grace_period_ends_at'),
+            'access_paused_reason': None if access_status == 'active' else self._pause_reason_for_status(status),
+            'latest_invoice_id': latest_invoice_id,
+            'updated_at': now,
+        }
+        await self.supabase.upsert('child_access', {**access_payload, 'created_at': now}, 'child_id')
+        await self._queue_annual_renewal_email(parent_id, child_id, customer_id, billing_payload)
+
+    async def _handle_subscription_deleted(self, subscription: dict) -> None:
+        subscription_id = self._stripe_id(subscription.get('id'))
+        if not subscription_id:
+            return
+        now = datetime.now(UTC).isoformat()
+        await self.supabase.update('billing_subscriptions', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
+            'subscription_status': 'canceled',
+            'canceled_at': self._stripe_timestamp(subscription.get('canceled_at')) or now,
+            'updated_at': now,
+        })
+        await self.supabase.update('child_access', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
+            'access_status': 'inactive',
+            'access_paused_reason': 'subscription_canceled',
+            'updated_at': now,
+        })
+
+    async def _handle_invoice_paid(self, invoice: dict) -> None:
+        subscription_id = self._stripe_id(invoice.get('subscription'))
+        subscription = None
+        if subscription_id:
+            subscription = await self._retrieve_subscription(subscription_id)
+            await self._handle_subscription_upsert(subscription)
+        await self._queue_payment_success_email(invoice, subscription)
+        await self._record_financial_event_from_invoice(invoice, 'invoice.paid')
+
+    async def _handle_invoice_payment_failed(self, invoice: dict) -> None:
+        now = datetime.now(UTC)
+        grace_ends = now + timedelta(days=1)
+        subscription_id = self._stripe_id(invoice.get('subscription'))
+        if subscription_id:
+            await self.supabase.update('billing_subscriptions', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
+                'subscription_status': 'past_due',
+                'stripe_latest_invoice_id': self._stripe_id(invoice.get('id')),
+                'stripe_latest_payment_intent_id': self._stripe_id(invoice.get('payment_intent')),
+                'grace_period_started_at': now.isoformat(),
+                'grace_period_ends_at': grace_ends.isoformat(),
+                'updated_at': now.isoformat(),
+            })
+            await self.supabase.update('child_access', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
+                'access_status': 'active',
+                'latest_invoice_id': self._stripe_id(invoice.get('id')),
+                'latest_payment_intent_id': self._stripe_id(invoice.get('payment_intent')),
+                'grace_period_started_at': now.isoformat(),
+                'grace_period_ends_at': grace_ends.isoformat(),
+                'access_paused_reason': None,
+                'updated_at': now.isoformat(),
+            })
+        await self._queue_payment_failed_email(invoice)
+        await self._record_financial_event_from_invoice(invoice, 'invoice.payment_failed')
 
     async def _children(self, parent_id: str) -> list[dict]:
         try:
@@ -90,14 +500,15 @@ class BillingService:
                 raise HTTPException(status_code=503, detail='Child access billing table is not set up yet. Please run the Supabase migration first.') from exc
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
-    async def _create_default_access(self, parent_id: str, child: dict, override: dict | None = None) -> dict:
+    async def _create_default_access(self, parent_id: str, child: dict, override: dict | None = None, email: str | None = None) -> dict:
         now = datetime.now(UTC)
+        access_status = 'inactive'
         payload = {
             'parent_id': parent_id,
             'child_id': child['id'],
-            'access_status': 'trial',
-            'plan_name': 'Phase 1 MVP',
-            'trial_ends_at': (now + timedelta(days=7)).isoformat(),
+            'access_status': access_status,
+            'plan_name': 'No paid plan selected',
+            'trial_ends_at': None,
             'current_period_ends_at': None,
             'created_at': now.isoformat(),
             'updated_at': now.isoformat(),
@@ -115,14 +526,430 @@ class BillingService:
         return records[0]
 
     def _merge(self, child: dict, access: dict) -> dict:
+        plan_type = access.get('plan_type')
+        voice_enabled = access.get('access_status') == 'active' and plan_type == 'voice'
         return {
             **access,
             'child_name': child['name'],
             'grade_level': child['grade_level'],
             'access_status': access.get('access_status') or 'inactive',
             'plan_name': access.get('plan_name') or 'Phase 1 MVP',
+            'plan_type': plan_type,
+            'billing_interval': access.get('billing_interval'),
+            'voice_enabled': voice_enabled,
+            'voice_allowed': voice_enabled,
+            'feature_mode': 'chat_and_voice' if voice_enabled else 'chat_only',
         }
 
     def _missing_access_table(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
         return 'child_access' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
+
+    async def _trial_history_for_email(self, email: str | None) -> dict | None:
+        if not email:
+            return None
+        try:
+            records = await self.supabase.select(
+                'parent_trial_history',
+                f'normalized_email=eq.{quote(self._normalize_email(email))}&limit=1',
+            )
+        except SupabaseClientError as exc:
+            if self._missing_milestone2_table(exc):
+                return None
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return records[0] if records else None
+
+    def _plan(self, plan_key: str) -> dict:
+        plan = PLAN_CATALOG.get(plan_key)
+        if not plan:
+            raise HTTPException(status_code=422, detail='Unsupported billing plan.')
+        return plan
+
+    def _normalize_email(self, email: str) -> str:
+        return email.strip().lower()
+
+    def _duplicate_trial_error(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'parent_trial_history_normalized_email_uidx' in message or 'duplicate key' in message
+
+    def _missing_milestone2_table(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return (
+            ('parent_trial_history' in message or 'billing_customers' in message or 'billing_discounts' in message)
+            and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
+        )
+
+    def _missing_plan_columns(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'schema cache' in message and any(column in message for column in ['plan_type', 'billing_interval', 'trial_started_at'])
+
+    def _stripe_module(self, require_webhook_secret: bool = False):
+        if not self.settings.stripe_secret_key:
+            raise HTTPException(status_code=503, detail='Stripe is not configured yet.')
+        if require_webhook_secret and not self.settings.stripe_webhook_secret:
+            raise HTTPException(status_code=503, detail='Stripe webhook secret is not configured yet.')
+        try:
+            import stripe
+        except ImportError as exc:
+            raise HTTPException(status_code=503, detail='Stripe Python package is not installed yet. Run backend dependency installation first.') from exc
+        stripe.api_key = self.settings.stripe_secret_key
+        return stripe
+
+    def _stripe_price_id(self, plan: dict) -> str:
+        stripe_price_id = getattr(self.settings, plan['settings_attr'], '')
+        if not stripe_price_id:
+            raise HTTPException(status_code=503, detail=f'{plan["stripe_price_env"]} is not configured yet.')
+        return stripe_price_id
+
+    async def _get_or_create_stripe_customer(self, parent_id: str, email: str) -> str:
+        stripe = self._stripe_module()
+        normalized_email = self._normalize_email(email)
+        existing_customer_id = await self._stripe_customer_id_for_parent(parent_id)
+        if existing_customer_id:
+            return existing_customer_id
+        if not normalized_email:
+            raise HTTPException(status_code=400, detail='Parent email is required for Stripe checkout.')
+
+        customer = await anyio.to_thread.run_sync(lambda: stripe.Customer.create(
+            email=normalized_email,
+            metadata={'parent_id': parent_id},
+        ))
+        now = datetime.now(UTC).isoformat()
+        try:
+            await self.supabase.update('profiles', {'id': f'eq.{parent_id}'}, {
+                'stripe_customer_id': customer.id,
+                'updated_at': now,
+            })
+        except SupabaseClientError as exc:
+            if not self._missing_profile_stripe_column(exc):
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+        try:
+            await self.supabase.upsert('billing_customers', {
+                'parent_id': parent_id,
+                'email': normalized_email,
+                'stripe_customer_id': customer.id,
+                'updated_at': now,
+            }, 'stripe_customer_id')
+        except SupabaseClientError as exc:
+            if self._missing_milestone2_table(exc):
+                logger.warning('billing_customers table is unavailable while creating Stripe customer for parent %s.', parent_id)
+            else:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return customer.id
+
+    async def _stripe_customer_id_for_parent(self, parent_id: str) -> str | None:
+        try:
+            profiles = await self.supabase.select('profiles', f'id=eq.{quote(parent_id)}&select=stripe_customer_id&limit=1')
+            if profiles and profiles[0].get('stripe_customer_id'):
+                return profiles[0]['stripe_customer_id']
+        except SupabaseClientError as exc:
+            if not self._missing_profile_stripe_column(exc):
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+        try:
+            customers = await self.supabase.select('billing_customers', f'parent_id=eq.{quote(parent_id)}&order=created_at.desc&limit=1')
+        except SupabaseClientError as exc:
+            if self._missing_milestone2_table(exc):
+                return None
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if customers:
+            return customers[0].get('stripe_customer_id')
+        return None
+
+    async def _family_discount_state(self, parent_id: str) -> dict:
+        access_rows = await self._access_rows(parent_id)
+        active_count = len([row for row in access_rows if row.get('access_status') == 'active'])
+        eligible = active_count >= 1
+        if eligible:
+            try:
+                await self.supabase.insert('billing_discounts', {
+                    'parent_id': parent_id,
+                    'discount_type': 'family',
+                    'discount_percent': 5,
+                    'stripe_coupon_id': self.settings.stripe_family_discount_coupon_id or None,
+                    'eligibility_status': 'eligible' if self.settings.stripe_family_discount_coupon_id else 'pending',
+                    'metadata': {'active_child_subscriptions_before_checkout': active_count},
+                })
+            except SupabaseClientError as exc:
+                if not self._missing_milestone2_table(exc):
+                    logger.warning('Could not save family discount eligibility for parent %s: %s', parent_id, exc)
+        return {'eligible': eligible, 'active_child_subscriptions': active_count}
+
+    def _missing_profile_stripe_column(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'stripe_customer_id' in message and ('schema cache' in message or 'could not find' in message or 'column' in message)
+
+    def _stripe_to_dict(self, value) -> dict:
+        if hasattr(value, 'to_dict_recursive'):
+            return value.to_dict_recursive()
+        if isinstance(value, dict):
+            return value
+        return dict(value)
+
+    async def _stripe_event(self, event_id: str) -> dict | None:
+        try:
+            rows = await self.supabase.select('stripe_events', f'stripe_event_id=eq.{quote(event_id)}&limit=1')
+        except SupabaseClientError as exc:
+            if self._missing_stripe_events_table(exc):
+                raise HTTPException(status_code=503, detail='Stripe events table is not set up yet. Please run the Supabase migration first.') from exc
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return rows[0] if rows else None
+
+    async def _record_stripe_event(self, event: dict, status: str) -> None:
+        try:
+            await self.supabase.insert('stripe_events', {
+                'stripe_event_id': event['id'],
+                'event_type': event['type'],
+                'api_version': event.get('api_version'),
+                'livemode': bool(event.get('livemode')),
+                'processing_status': status,
+                'payload': self._json_safe(event),
+            })
+        except SupabaseClientError as exc:
+            if self._duplicate_stripe_event_error(exc):
+                return
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    async def _mark_stripe_event(self, event_id: str, status: str, error_message: str | None = None) -> None:
+        payload = {
+            'processing_status': status,
+            'processed_at': datetime.now(UTC).isoformat() if status == 'processed' else None,
+            'error_message': error_message,
+            'updated_at': datetime.now(UTC).isoformat(),
+        }
+        await self.supabase.update('stripe_events', {'stripe_event_id': f'eq.{event_id}'}, payload)
+
+    async def _retrieve_subscription(self, subscription_id: str) -> dict:
+        stripe = self._stripe_module()
+        subscription = await anyio.to_thread.run_sync(lambda: stripe.Subscription.retrieve(subscription_id))
+        return self._stripe_to_dict(subscription)
+
+    async def _child_access_for_child(self, child_id: str) -> dict | None:
+        rows = await self.supabase.select('child_access', f'child_id=eq.{quote(child_id)}&limit=1')
+        return rows[0] if rows else None
+
+    async def _child_access_for_subscription(self, subscription_id: str) -> dict | None:
+        rows = await self.supabase.select('child_access', f'stripe_subscription_id=eq.{quote(subscription_id)}&limit=1')
+        return rows[0] if rows else None
+
+    async def _billing_subscription_for_subscription(self, subscription_id: str) -> dict | None:
+        rows = await self.supabase.select('billing_subscriptions', f'stripe_subscription_id=eq.{quote(subscription_id)}&limit=1')
+        return rows[0] if rows else None
+
+    async def _parent_email(self, parent_id: str) -> str | None:
+        try:
+            records = await self.supabase.select('profiles', f'id=eq.{quote(parent_id)}&select=email&limit=1')
+        except SupabaseClientError as exc:
+            logger.warning('Could not load parent email for billing email event: %s', exc)
+            return None
+        if not records:
+            return None
+        email = records[0].get('email')
+        return str(email).strip().lower() if email else None
+
+    async def _queue_and_send_email_event(self, event: dict) -> None:
+        if event.get('status') != 'pending' or not event.get('id'):
+            return
+        try:
+            await EmailService().send_event(event)
+        except Exception as exc:
+            logger.warning('Immediate billing email send failed for event %s: %s', event.get('id'), exc)
+
+    async def _queue_payment_success_email(self, invoice: dict, subscription: dict | None) -> None:
+        metadata = subscription.get('metadata') if subscription else {}
+        subscription_id = self._stripe_id(invoice.get('subscription')) or self._stripe_id((subscription or {}).get('id'))
+        parent_id = (metadata or {}).get('parent_id')
+        child_id = (metadata or {}).get('child_id')
+        if (not parent_id or not child_id) and subscription_id:
+            billing_row = await self._billing_subscription_for_subscription(subscription_id)
+            parent_id = parent_id or (billing_row or {}).get('parent_id')
+            child_id = child_id or (billing_row or {}).get('child_id')
+        if not parent_id:
+            return
+        recipient_email = await self._parent_email(parent_id)
+        if not recipient_email:
+            return
+        invoice_id = self._stripe_id(invoice.get('id')) or datetime.now(UTC).isoformat()
+        event = await EmailService().queue_payment_success(
+            parent_id=parent_id,
+            child_id=child_id,
+            recipient_email=recipient_email,
+            metadata={
+                'stripe_invoice_id': self._stripe_id(invoice.get('id')),
+                'stripe_subscription_id': subscription_id,
+                'dedupe_key': f'payment_success|{invoice_id}',
+            },
+        )
+        await self._queue_and_send_email_event(event)
+
+    async def _queue_payment_failed_email(self, invoice: dict) -> None:
+        subscription_id = self._stripe_id(invoice.get('subscription'))
+        if not subscription_id:
+            return
+        access_row = await self._child_access_for_subscription(subscription_id)
+        parent_id = (access_row or {}).get('parent_id')
+        child_id = (access_row or {}).get('child_id')
+        if not parent_id:
+            billing_row = await self._billing_subscription_for_subscription(subscription_id)
+            parent_id = (billing_row or {}).get('parent_id')
+            child_id = child_id or (billing_row or {}).get('child_id')
+        if not parent_id:
+            return
+        recipient_email = await self._parent_email(parent_id)
+        if not recipient_email:
+            return
+        invoice_id = self._stripe_id(invoice.get('id')) or datetime.now(UTC).isoformat()
+        event = await EmailService().queue_payment_failed(
+            parent_id=parent_id,
+            child_id=child_id,
+            recipient_email=recipient_email,
+            metadata={
+                'stripe_invoice_id': self._stripe_id(invoice.get('id')),
+                'stripe_subscription_id': subscription_id,
+                'dedupe_key': f'payment_failed|{invoice_id}',
+            },
+        )
+        await self._queue_and_send_email_event(event)
+
+    async def _queue_annual_renewal_email(self, parent_id: str, child_id: str, customer_id: str, billing_payload: dict) -> None:
+        if billing_payload.get('billing_interval') != 'annual' or billing_payload.get('subscription_status') not in {'active', 'trialing'}:
+            return
+        period_end = self._parse_iso_datetime(billing_payload.get('current_period_ends_at'))
+        if not period_end:
+            return
+        scheduled_at = period_end - timedelta(days=7)
+        recipient_email = await self._parent_email(parent_id)
+        if not recipient_email:
+            return
+        event = await EmailService().queue_annual_renewal_reminder(
+            parent_id=parent_id,
+            child_id=child_id,
+            recipient_email=recipient_email,
+            scheduled_send_at=scheduled_at.isoformat(),
+            metadata={
+                'renewal_date': period_end.date().isoformat(),
+                'amount': '$1,749/year' if billing_payload.get('plan_type') == 'voice' else '$1,419/year',
+                'stripe_customer_id': customer_id,
+                'stripe_subscription_id': billing_payload.get('stripe_subscription_id'),
+                'dedupe_key': f"annual_renewal_reminder|{billing_payload.get('stripe_subscription_id')}|{scheduled_at.date().isoformat()}",
+            },
+        )
+        if scheduled_at <= datetime.now(UTC):
+            await self._queue_and_send_email_event(event)
+
+    async def _upsert_billing_subscription(self, payload: dict) -> None:
+        try:
+            await self.supabase.upsert('billing_subscriptions', {**payload, 'created_at': datetime.now(UTC).isoformat()}, 'stripe_subscription_id')
+        except SupabaseClientError as exc:
+            if self._missing_milestone2_table(exc):
+                raise HTTPException(status_code=503, detail='Billing subscription table is not set up yet. Please run the Supabase migration first.') from exc
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    async def _record_financial_event_from_invoice(self, invoice: dict, event_type: str) -> None:
+        try:
+            await self.supabase.insert('financial_events', {
+                'stripe_customer_id': self._stripe_id(invoice.get('customer')),
+                'stripe_subscription_id': self._stripe_id(invoice.get('subscription')),
+                'stripe_invoice_id': self._stripe_id(invoice.get('id')),
+                'stripe_payment_intent_id': self._stripe_id(invoice.get('payment_intent')),
+                'event_type': event_type,
+                'billing_status': invoice.get('status'),
+                'amount_cents': int(invoice.get('amount_paid') or invoice.get('amount_due') or 0),
+                'currency': invoice.get('currency') or 'usd',
+                'metadata': self._json_safe(invoice.get('metadata') or {}),
+            })
+        except SupabaseClientError as exc:
+            if not self._missing_financial_events_table(exc):
+                logger.warning('Could not record financial event %s: %s', event_type, exc)
+
+    async def _record_financial_event_from_payment_intent(self, payment_intent: dict, event_type: str) -> None:
+        try:
+            await self.supabase.insert('financial_events', {
+                'stripe_customer_id': self._stripe_id(payment_intent.get('customer')),
+                'stripe_payment_intent_id': self._stripe_id(payment_intent.get('id')),
+                'event_type': event_type,
+                'billing_status': payment_intent.get('status'),
+                'amount_cents': int(payment_intent.get('amount') or 0),
+                'currency': payment_intent.get('currency') or 'usd',
+                'metadata': self._json_safe(payment_intent.get('metadata') or {}),
+            })
+        except SupabaseClientError as exc:
+            if not self._missing_financial_events_table(exc):
+                logger.warning('Could not record financial event %s: %s', event_type, exc)
+
+    def _stripe_id(self, value) -> str | None:
+        if not value:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return value.get('id')
+        return str(value)
+
+    def _stripe_timestamp(self, value) -> str | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromtimestamp(int(value), UTC).isoformat()
+        except Exception:
+            return None
+
+    def _parse_iso_datetime(self, value: object) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        except Exception:
+            return None
+
+    def _subscription_price_id(self, subscription: dict) -> str | None:
+        items = ((subscription.get('items') or {}).get('data') or [])
+        if not items:
+            return None
+        price = items[0].get('price') or {}
+        return self._stripe_id(price.get('id'))
+
+    def _plan_key_from_price(self, subscription: dict) -> str | None:
+        price_id = self._subscription_price_id(subscription)
+        if not price_id:
+            return None
+        for plan_key, plan in PLAN_CATALOG.items():
+            if getattr(self.settings, plan['settings_attr'], '') == price_id:
+                return plan_key
+        return None
+
+    def _access_status_from_subscription(self, status: str) -> str:
+        if status in {'active', 'trialing'}:
+            return 'active'
+        if status in {'past_due', 'unpaid'}:
+            return 'past_due'
+        return 'inactive'
+
+    def _pause_reason_for_status(self, status: str) -> str | None:
+        if status in {'canceled', 'incomplete_expired'}:
+            return 'subscription_canceled'
+        if status in {'past_due', 'unpaid'}:
+            return 'payment_required'
+        if status == 'paused':
+            return 'subscription_paused'
+        return None
+
+    def _subscription_statuses(self) -> set[str]:
+        return {'incomplete', 'trialing', 'active', 'past_due', 'paused', 'canceled', 'unpaid', 'incomplete_expired'}
+
+    def _json_safe(self, value):
+        return json.loads(json.dumps(value, default=str))
+
+    def _duplicate_stripe_event_error(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'stripe_events_stripe_event_id_key' in message or 'duplicate key' in message
+
+    def _missing_stripe_events_table(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'stripe_events' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
+
+    def _missing_financial_events_table(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'financial_events' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
