@@ -88,9 +88,26 @@ export function App() {
     if (pathname === '/verify') setAuthView('verify');
   }, [pathname]);
 
+  useEffect(() => {
+    if (!session || pathname === '/' || pathname === '/student' || pathname.startsWith('/admin') || pathname === '/login' || pathname === '/signup' || pathname === '/verify') {
+      return;
+    }
+    if (pathname === '/dashboard') setParentView('home');
+    if (pathname === '/children') setParentView('children');
+    if (pathname === '/reports') setParentView('reports');
+    if (pathname === '/billing' || pathname === '/billing/success' || pathname === '/billing/cancel') setParentView('billing');
+    if (pathname === '/settings') setParentView('profile');
+    if (pathname === '/future') setParentView('future');
+  }, [pathname, session]);
+
   function navigate(path: string) {
     window.history.pushState(null, '', path);
     setPathname(path.replace(/\/+$/, '') || '/');
+  }
+
+  function changeParentView(view: ParentView) {
+    setParentView(view);
+    navigate(parentPathForView(view));
   }
 
   async function loadProfile(nextSession: AuthSessionResponse) {
@@ -427,7 +444,7 @@ export function App() {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'homework' && <HomeworkView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession />}
+        {!childAccessBlocked && childView === 'homework' && <HomeworkView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession setView={setChildView} />}
       </ChildOnly>
     </ChildShell>;
   }
@@ -489,9 +506,9 @@ export function App() {
       childProfiles={children}
       selectedChildId={selectedChildId}
       childrenError={childrenError}
-      onViewChange={setParentView}
+      onViewChange={changeParentView}
       onSelectChild={setSelectedChildId}
-      onOpenChildren={() => setParentView('children')}
+      onOpenChildren={() => changeParentView('children')}
       onLogout={logout}
     >
       <ParentOnly allowed>
@@ -501,7 +518,7 @@ export function App() {
           selectedChildId={selectedChildId}
           onSelectChild={setSelectedChildId}
           onOpenChildSession={openChildSession}
-          onViewChange={setParentView}
+          onViewChange={changeParentView}
         />}
         {parentView === 'profile' && currentProfile && session.access_token && <ProfileView accessToken={session.access_token} profile={currentProfile} onProfileUpdated={applyProfile} />}
         {parentView === 'children' && session.access_token && <ManageChildrenView accessToken={session.access_token} children={children} selectedChildId={selectedChildId} onChildrenChanged={handleChildrenChanged} />}
@@ -517,6 +534,12 @@ export function App() {
 
 function preferredChildId(children: ChildProfile[]): string {
   return children.find(child => child.status !== 'inactive')?.id || children[0]?.id || '';
+}
+
+function parentPathForView(view: ParentView): string {
+  if (view === 'home') return '/dashboard';
+  if (view === 'profile') return '/settings';
+  return `/${view}`;
 }
 
 function adminSectionFromPath(pathname: string): AdminSection {
