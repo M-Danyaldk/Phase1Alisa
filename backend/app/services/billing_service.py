@@ -92,6 +92,7 @@ class BillingService:
 
     async def list_child_access(self, parent_id: str, email: str | None = None) -> list[dict]:
         children = await self._children(parent_id)
+        await self._sync_stripe_subscriptions_for_parent(parent_id)
         access_rows = await self._access_rows(parent_id)
         access_by_child = {row['child_id']: row for row in access_rows}
 
@@ -255,6 +256,8 @@ class BillingService:
         if child_id:
             await self._child(parent_id, child_id)
         customer_id = await self._stripe_customer_id_for_parent(parent_id)
+        if customer_id and not await self._stripe_customer_exists(stripe, customer_id):
+            customer_id = None
         if not customer_id:
             customer_id = await self._get_or_create_stripe_customer(parent_id, email)
         portal_session = await anyio.to_thread.run_sync(lambda: stripe.billing_portal.Session.create(
@@ -467,6 +470,37 @@ class BillingService:
             })
         await self._queue_payment_failed_email(invoice)
         await self._record_financial_event_from_invoice(invoice, 'invoice.payment_failed')
+
+    async def _sync_stripe_subscriptions_for_parent(self, parent_id: str) -> None:
+        if not self.settings.stripe_secret_key:
+            return
+        stripe = self._stripe_module()
+        customer_id = await self._stripe_customer_id_for_parent(parent_id)
+        if not customer_id:
+            return
+        if not await self._stripe_customer_exists(stripe, customer_id):
+            return
+        try:
+            subscriptions = await anyio.to_thread.run_sync(lambda: stripe.Subscription.list(
+                customer=customer_id,
+                status='all',
+                limit=20,
+            ))
+        except Exception as exc:
+            logger.warning('Could not sync Stripe subscriptions for parent %s: %s', parent_id, exc)
+            return
+        data = self._stripe_to_dict(subscriptions).get('data') or []
+        for subscription in data:
+            subscription_dict = self._stripe_to_dict(subscription)
+            if subscription_dict.get('status') not in self._subscription_statuses():
+                continue
+            metadata = subscription_dict.get('metadata') or {}
+            if metadata.get('parent_id') != parent_id or not metadata.get('child_id'):
+                continue
+            try:
+                await self._handle_subscription_upsert(subscription_dict)
+            except Exception as exc:
+                logger.warning('Could not sync Stripe subscription %s for parent %s: %s', subscription_dict.get('id'), parent_id, exc)
 
     async def _children(self, parent_id: str) -> list[dict]:
         try:
