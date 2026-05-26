@@ -606,7 +606,13 @@ class BillingService:
         normalized_email = self._normalize_email(email)
         existing_customer_id = await self._stripe_customer_id_for_parent(parent_id)
         if existing_customer_id:
-            return existing_customer_id
+            if await self._stripe_customer_exists(stripe, existing_customer_id):
+                return existing_customer_id
+            logger.warning(
+                'Stored Stripe customer %s is not available with the configured Stripe key; creating a new customer for parent %s.',
+                existing_customer_id,
+                parent_id,
+            )
         if not normalized_email:
             raise HTTPException(status_code=400, detail='Parent email is required for Stripe checkout.')
 
@@ -637,6 +643,17 @@ class BillingService:
             else:
                 raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         return customer.id
+
+    async def _stripe_customer_exists(self, stripe, customer_id: str) -> bool:
+        try:
+            customer = await anyio.to_thread.run_sync(lambda: stripe.Customer.retrieve(customer_id))
+        except Exception as exc:
+            message = str(exc).lower()
+            if 'no such customer' in message or 'similar object exists in live mode' in message or 'similar object exists in test mode' in message:
+                return False
+            raise
+        customer_dict = self._stripe_to_dict(customer)
+        return not bool(customer_dict.get('deleted'))
 
     async def _stripe_customer_id_for_parent(self, parent_id: str) -> str | None:
         try:
