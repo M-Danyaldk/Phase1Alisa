@@ -363,8 +363,8 @@ class BillingService:
         plan = self._plan(plan_key)
         status = subscription.get('status') or 'incomplete'
         now = datetime.now(UTC).isoformat()
-        current_period_start = self._stripe_timestamp(subscription.get('current_period_start'))
-        current_period_end = self._stripe_timestamp(subscription.get('current_period_end'))
+        current_period_start = self._subscription_period_timestamp(subscription, 'current_period_start')
+        current_period_end = self._subscription_period_timestamp(subscription, 'current_period_end')
         trial_start = self._stripe_timestamp(subscription.get('trial_start'))
         trial_end = self._stripe_timestamp(subscription.get('trial_end'))
         access_status = self._access_status_from_subscription(status)
@@ -961,6 +961,17 @@ class BillingService:
             return None
         price = items[0].get('price') or {}
         return self._stripe_id(price.get('id'))
+
+    def _subscription_period_timestamp(self, subscription: dict, key: str) -> str | None:
+        value = subscription.get(key)
+        if value:
+            return self._stripe_timestamp(value)
+        items = ((subscription.get('items') or {}).get('data') or [])
+        for item in items:
+            item_value = item.get(key)
+            if item_value:
+                return self._stripe_timestamp(item_value)
+        return None
 
     def _plan_key_from_price(self, subscription: dict) -> str | None:
         price_id = self._subscription_price_id(subscription)
