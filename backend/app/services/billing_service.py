@@ -355,7 +355,7 @@ class BillingService:
         metadata = {**(subscription.get('metadata') or {}), **((checkout_session or {}).get('metadata') or {})}
         parent_id = metadata.get('parent_id')
         child_id = metadata.get('child_id') or (checkout_session or {}).get('client_reference_id')
-        plan_key = metadata.get('plan_key') or self._plan_key_from_price(subscription)
+        plan_key = self._plan_key_from_price(subscription) or metadata.get('plan_key')
         if not subscription_id or not customer_id or not parent_id or not child_id or not plan_key:
             logger.warning('Stripe subscription sync skipped due to missing metadata: subscription=%s parent=%s child=%s plan=%s', subscription_id, parent_id, child_id, plan_key)
             return
@@ -470,6 +470,59 @@ class BillingService:
             })
         await self._queue_payment_failed_email(invoice)
         await self._record_financial_event_from_invoice(invoice, 'invoice.payment_failed')
+
+    async def sync_all_stripe_subscriptions(self, limit: int = 100) -> dict:
+        stripe = self._stripe_module()
+        limit = max(1, min(limit, 100))
+        synced_count = 0
+        skipped_count = 0
+        failed_count = 0
+        has_more = False
+        starting_after = None
+
+        while True:
+            def list_page():
+                params = {'status': 'all', 'limit': limit}
+                if starting_after:
+                    params['starting_after'] = starting_after
+                return stripe.Subscription.list(**params)
+
+            page = await anyio.to_thread.run_sync(list_page)
+            page_data = self._stripe_to_dict(page)
+            subscriptions = page_data.get('data') or []
+            has_more = bool(page_data.get('has_more'))
+            if not subscriptions:
+                break
+
+            for subscription in subscriptions:
+                subscription_dict = self._stripe_to_dict(subscription)
+                if subscription_dict.get('status') not in self._subscription_statuses():
+                    skipped_count += 1
+                    continue
+                metadata = subscription_dict.get('metadata') or {}
+                if not metadata.get('parent_id') or not metadata.get('child_id'):
+                    skipped_count += 1
+                    continue
+                try:
+                    await self._handle_subscription_upsert(subscription_dict)
+                    synced_count += 1
+                except Exception as exc:
+                    failed_count += 1
+                    logger.warning('Could not sync Stripe subscription %s during full sync: %s', subscription_dict.get('id'), exc)
+
+            if not has_more:
+                break
+            starting_after = self._stripe_id(subscriptions[-1].get('id'))
+            if not starting_after:
+                break
+
+        return {
+            'synced_count': synced_count,
+            'skipped_count': skipped_count,
+            'failed_count': failed_count,
+            'has_more': has_more,
+            'message': 'Stripe subscriptions sync completed.',
+        }
 
     async def _sync_stripe_subscriptions_for_parent(self, parent_id: str) -> None:
         if not self.settings.stripe_secret_key:

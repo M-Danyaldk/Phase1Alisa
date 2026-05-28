@@ -8,7 +8,7 @@ from .config import get_settings
 from .curriculum import curriculum_payload
 from .database import init_db
 from .models import AssessmentRequest, AssessmentResult, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile
-from .prompts import compact_chat_system_prompt, homework_prompt
+from .prompts import compact_chat_system_prompt
 from .routers.chat_history import router as chat_history_router
 from .routes.admin import router as admin_router
 from .routes.auth import router as auth_router
@@ -16,15 +16,19 @@ from .routes.billing import router as billing_router
 from .routes.child_profiles import router as child_profiles_router
 from .routes.child_reports import router as child_reports_router
 from .routes.internal_email import router as internal_email_router
+from .routes.homework import parent_router as parent_homework_router
+from .routes.homework import router as homework_router
 from .routes.session_activity import router as session_activity_router
 from .routes.student_dashboard import router as student_dashboard_router
 from .routes.student_auth import router as student_auth_router
 from .routes.waitlist import router as waitlist_router
+from .routes.voice import router as voice_router
 from .schemas.chat_history import ChatMessageCreateRequest, ChatThreadCreateRequest
 from .services.access_control import require_child_access, require_parent_access, require_student_child_access
 from .services.assessment_service import evaluate_assessment
 from .services.app_data_service import AppDataService
 from .services.chat_store import ChatStore
+from .services.homework_service import HomeworkService
 from .services.llm.router import LLMRouter
 from .services.learning_profile_service import LearningProfileService
 from .services.session_activity_service import SessionActivityService
@@ -44,11 +48,14 @@ app.include_router(billing_router)
 app.include_router(child_profiles_router)
 app.include_router(child_reports_router)
 app.include_router(internal_email_router)
+app.include_router(homework_router)
+app.include_router(parent_homework_router)
 app.include_router(session_activity_router)
 app.include_router(student_dashboard_router)
 app.include_router(student_auth_router)
 app.include_router(chat_history_router)
 app.include_router(waitlist_router)
+app.include_router(voice_router)
 
 @app.on_event('startup')
 def startup() -> None:
@@ -259,30 +266,17 @@ async def homework_feedback(
     authorization: str = Header(default=''),
     x_access_mode: str = Header(default=''),
 ) -> HomeworkFeedbackResponse:
-    await require_child_access(authorization, child_id, x_access_mode)
+    access_user = await require_child_access(authorization, child_id, x_access_mode)
     try:
         student = StudentProfile.model_validate_json(student_json)
     except Exception as exc:
         raise HTTPException(status_code=422, detail='Invalid student payload') from exc
 
-    upload_info = await AppDataService().upload_homework_file(file)
-    safe_name = upload_info['file_name']
-    if 'content' in upload_info:
-        upload_dir = Path(settings.uploads_path) / 'homework'
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        saved_path = upload_dir / upload_info['stored_name']
-        saved_path.write_bytes(upload_info['content'])
-
-    router = LLMRouter()
-    system = homework_prompt(student, subject, note, safe_name)
-    user = (
-        f'The file "{safe_name}" was uploaded successfully for {student.name}. '
-        'Give honest Phase 1 homework or handwriting support based on the note only. '
-        'Do not pretend to inspect the file contents. '
-        'Mention that deeper file analysis will be added in the next phase.'
-    )
-    result = await router.generate(system=system, user=user, purpose='homework')
-    return HomeworkFeedbackResponse(feedback=result.text, provider=result.provider, model=result.model)
+    upload = await HomeworkService().upload_for_child_session(parent_id=access_user['id'], child_id=child_id, file=file)
+    feedback = upload.ai_validation_summary or 'Your homework was uploaded. Ms. Alisia will help one step at a time.'
+    if upload.suggested_next_step:
+        feedback = f'{feedback}\n\nNext step: {upload.suggested_next_step}'
+    return HomeworkFeedbackResponse(feedback=feedback, provider=upload.provider or 'local', model=upload.model or 'rules')
 
 
 @app.get('/api/future-modules')

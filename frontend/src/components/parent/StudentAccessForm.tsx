@@ -51,11 +51,11 @@ export function StudentAccessForm({
   async function submit() {
     const normalizedUsername = username.trim().toLowerCase();
     if (!normalizedUsername) {
-      setError('Student Username is required.');
+      setError('Username is required.');
       return;
     }
     if (!pin.trim()) {
-      setError('PIN or Access Code is required when saving student access.');
+      setError('PIN is required when saving student access.');
       return;
     }
     setSaving(true);
@@ -84,11 +84,11 @@ export function StudentAccessForm({
       <p className="muted-copy">Create a simple username and PIN your child can use to log in without email.</p>
     </div>
     {loading && <p className="muted-note">Loading student access...</p>}
-    {record && <p className="success-note">Current Student Username: {record.username}</p>}
-    <label>Student Username
+    {record && <p className="success-note">Current Username: {record.username}</p>}
+    <label>Username
       <input value={username} onChange={event => setUsername(event.target.value.toLowerCase())} placeholder="aliysa" />
     </label>
-    <label>PIN or Access Code
+    <label>PIN
       <input type="password" value={pin} onChange={event => setPin(event.target.value)} placeholder={record ? 'Enter a new PIN to reset' : 'Create a simple PIN'} />
     </label>
     <label className="check-row">

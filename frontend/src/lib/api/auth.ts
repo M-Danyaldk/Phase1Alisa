@@ -1,4 +1,4 @@
-import { AuthSessionResponse, ProfileResponse, ProfileUpdateValues, SignupFormValues, SignupStartResponse } from '../../types/auth';
+import { AuthSessionResponse, ForgotPasswordResponse, ProfileResponse, ProfileUpdateValues, ResetPasswordResponse, SignupFormValues, SignupStartResponse, VerifyResetCodeResponse } from '../../types/auth';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -51,10 +51,7 @@ async function authPatch<T>(path: string, accessToken: string, payload: unknown)
 }
 
 export function startSignup(payload: SignupFormValues): Promise<SignupStartResponse> {
-  return authPost<SignupStartResponse>('/auth/start-signup', {
-    ...payload,
-    parent_guardian_email: payload.parent_guardian_email.trim() || null
-  });
+  return authPost<SignupStartResponse>('/auth/start-signup', payload);
 }
 
 export function verifySignup(email: string, code: string): Promise<AuthSessionResponse> {
@@ -69,15 +66,29 @@ export function login(email: string, password: string): Promise<AuthSessionRespo
   return authPost<AuthSessionResponse>('/auth/login', { email, password });
 }
 
+export function forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+  return authPost<ForgotPasswordResponse>('/auth/forgot-password', { email: email.trim().toLowerCase() });
+}
+
+export function verifyResetCode(email: string, code: string): Promise<VerifyResetCodeResponse> {
+  return authPost<VerifyResetCodeResponse>('/auth/verify-reset-code', { email: email.trim().toLowerCase(), code });
+}
+
+export function resetPassword(email: string, code: string, newPassword: string, confirmPassword: string): Promise<ResetPasswordResponse> {
+  return authPost<ResetPasswordResponse>('/auth/reset-password', {
+    email: email.trim().toLowerCase(),
+    code,
+    new_password: newPassword,
+    confirm_password: confirmPassword,
+  });
+}
+
 export function getCurrentProfile(accessToken: string): Promise<ProfileResponse> {
   return authGet<ProfileResponse>('/auth/me', accessToken);
 }
 
 export function updateCurrentProfile(accessToken: string, values: ProfileUpdateValues): Promise<ProfileResponse> {
-  return authPatch<ProfileResponse>('/auth/me', accessToken, {
-    ...values,
-    parent_guardian_email: values.parent_guardian_email.trim() || null
-  });
+  return authPatch<ProfileResponse>('/auth/me', accessToken, values);
 }
 
 export async function uploadProfileAvatar(accessToken: string, file: File): Promise<ProfileResponse> {

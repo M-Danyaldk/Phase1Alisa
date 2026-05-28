@@ -14,7 +14,7 @@ export function AssessmentView({ student, setStudent, childId = '', accessToken 
 
   async function submit() {
     if (!studentSession) {
-      setError('Assessments open from the student classroom. Please log in with a Student Username and PIN.');
+      setError('Assessments open from the student classroom. Please log in with a Username and PIN.');
       setResult(null);
       return;
     }
@@ -46,7 +46,7 @@ export function AssessmentView({ student, setStudent, childId = '', accessToken 
       <div className="form-card">
         <h3>{subject} quick check</h3>
         {assessmentQuestions[subject].map((q, idx) => <label key={q}>{q}<textarea value={answers[idx]} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Student answer..." /></label>)}
-        <button className="primary-button" onClick={submit} disabled={loading || !studentSession}>{loading ? 'Evaluating...' : studentSession ? 'Evaluate Assessment' : 'Student Login Required'}</button>
+        <button className="primary-button" onClick={submit} disabled={loading || !studentSession}>{loading ? 'Evaluating...' : studentSession ? 'Evaluate Assessment' : 'Login Required'}</button>
       </div>
       <ResultPanel result={result} />
     </div>

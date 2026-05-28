@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, BookOpen, Brain, CheckCircle2, ClipboardCheck, Clock, PenTool, Target, TrendingUp } from 'lucide-react';
+import { BarChart3, BookOpen, CheckCircle2, ClipboardCheck, Clock, FileUp, PenTool, Target, TrendingUp } from 'lucide-react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
+import { homeworkAcceptTypes, uploadParentHomework } from '../lib/api/homework';
 import { getFilteredChildReport, getWeeklyEmailPreview } from '../lib/api/reports';
 import { AssessmentSummary, ChildReport, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview } from '../types/childReport';
 import { StudentProfile, Subject, View } from '../types';
+import { HomeworkUpload } from '../types/homework';
 
 type Period = 'week' | 'month' | 'all';
 type SubjectFilter = 'All' | Subject;
@@ -26,6 +28,10 @@ export function ReportsView({
   const [emailPreview, setEmailPreview] = useState<WeeklyReportEmailPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [parentFile, setParentFile] = useState<File | null>(null);
+  const [parentFileName, setParentFileName] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState('');
 
   useEffect(() => {
     if (!accessToken || !childId) {
@@ -45,6 +51,26 @@ export function ReportsView({
 
   const subjectProgress = report?.subject_progress || fallbackSubjectProgress(student);
   const childName = report?.child_name || student.name;
+
+  async function uploadForChild() {
+    if (!parentFile) {
+      setUploadMessage('Select a homework photo or PDF first.');
+      return;
+    }
+    setUploading(true);
+    setUploadMessage('');
+    try {
+      const upload = await uploadParentHomework(accessToken, childId, parentFile);
+      setReport(current => current ? { ...current, homework_uploads: [upload, ...(current.homework_uploads || []).filter(item => item.id !== upload.id)] } : current);
+      setParentFile(null);
+      setParentFileName('');
+      setUploadMessage(upload.is_unclear ? 'Uploaded. Ms. Alisia needs a clearer file before tutoring from it.' : 'Uploaded. Ms. Alisia added a validation summary.');
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : 'Could not upload homework right now.');
+    } finally {
+      setUploading(false);
+    }
+  }
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Parent reports" title={`${childName}'s learning report`} desc="A clear, child-specific view of progress, strengths, areas needing review, and recommended next steps." />
@@ -91,6 +117,22 @@ export function ReportsView({
 
     <SubjectProgressSection progress={subjectProgress} />
 
+    <ParentHomeworkUpload
+      childName={childName}
+      fileName={parentFileName}
+      uploading={uploading}
+      message={uploadMessage}
+      disabled={!accessToken || !childId}
+      onFile={file => {
+        setParentFile(file);
+        setParentFileName(file?.name || '');
+        setUploadMessage('');
+      }}
+      onUpload={uploadForChild}
+    />
+
+    <HomeworkReportSection uploads={report?.homework_uploads || []} />
+
     <div className="report-grid">
       <ReportList title="Strengths" items={report?.strengths || ['Complete an assessment to identify strong areas.']} />
       <ReportList title="Needs Review" items={report?.weak_areas || ['Start with a quick assessment to find learning gaps.']} />
@@ -120,6 +162,58 @@ export function ReportsView({
         <p>Children can later see their own progress and achievements, but billing, sibling reports, grade changes, and parent controls should remain parent-only.</p>
       </div>
     </div>
+  </div>;
+}
+
+function ParentHomeworkUpload({
+  childName,
+  fileName,
+  uploading,
+  message,
+  disabled,
+  onFile,
+  onUpload,
+}: {
+  childName: string;
+  fileName: string;
+  uploading: boolean;
+  message: string;
+  disabled: boolean;
+  onFile: (file: File | null) => void;
+  onUpload: () => void;
+}) {
+  return <section className="report-card">
+    <div className="section-row">
+      <h3>Upload Homework for {childName}</h3>
+      <FileUp />
+    </div>
+    <div className="homework-parent-upload">
+      <label className="file-upload-button">Take a Photo or Upload
+        <input type="file" accept={homeworkAcceptTypes()} capture="environment" disabled={disabled || uploading} onChange={event => onFile(event.target.files?.[0] || null)} />
+      </label>
+      <button className="primary-button" onClick={onUpload} disabled={disabled || uploading}>{uploading ? 'Uploading...' : 'Upload for Child'}</button>
+    </div>
+    {fileName && <p className="success-note">Selected file: {fileName}</p>}
+    <p className="muted-copy">JPG, PNG, HEIC, HEIF, and PDF uploads are saved to this child&apos;s homework history.</p>
+    {message && <p className={message.startsWith('Could') || message.startsWith('Select') ? 'error-note' : 'success-note'}>{message}</p>}
+  </section>;
+}
+
+function HomeworkReportSection({ uploads }: { uploads: HomeworkUpload[] }) {
+  return <div className="report-card">
+    <div className="section-row">
+      <h3>Homework Upload History</h3>
+      <span className="muted-note">{uploads.length} saved</span>
+    </div>
+    {uploads.length ? uploads.map(upload => <div className="report-mini-card" key={upload.id || `${upload.file_name}-${upload.created_at}`}>
+      <strong>{upload.file_name}</strong>
+      <p>{formatDate(upload.created_at) || 'No date'} · {upload.file_type.toUpperCase()} · {upload.detected_subject || 'Subject pending'}</p>
+      <div className="report-detail-list">
+        <span>Status: {upload.is_unclear ? 'Needs clearer upload' : statusLabel(upload.ai_validation_status)}</span>
+        <span>Summary: {upload.ai_validation_summary || 'Validation summary pending.'}</span>
+        <span>Next step: {upload.suggested_next_step || 'Start with one guided tutoring step when ready.'}</span>
+      </div>
+    </div>) : <p className="muted-copy">No homework uploads are saved for this child yet.</p>}
   </div>;
 }
 
@@ -204,6 +298,14 @@ function iconForSubject(subject: string) {
 function formatDate(value?: string | null): string {
   if (!value) return '';
   return new Date(value).toLocaleDateString();
+}
+
+function statusLabel(status: string): string {
+  if (status === 'valid') return 'Validated';
+  if (status === 'unclear') return 'Needs clearer upload';
+  if (status === 'failed') return 'Validation failed';
+  if (status === 'skipped') return 'Uploaded with limited review';
+  return 'Pending validation';
 }
 
 function fallbackSubjectProgress(student: StudentProfile): SubjectProgress[] {

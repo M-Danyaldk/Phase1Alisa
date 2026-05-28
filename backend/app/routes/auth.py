@@ -1,13 +1,19 @@
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from ..schemas.auth import (
     AuthSessionResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     ProfileResponse,
     ProfileUpdateRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     ResendCodeRequest,
     ResendCodeResponse,
     SignupStartRequest,
     SignupStartResponse,
+    VerifyResetCodeRequest,
+    VerifyResetCodeResponse,
     VerifySignupRequest,
 )
 from ..services.verification_service import VerificationService
@@ -43,6 +49,27 @@ async def login(payload: LoginRequest) -> AuthSessionResponse:
     service = VerificationService()
     result = await service.login(str(payload.email), payload.password)
     return AuthSessionResponse(**result)
+
+
+@router.post('/forgot-password', response_model=ForgotPasswordResponse)
+async def forgot_password(payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
+    service = VerificationService()
+    result = await service.forgot_password(str(payload.email))
+    return ForgotPasswordResponse(**result)
+
+
+@router.post('/verify-reset-code', response_model=VerifyResetCodeResponse)
+async def verify_reset_code(payload: VerifyResetCodeRequest) -> VerifyResetCodeResponse:
+    service = VerificationService()
+    result = await service.verify_reset_code(str(payload.email), payload.code)
+    return VerifyResetCodeResponse(**result)
+
+
+@router.post('/reset-password', response_model=ResetPasswordResponse)
+async def reset_password(payload: ResetPasswordRequest) -> ResetPasswordResponse:
+    service = VerificationService()
+    result = await service.reset_password(str(payload.email), payload.code, payload.new_password)
+    return ResetPasswordResponse(**result)
 
 
 @router.get('/me', response_model=ProfileResponse)

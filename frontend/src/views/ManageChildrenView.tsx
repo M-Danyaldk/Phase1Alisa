@@ -34,7 +34,7 @@ export function ManageChildrenView({
     const username = newStudentUsername.trim().toLowerCase();
     const pin = newStudentPin.trim();
     if (!username || !pin) {
-      setError('Student Username and PIN are required when creating a child profile.');
+      setError('Username and PIN are required when creating a child profile.');
       return;
     }
     setSaving(true);
@@ -140,7 +140,7 @@ export function ManageChildrenView({
         <h3>{editingChild ? `Edit ${editingChild.name}` : 'Add child profile'}</h3>
         <ChildProfileForm
           child={editingChild}
-          submitLabel={editingChild ? 'Save Child' : 'Add Child and Student Login'}
+          submitLabel={editingChild ? 'Save Child' : 'Add Child and Login Access'}
           saving={saving}
           onSubmit={editingChild ? save : add}
           onCancel={() => { setAdding(false); setEditingChildId(null); }}
@@ -171,12 +171,12 @@ export function StudentAccessCreateFields({
   return <div className="student-access-panel create-student-access">
     <div>
       <h3>Student login access</h3>
-      <p className="muted-copy">Create a Student Username and PIN now so this child can log in without email.</p>
+      <p className="muted-copy">Create a Username and PIN now so this child can log in without email.</p>
     </div>
-    <label>Student Username
+    <label>Username
       <input value={username} onChange={event => onUsernameChange(event.target.value.toLowerCase())} placeholder="aliysa" />
     </label>
-    <label>PIN or Access Code
+    <label>PIN
       <input type="password" value={pin} onChange={event => onPinChange(event.target.value)} placeholder="Create a simple PIN" />
     </label>
   </div>;

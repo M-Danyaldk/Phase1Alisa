@@ -11,7 +11,7 @@ export function StudentNextActions({
     <div className="section-row">
       <h3>Recommended Next Actions</h3>
       <div className="form-actions">
-        <button className="secondary-button compact" onClick={() => setView('learn')}>Start Learning</button>
+        <button className="secondary-button compact" onClick={() => setView('learn')}>Start Practice</button>
         <button className="primary-button" onClick={() => setView('assessments')}>Start Assessment</button>
       </div>
     </div>

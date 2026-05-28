@@ -18,7 +18,15 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ''
     anthropic_model: str = 'claude-sonnet-4-5'
+    homework_anthropic_model: str = ''
     anthropic_api_url: str = 'https://api.anthropic.com/v1/messages'
+
+    deepgram_api_key: str = ''
+    deepgram_api_url: str = 'https://api.deepgram.com/v1/listen'
+    openai_api_key: str = ''
+    openai_tts_model: str = 'gpt-4o-mini-tts'
+    openai_tts_voice: str = 'alloy'
+    openai_tts_api_url: str = 'https://api.openai.com/v1/audio/speech'
 
     groq_api_key: str = ''
     groq_model: str = 'llama-3.3-70b-versatile'
@@ -37,6 +45,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ''
     signup_code_ttl_minutes: int = 10
     signup_code_max_attempts: int = 5
+    reset_code_ttl_minutes: int = 15
+    reset_code_max_attempts: int = 5
 
     resend_api_key: str = ''
     resend_from_email: str = 'enrol@msalisia.com'

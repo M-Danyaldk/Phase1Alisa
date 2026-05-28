@@ -1,23 +1,7 @@
 import { useState } from 'react';
 import { SectionHeader } from '../components/SectionHeader';
-import { gradeLevelOptions } from '../constants';
 import { updateCurrentProfile, uploadProfileAvatar } from '../lib/api/auth';
 import { ProfileResponse, ProfileUpdateValues } from '../types/auth';
-
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function getAge(dateOfBirth: string): number | null {
-  if (!dateOfBirth) return null;
-  const birthDate = new Date(`${dateOfBirth}T00:00:00`);
-  if (Number.isNaN(birthDate.getTime())) return null;
-  const today = new Date();
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const birthdayPassed = today.getMonth() > birthDate.getMonth() || (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
-  if (!birthdayPassed) age -= 1;
-  return age;
-}
 
 function formatDateTime(value?: string | null): string {
   if (!value) return 'Not available';
@@ -29,22 +13,7 @@ function formatDateTime(value?: string | null): string {
 function initialValues(profile: ProfileResponse): ProfileUpdateValues {
   return {
     full_name: profile.full_name,
-    grade_level: profile.grade_level || 'Grade 4',
-    date_of_birth: profile.date_of_birth || '2012-01-01',
-    parent_guardian_email: profile.parent_guardian_email || ''
   };
-}
-
-function validate(values: ProfileUpdateValues, email: string): string {
-  if (!values.full_name.trim()) return 'Full name is required.';
-  if (!values.grade_level) return 'Student grade level is required.';
-  if (!values.date_of_birth) return 'Date of birth is required.';
-  const age = getAge(values.date_of_birth);
-  if (age === null || age < 0) return 'Please enter a valid date of birth.';
-  if (age < 13 && !values.parent_guardian_email.trim()) return 'Parent/Guardian email is required if the student is under 13.';
-  if (values.parent_guardian_email && !isValidEmail(values.parent_guardian_email)) return 'Please enter a valid parent or guardian email.';
-  if (values.parent_guardian_email.toLowerCase() === email.toLowerCase()) return 'Parent/Guardian email must be different from student email.';
-  return '';
 }
 
 export function ProfileView({
@@ -64,7 +33,7 @@ export function ProfileView({
   const isAdminProfile = profile.role === 'admin' || profile.role === 'super_admin';
 
   async function save() {
-    const validationError = isAdminProfile ? (!values.full_name.trim() ? 'Full name is required.' : '') : validate(values, profile.email);
+    const validationError = !values.full_name.trim() ? 'Full name is required.' : '';
     if (validationError) {
       setError(validationError);
       setSuccess('');
@@ -102,7 +71,7 @@ export function ProfileView({
   }
 
   return <div className="page-stack narrow">
-    <SectionHeader eyebrow="Profile" title={isAdminProfile ? 'Admin account' : 'Your learning profile'} desc={isAdminProfile ? 'Review admin account details and profile photo.' : 'Review account details and keep learner information up to date.'} />
+    <SectionHeader eyebrow="Profile" title={isAdminProfile ? 'Admin account' : 'Parent account'} desc={isAdminProfile ? 'Review admin account details and profile photo.' : 'Review parent account details and profile photo.'} />
     <div className="form-card profile-form">
       <div className="profile-header-row">
         {profile.avatar_url ? <img className="profile-avatar-image" src={profile.avatar_url} alt={`${profile.full_name} profile`} /> : <div className="avatar">{profile.full_name.slice(0, 1).toUpperCase()}</div>}
@@ -118,11 +87,6 @@ export function ProfileView({
       <label>Full Name<input value={values.full_name} onChange={e => setValues({ ...values, full_name: e.target.value })} /></label>
       <label>Email Address<input value={profile.email} disabled /></label>
       {isAdminProfile && <label>Admin Role<input value={profile.role || 'admin'} disabled /></label>}
-      {!isAdminProfile && <>
-        <label>Student Grade Level<select value={values.grade_level} onChange={e => setValues({ ...values, grade_level: e.target.value })}><option value="">Select grade</option>{gradeLevelOptions.map(grade => <option key={grade}>{grade}</option>)}</select></label>
-        <label>Date of Birth<input type="date" value={values.date_of_birth} onChange={e => setValues({ ...values, date_of_birth: e.target.value })} /></label>
-        <label>Parent/Guardian Email<input type="email" value={values.parent_guardian_email} onChange={e => setValues({ ...values, parent_guardian_email: e.target.value })} /></label>
-      </>}
       <div className="readonly-grid">
         <div><span>Created At</span><strong>{formatDateTime(profile.created_at)}</strong></div>
         <div><span>Updated At</span><strong>{formatDateTime(profile.updated_at)}</strong></div>

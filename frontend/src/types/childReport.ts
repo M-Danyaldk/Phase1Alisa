@@ -1,3 +1,5 @@
+import { HomeworkUpload } from './homework';
+
 export type SubjectProgress = {
   subject: string;
   level: string;
@@ -58,6 +60,7 @@ export type ChildReport = {
   subject_progress: SubjectProgress[];
   recent_assessments: AssessmentSummary[];
   recent_tutor_sessions: TutorSessionSummary[];
+  homework_uploads: HomeworkUpload[];
   strengths: string[];
   weak_areas: string[];
   recommended_next_steps: string[];

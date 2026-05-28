@@ -96,6 +96,16 @@ class SupabaseClient:
             )
         return self._json_or_raise(response)
 
+    async def update_auth_user_password(self, user_id: str, password: str) -> dict[str, Any]:
+        self._require_config()
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.put(
+                f'{self.base_url}/auth/v1/admin/users/{user_id}',
+                json={'password': password},
+                headers=self._service_headers(),
+            )
+        return self._json_or_raise(response)
+
     async def login_with_password(self, email: str, password: str) -> dict[str, Any]:
         self._require_config()
         async with httpx.AsyncClient(timeout=30) as client:

@@ -85,7 +85,7 @@ export function ChildProfileForm({
   }
 
   return <div className="child-form">
-    <label>Student Full Name
+    <label>Child name
       <input value={values.name} onChange={event => setValues(prev => ({ ...prev, name: event.target.value }))} />
     </label>
     <label>Grade level

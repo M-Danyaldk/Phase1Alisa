@@ -1,6 +1,7 @@
 import base64
 import logging
 from datetime import UTC, datetime, timedelta
+from hmac import compare_digest
 from urllib.parse import quote
 from fastapi import HTTPException, UploadFile
 from ..config import get_settings
@@ -10,6 +11,8 @@ from .email_service import EmailService
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 logger = logging.getLogger(__name__)
+RESET_GENERIC_MESSAGE = 'If an account exists for this email, we sent password reset instructions.'
+RESET_SUCCESS_MESSAGE = 'Your password has been reset. Please log in.'
 
 
 class VerificationService:
@@ -40,9 +43,6 @@ class VerificationService:
             'full_name': payload.full_name.strip(),
             'email': email,
             'password': payload.password,
-            'grade_level': payload.grade_level,
-            'date_of_birth': payload.date_of_birth.isoformat(),
-            'parent_guardian_email': str(payload.parent_guardian_email).lower() if payload.parent_guardian_email else None,
         }
         try:
             records = await self.supabase.insert('signup_verification_codes', {
@@ -90,6 +90,61 @@ class VerificationService:
             'message': 'We sent a new verification code to your email. Please check your inbox.',
         }
 
+    async def forgot_password(self, email: str) -> dict:
+        normalized_email = email.strip().lower()
+        parent = await self._parent_profile_by_email(normalized_email)
+        if not parent:
+            return {'message': RESET_GENERIC_MESSAGE}
+
+        await self._expire_existing_reset_codes(normalized_email)
+        code = generate_verification_code()
+        expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.reset_code_ttl_minutes)
+        try:
+            records = await self.supabase.insert('password_reset_codes', {
+                'email': normalized_email,
+                'normalized_email': normalized_email,
+                'code_hash': hash_verification_code(code),
+                'expires_at': expires_at.isoformat(),
+                'attempts': 0,
+                'max_attempts': self.settings.reset_code_max_attempts,
+            })
+        except SupabaseClientError as exc:
+            raise HTTPException(status_code=exc.status_code, detail='Password reset is not set up yet. Please try again later.') from exc
+
+        record_id = records[0].get('id') if records else None
+        try:
+            await EmailService().send_password_reset_code(
+                recipient_email=normalized_email,
+                code=code,
+                expires_in_minutes=self.settings.reset_code_ttl_minutes,
+            )
+        except Exception as exc:
+            if record_id:
+                try:
+                    await self._mark_reset_code_used(record_id)
+                except Exception:
+                    pass
+            logger.warning('Password reset email failed for parent %s: %s', parent.get('id'), exc)
+            raise HTTPException(status_code=503, detail='We could not send the reset email. Please try again.') from exc
+        return {'message': RESET_GENERIC_MESSAGE}
+
+    async def verify_reset_code(self, email: str, code: str) -> dict:
+        await self._valid_reset_code(email.strip().lower(), code, mutate_attempts=True)
+        return {'reset_allowed': True, 'message': 'Code verified. You can reset your password.'}
+
+    async def reset_password(self, email: str, code: str, new_password: str) -> dict:
+        normalized_email = email.strip().lower()
+        record = await self._valid_reset_code(normalized_email, code, mutate_attempts=True)
+        parent = await self._parent_profile_by_email(normalized_email)
+        if not parent:
+            raise HTTPException(status_code=400, detail='Invalid or expired reset code.')
+        try:
+            await self.supabase.update_auth_user_password(parent['id'], new_password)
+            await self._mark_reset_code_used(record['id'])
+        except SupabaseClientError as exc:
+            raise HTTPException(status_code=exc.status_code, detail='Could not reset password. Please try again.') from exc
+        return {'message': RESET_SUCCESS_MESSAGE}
+
     async def verify_signup(self, email: str, code: str) -> dict:
         email = email.lower()
         records = await self._latest_unused_code(email)
@@ -121,9 +176,6 @@ class VerificationService:
                 metadata={
                     'full_name': pending_data.get('full_name'),
                     'role': 'parent',
-                    'grade_level': pending_data.get('grade_level'),
-                    'date_of_birth': pending_data.get('date_of_birth'),
-                    'parent_guardian_email': pending_data.get('parent_guardian_email'),
                 },
             )
             user_id = auth_user['id']
@@ -132,9 +184,6 @@ class VerificationService:
                 'full_name': pending_data.get('full_name'),
                 'email': email,
                 'role': 'parent',
-                'grade_level': pending_data.get('grade_level'),
-                'date_of_birth': pending_data.get('date_of_birth'),
-                'parent_guardian_email': pending_data.get('parent_guardian_email'),
                 'updated_at': datetime.now(UTC).isoformat(),
             })
             await self._mark_code_used(record_id)
@@ -185,21 +234,81 @@ class VerificationService:
             return await self._create_profile_from_auth_user(user)
         return records[0]
 
+    async def _parent_profile_by_email(self, email: str) -> dict | None:
+        try:
+            records = await self.supabase.select(
+                'profiles',
+                f'email=eq.{quote(email)}&role=eq.parent&status=neq.inactive&limit=1',
+            )
+        except SupabaseClientError as exc:
+            logger.warning('Could not load parent profile for password reset: %s', exc)
+            return None
+        return records[0] if records else None
+
+    async def _valid_reset_code(self, email: str, code: str, mutate_attempts: bool) -> dict:
+        records = await self._latest_unused_reset_code(email)
+        if not records:
+            raise HTTPException(status_code=400, detail='Invalid or expired reset code.')
+
+        record = records[0]
+        record_id = record['id']
+        expires_at = self._parse_datetime(record['expires_at'])
+        attempts = int(record.get('attempts') or 0)
+        max_attempts = int(record.get('max_attempts') or self.settings.reset_code_max_attempts)
+
+        if not expires_at or expires_at <= datetime.now(UTC):
+            await self._mark_reset_code_used(record_id)
+            raise HTTPException(status_code=400, detail='Invalid or expired reset code.')
+        if attempts >= max_attempts:
+            await self._mark_reset_code_used(record_id)
+            raise HTTPException(status_code=400, detail='Invalid or expired reset code.')
+        if not compare_digest(hash_verification_code(code), str(record.get('code_hash') or '')):
+            next_attempts = attempts + 1
+            if mutate_attempts:
+                await self._increment_reset_attempts(record_id, next_attempts)
+            if next_attempts >= max_attempts:
+                await self._mark_reset_code_used(record_id)
+            raise HTTPException(status_code=400, detail='Invalid or expired reset code.')
+        return record
+
+    async def _latest_unused_reset_code(self, email: str) -> list[dict]:
+        query = f'normalized_email=eq.{quote(email)}&used_at=is.null&order=created_at.desc&limit=1'
+        try:
+            return await self.supabase.select('password_reset_codes', query)
+        except SupabaseClientError as exc:
+            raise HTTPException(status_code=503, detail='Password reset is not set up yet. Please try again later.') from exc
+
+    async def _expire_existing_reset_codes(self, email: str) -> None:
+        try:
+            await self.supabase.update(
+                'password_reset_codes',
+                {'normalized_email': f'eq.{email}', 'used_at': 'is.null'},
+                {'used_at': datetime.now(UTC).isoformat(), 'updated_at': datetime.now(UTC).isoformat()},
+            )
+        except SupabaseClientError as exc:
+            message = str(exc).lower()
+            if 'password_reset_codes' not in message:
+                raise
+
+    async def _mark_reset_code_used(self, record_id: str) -> None:
+        await self.supabase.update('password_reset_codes', {'id': f'eq.{record_id}'}, {
+            'used_at': datetime.now(UTC).isoformat(),
+            'updated_at': datetime.now(UTC).isoformat(),
+        })
+
+    async def _increment_reset_attempts(self, record_id: str, attempts: int) -> None:
+        await self.supabase.update('password_reset_codes', {'id': f'eq.{record_id}'}, {
+            'attempts': attempts,
+            'updated_at': datetime.now(UTC).isoformat(),
+        })
+
     async def update_profile(self, access_token: str, payload: ProfileUpdateRequest) -> dict:
         user = await self._authenticated_user(access_token)
         user_id = user.get('id')
-        email = (user.get('email') or '').lower()
-        parent_guardian_email = str(payload.parent_guardian_email).lower() if payload.parent_guardian_email else None
-
-        if parent_guardian_email and parent_guardian_email == email:
-            raise HTTPException(status_code=422, detail='Parent/Guardian email must be different from student email.')
 
         try:
             records = await self.supabase.update('profiles', {'id': f'eq.{user_id}'}, {
                 'full_name': payload.full_name.strip(),
-                'grade_level': payload.grade_level,
-                'date_of_birth': payload.date_of_birth.isoformat(),
-                'parent_guardian_email': parent_guardian_email,
                 'updated_at': datetime.now(UTC).isoformat(),
             })
         except SupabaseClientError as exc:
@@ -209,9 +318,6 @@ class VerificationService:
             await self._create_profile_from_auth_user(user)
             records = await self.supabase.update('profiles', {'id': f'eq.{user_id}'}, {
                 'full_name': payload.full_name.strip(),
-                'grade_level': payload.grade_level,
-                'date_of_birth': payload.date_of_birth.isoformat(),
-                'parent_guardian_email': parent_guardian_email,
                 'updated_at': datetime.now(UTC).isoformat(),
             })
         return records[0]
@@ -283,9 +389,6 @@ class VerificationService:
         metadata = user.get('user_metadata') or {}
         full_name = metadata.get('full_name') or metadata.get('name') or email.split('@')[0] or 'Student'
         role = metadata.get('role') or 'parent'
-        grade_level = metadata.get('grade_level') or 'Grade 4'
-        date_of_birth = metadata.get('date_of_birth') or '2012-01-01'
-        parent_guardian_email = metadata.get('parent_guardian_email')
 
         if not user_id or not email:
             raise HTTPException(status_code=401, detail='Invalid or expired session.')
@@ -296,9 +399,6 @@ class VerificationService:
                 'full_name': full_name,
                 'email': email,
                 'role': role,
-                'grade_level': grade_level,
-                'date_of_birth': date_of_birth,
-                'parent_guardian_email': parent_guardian_email,
                 'avatar_url': metadata.get('avatar_url') or metadata.get('picture'),
                 'updated_at': datetime.now(UTC).isoformat(),
             })

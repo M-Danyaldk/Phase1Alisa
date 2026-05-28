@@ -13,8 +13,6 @@ export function profileToStudent(profile: ProfileResponse): StudentProfile {
     ...initialStudent,
     id: Number.isFinite(Number(profile.id)) ? Number(profile.id) : undefined,
     name: profile.full_name,
-    grade: gradeNumberFromLabel(profile.grade_level),
-    parent_notes: profile.parent_guardian_email ? `Parent/Guardian email: ${profile.parent_guardian_email}` : initialStudent.parent_notes,
     created_at: profile.created_at || undefined
   };
 }

@@ -194,6 +194,12 @@ class EmailService:
         content = self._signup_verification_code(code, expires_in_minutes)
         return await self._send_resend_email(recipient_email.strip().lower(), content)
 
+    async def send_password_reset_code(self, *, recipient_email: str, code: str, expires_in_minutes: int) -> str | None:
+        if not self.settings.resend_api_key.strip():
+            raise RuntimeError('RESEND_API_KEY is not configured.')
+        content = self._password_reset_code(code, expires_in_minutes)
+        return await self._send_resend_email(recipient_email.strip().lower(), content)
+
     async def process_due_events(self, limit: int = 25) -> dict:
         if not self.supabase.configured():
             return {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, 'message': 'Supabase is not configured.'}
@@ -611,6 +617,16 @@ class EmailService:
                 f'Your verification code is: {code}.',
                 f'This code expires in {expires_in_minutes} minutes.',
                 'If you did not request this, you can ignore this email.',
+                'The MsAlisia Team',
+            ],
+        )
+
+    def _password_reset_code(self, code: str, expires_in_minutes: int) -> EmailContent:
+        return self._content(
+            'Reset your MsAlisia password',
+            [
+                f'Your MsAlisia password reset code is: {code}',
+                f'This code expires in {expires_in_minutes} minutes. If you did not request this, you can ignore this email.',
                 'The MsAlisia Team',
             ],
         )

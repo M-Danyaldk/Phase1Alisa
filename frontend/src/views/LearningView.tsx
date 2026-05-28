@@ -5,6 +5,7 @@ import { LearningContextPanel } from '../components/LearningContextPanel';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiPost } from '../lib/api';
 import { getSessionStatus, pauseInactiveSession, recordInactivityNudge, recordSessionActivity, resumeSession } from '../lib/api/sessionActivity';
+import { sendVoiceMessage } from '../lib/api/voice';
 import { ChatThread, getChatHistory, getChatThreads, getChildChatThreads } from '../lib/chatApi';
 import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState } from '../types';
 import { SessionStatusResponse } from '../types/sessionActivity';
@@ -54,7 +55,7 @@ function detectSubjectFromMessage(message: string): Subject | null {
   return null;
 }
 
-export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', studentSession = false, onInactivePause }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; studentSession?: boolean; onInactivePause?: (message: string) => void }) {
+export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', studentSession = false, voiceAllowed = false, onInactivePause }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; studentSession?: boolean; voiceAllowed?: boolean; onInactivePause?: (message: string) => void }) {
   const initialTutoringState: TutoringState = { active_problem: '', current_step: '', attempt_count: 0, answer_revealed: false, mode: 'solve', status: 'idle', memory_note: '' };
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
   const [subject, setSubject] = useState<Subject>(initialSubject);
@@ -76,6 +77,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null);
   const [nudgeVisible, setNudgeVisible] = useState(false);
   const [sessionNotice, setSessionNotice] = useState('');
+  const [voiceNotice, setVoiceNotice] = useState('');
+  const [voiceProcessing, setVoiceProcessing] = useState(false);
   const [brainBreakWarning, setBrainBreakWarning] = useState('');
   const [lastActivityAt, setLastActivityAt] = useState(() => Date.now());
   const lastActivityPingRef = useRef(0);
@@ -85,6 +88,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const sessionId = sessionStatus?.session_id || null;
   const brainBreakActive = Boolean(sessionStatus?.brain_break_active);
   const tutorDisabled = brainBreakActive || sessionStatus?.brain_break_required || sessionStatus?.session_status === 'paused_inactive';
+  const voiceAvailable = Boolean(studentSession && voiceAllowed && accessToken && childId);
 
   function greetingFor(nextSubject: Subject) {
     return [{ role: 'msalisia' as const, content: subjectGreeting(student.name, nextSubject), subject: nextSubject }];
@@ -120,6 +124,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setSessionStatus(null);
     setNudgeVisible(false);
     setSessionNotice('');
+    setVoiceNotice('');
+    setVoiceProcessing(false);
     setBrainBreakWarning('');
     setLastActivityAt(Date.now());
     lastActivityPingRef.current = 0;
@@ -332,6 +338,79 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     } finally { setLoading(false); }
   }
 
+  async function submitVoice(audio: Blob) {
+    if (!voiceAvailable) {
+      setVoiceNotice('No problem — we will use chat instead!');
+      return;
+    }
+    if (tutorDisabled) {
+      setSessionNotice(sessionStatus?.message || DEFAULT_BRAIN_BREAK_MESSAGE);
+      setVoiceNotice('No problem — we will use chat instead!');
+      return;
+    }
+    setVoiceProcessing(true);
+    setVoiceNotice('Processing your question...');
+    setThreadError('');
+    try {
+      let thread = activeThread;
+      const outgoingTopic = topic;
+      const outgoingTopicSource = topicSource;
+      const data = await sendVoiceMessage({
+        accessToken,
+        audio,
+        student,
+        childId,
+        subject,
+        topic: outgoingTopic,
+        topicSource: outgoingTopicSource,
+        history: messages.slice(-4),
+        tutoringState,
+        threadId: thread?.id,
+      });
+      if (data.transcript) {
+        setMessages(prev => [...prev, { role: 'student', content: data.transcript, subject }]);
+      }
+      setTutoringState(data.tutoring_state);
+      if (accessToken && data.history_saved === false) {
+        setHistorySetupPending(true);
+        setThreadError('');
+      } else {
+        setHistorySetupPending(false);
+        setThreadError('');
+      }
+      if (data.thread_id && (!thread || thread.id !== data.thread_id)) {
+        const nextTopic = data.resolved_topic || outgoingTopic;
+        setActiveThread({
+          id: data.thread_id,
+          user_id: '',
+          child_id: childId || null,
+          subject,
+          topic: nextTopic,
+          title: (data.transcript || 'Voice question').trim().slice(0, 48),
+        });
+        setTopic(nextTopic);
+        setTopicSource('manual');
+      }
+      setMessages(prev => [...prev, { role: 'msalisia', content: data.assistant_text, provider: data.provider, subject }]);
+      if (data.assistant_audio_base64 && data.audio_mime_type) {
+        playAssistantAudio(data.assistant_audio_base64, data.audio_mime_type);
+      }
+      setVoiceNotice(data.error_message || (data.fallback_to_chat ? 'No problem — we will use chat instead!' : ''));
+      if (data.history_saved !== false) {
+        await refreshThreads();
+      }
+      if (trackingEnabled) {
+        getSessionStatus(accessToken, childId).then(applySessionStatus).catch(error => setSessionNotice(childFriendlySessionMessage(error)));
+      }
+    } catch (error) {
+      const message = childFriendlyVoiceMessage(error);
+      setVoiceNotice(message);
+      setMessages(prev => [...prev, { role: 'msalisia', content: message, subject }]);
+    } finally {
+      setVoiceProcessing(false);
+    }
+  }
+
   function applyQuickAction(prompt: string) {
     handleLocalActivity();
     onInputFromAction(prompt);
@@ -422,6 +501,12 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         onInputChange={setInput}
         onSend={send}
         onQuickAction={applyQuickAction}
+        voiceAllowed={voiceAvailable}
+        voiceDisabled={tutorDisabled}
+        voiceProcessing={voiceProcessing}
+        voiceNotice={voiceNotice}
+        onVoiceNotice={setVoiceNotice}
+        onVoiceSubmit={submitVoice}
       />
       <LearningContextPanel
         student={student}
@@ -435,6 +520,26 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       />
     </div>
   </div>;
+}
+
+function playAssistantAudio(audioBase64: string, mimeType: string) {
+  try {
+    const audio = new Audio(`data:${mimeType};base64,${audioBase64}`);
+    audio.play().catch(() => undefined);
+  } catch {
+    // Text reply is already visible, so playback failure can fall back silently.
+  }
+}
+
+function childFriendlyVoiceMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+  if (lower.includes('voice learning is available')) return 'Voice is not available on this plan. You can always use chat instead.';
+  if (lower.includes('brain break')) return DEFAULT_BRAIN_BREAK_MESSAGE;
+  if (lower.includes('payment') || lower.includes('billing') || lower.includes('subscription') || lower.includes('access')) {
+    return 'There is something your parent needs to take care of before learning can continue.';
+  }
+  return 'No problem — we will use chat instead!';
 }
 
 function warningMessage(warnings: string[]): string {

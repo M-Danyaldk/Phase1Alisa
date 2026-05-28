@@ -28,7 +28,7 @@ export function ParentOnboardingView({
     const username = studentUsername.trim().toLowerCase();
     const pin = studentPin.trim();
     if (isFirstChild && (!username || !pin)) {
-      setError('Student Username and PIN are required for the first child profile.');
+      setError('Username and PIN are required for the first child profile.');
       return;
     }
     setSaving(true);
@@ -60,7 +60,7 @@ export function ParentOnboardingView({
       <p className="muted-copy">Each child gets separate assessments, tutoring history, progress, and reports.</p>
       <ChildProfileForm
         key={createdCount}
-        submitLabel={createdCount ? 'Add Child' : 'Create Child and Student Login'}
+        submitLabel={createdCount ? 'Add Child' : 'Create Child and Login Access'}
         saving={saving}
         onSubmit={submit}
         extraFields={createdCount === 0 ? <StudentAccessCreateFields

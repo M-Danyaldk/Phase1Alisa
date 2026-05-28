@@ -42,7 +42,7 @@ export function ParentDashboardView({
         <div>
           <span className="eyebrow">Child Classroom</span>
           <h3>Who is learning today?</h3>
-          <p>Select one child, then open the separate student login screen. Students use their Student Username and PIN.</p>
+          <p>Select one child, then open the separate student login screen. Students use their Username and PIN.</p>
         </div>
         {children.length ? <>
           <label>Student
@@ -51,7 +51,7 @@ export function ParentDashboardView({
             </select>
           </label>
           {selectedChildPaused && <p className="paused-access-note">This child&apos;s learning access is paused. Reactivate access before opening the student classroom.</p>}
-          <button className="primary-button" onClick={() => selectedChild && onOpenChildSession(selectedChild.id)} disabled={selectedChildPaused}>Go to Student Login</button>
+          <button className="primary-button" onClick={() => selectedChild && onOpenChildSession(selectedChild.id)} disabled={selectedChildPaused}>Go to Child Login</button>
         </> : <>
           <p className="muted-copy">Create a child profile before opening a student classroom.</p>
           <button className="primary-button" onClick={() => onViewChange('children')}>Create Child Profile</button>

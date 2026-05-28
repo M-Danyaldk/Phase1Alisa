@@ -370,7 +370,7 @@ export function App() {
       return <div className="auth-shell">
         <div className="auth-panel">
           <div className="auth-heading">
-            <span>Student Login</span>
+            <span>Hey there!</span>
             <h2>Opening classroom</h2>
             <p>We are checking your student session.</p>
           </div>
@@ -427,20 +427,20 @@ export function App() {
           setChildDashboardNotice('');
           if (view === 'learn' || view === 'assessments' || view === 'homework') setChildView(view);
         }} />}
-        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
         {!childAccessBlocked && childView === 'assessments' && <AssessmentView student={sessionStudent} setStudent={setStudent} childId={studentMe.child_id} accessToken={studentSession.access_token} studentSession />}
-        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}

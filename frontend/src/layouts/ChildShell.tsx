@@ -30,7 +30,7 @@ export function ChildShell({ child, view, connected, onViewChange, onExit, exitL
   </div>;
   const navItems = (closeAfterClick = false) => <>
     <NavItem icon={<Home />} label="Student Dashboard" active={view === 'home'} onClick={() => { onViewChange('home'); if (closeAfterClick) setMenuOpen(false); }} />
-    <NavItem icon={<MessageCircle />} label="Start Learning" active={view === 'learn'} onClick={() => { onViewChange('learn'); if (closeAfterClick) setMenuOpen(false); }} />
+    <NavItem icon={<MessageCircle />} label="Learn" active={view === 'learn'} onClick={() => { onViewChange('learn'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<ClipboardCheck />} label="Assessment" active={view === 'assessments'} onClick={() => { onViewChange('assessments'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<BookOpen />} label="Practice Math" active={view === 'practice-math'} onClick={() => { onViewChange('practice-math'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<BookOpen />} label="Practice ELA" active={view === 'practice-ela'} onClick={() => { onViewChange('practice-ela'); if (closeAfterClick) setMenuOpen(false); }} />

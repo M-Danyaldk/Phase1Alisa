@@ -3,15 +3,22 @@ import { SectionHeader } from '../components/SectionHeader';
 import { studentLogin } from '../lib/api/studentAuth';
 import { StudentSession } from '../types/studentSession';
 
+const loginMessages = [
+  'Your tutor is ready.',
+  'Ready when you are!',
+  'Time to shine today!',
+];
+
 export function StudentLoginView({ onLoggedIn, onParentLogin }: { onLoggedIn: (session: StudentSession) => void; onParentLogin: () => void }) {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [loginMessage] = useState(() => loginMessages[Math.floor(Math.random() * loginMessages.length)]);
 
   async function submit() {
     if (!username.trim() || !pin.trim()) {
-      setError('Enter your Student Username and PIN.');
+      setError('Enter your Username and PIN.');
       return;
     }
     setLoading(true);
@@ -33,16 +40,16 @@ export function StudentLoginView({ onLoggedIn, onParentLogin }: { onLoggedIn: (s
       <span>MsAlisia</span>
     </div>
     <div className="auth-panel student-login-panel">
-      <SectionHeader eyebrow="Student Login" title="Start learning" desc="Use your Student Username and PIN to open your classroom." />
+      <SectionHeader eyebrow="Hey there!" title="Start learning" desc={loginMessage} />
       <div className="auth-form">
-        <label>Student Username
+        <label>Username
           <input value={username} onChange={event => setUsername(event.target.value.toLowerCase())} onKeyDown={event => { if (event.key === 'Enter') submit(); }} />
         </label>
-        <label>PIN or Access Code
+        <label>PIN
           <input type="password" value={pin} onChange={event => setPin(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submit(); }} />
         </label>
         {error && <p className="error-note">{error}</p>}
-        <button className="primary-button" onClick={submit} disabled={loading}>{loading ? 'Opening...' : 'Start Learning'}</button>
+        <button className="primary-button" onClick={submit} disabled={loading}>{loading ? 'Opening...' : "Let's Go!"}</button>
         <button className="link-button" type="button" onClick={onParentLogin}>Parent login</button>
       </div>
     </div>

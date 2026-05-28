@@ -105,6 +105,14 @@ class StripeWebhookResponse(BaseModel):
     status: str
 
 
+class StripeSubscriptionSyncResponse(BaseModel):
+    synced_count: int
+    skipped_count: int
+    failed_count: int
+    has_more: bool = False
+    message: str
+
+
 class GraceExpirationResponse(BaseModel):
     paused_count: int
     checked_at: str

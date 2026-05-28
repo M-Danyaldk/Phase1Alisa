@@ -6,6 +6,7 @@ from urllib.parse import quote
 from fastapi import HTTPException
 
 from ..schemas.child_report import AssessmentSummary, ChildReportResponse, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview
+from ..schemas.homework import HomeworkHistoryItem
 from .app_data_service import AppDataService
 from .supabase_client import SupabaseClient, SupabaseClientError
 
@@ -20,6 +21,7 @@ class ChildReportService:
         assessments = self._filter_rows(await self._assessment_rows(child_id), period, subject_filter, 'created_at')
         threads = self._filter_rows(await self._thread_rows(parent_id, child_id), period, subject_filter, 'updated_at')
         messages = self._filter_rows(await self._message_rows(parent_id, child_id), period, subject_filter, 'created_at')
+        homework_rows = self._filter_rows(await self._homework_rows(child_id), period, subject_filter, 'created_at')
 
         subject_progress = self._subject_progress(child, assessments, threads, messages)
         if subject_filter != 'All':
@@ -29,7 +31,7 @@ class ChildReportService:
         strengths = self._strengths(subject_progress, recent_assessments)
         weak_areas = self._weak_areas(recent_assessments)
         next_steps = self._next_steps(child, subject_progress, weak_areas)
-        last_updated = self._last_updated(assessments, threads, messages)
+        last_updated = self._last_updated(assessments, threads, messages, homework_rows)
         questions_practiced = len([message for message in messages if message.get('role') == 'student'])
         lessons_completed = len([thread for thread in threads if (thread.get('updated_at') or thread.get('created_at'))])
 
@@ -51,6 +53,7 @@ class ChildReportService:
             subject_progress=subject_progress,
             recent_assessments=recent_assessments,
             recent_tutor_sessions=recent_sessions,
+            homework_uploads=[self._homework_summary(row, child.get('name')) for row in homework_rows[:10]],
             strengths=strengths,
             weak_areas=weak_areas,
             recommended_next_steps=next_steps,
@@ -87,6 +90,7 @@ class ChildReportService:
             'subject_progress': [item.model_dump() for item in report.subject_progress],
             'assessment_summary': [item.model_dump() for item in report.recent_assessments],
             'session_summary': [item.model_dump() for item in report.recent_tutor_sessions],
+            'homework_uploads': [item.model_dump() for item in report.homework_uploads],
             'brain_break_summary': report.brain_break_summary,
             'generated_at': datetime.now(UTC).isoformat(),
         }
@@ -130,6 +134,15 @@ class ChildReportService:
 
     async def _assessment_rows(self, child_id: str) -> list[dict]:
         return await AppDataService().list_assessments_for_child(child_id, limit=20)
+
+    async def _homework_rows(self, child_id: str) -> list[dict]:
+        try:
+            return await self.supabase.select(
+                'homework_uploads',
+                f'child_id=eq.{quote(child_id)}&parent_report_visible=eq.true&order=created_at.desc&limit=25',
+            )
+        except SupabaseClientError:
+            return []
 
     def _subject_progress(self, child: dict, assessments: list[dict], threads: list[dict], messages: list[dict]) -> list[SubjectProgress]:
         subjects = child.get('subjects') or ['Math', 'ELA', 'Writing']
@@ -215,6 +228,32 @@ class ChildReportService:
             for thread in threads[:8]
         ]
 
+    def _homework_summary(self, row: dict, child_name: str | None) -> HomeworkHistoryItem:
+        metadata = row.get('metadata') or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except Exception:
+                metadata = {}
+        return HomeworkHistoryItem.model_validate({
+            'id': row.get('id'),
+            'child_id': row.get('child_id'),
+            'child_name': child_name,
+            'file_name': row.get('file_name'),
+            'file_type': row.get('file_type'),
+            'mime_type': metadata.get('mime_type'),
+            'file_size_bytes': row.get('file_size_bytes'),
+            'upload_status': row.get('upload_status'),
+            'ai_validation_status': row.get('ai_validation_status'),
+            'ai_validation_summary': row.get('ai_validation_summary'),
+            'is_unclear': row.get('unclear_image', False),
+            'detected_subject': row.get('detected_subject'),
+            'suggested_next_step': metadata.get('suggested_next_step'),
+            'source': row.get('source'),
+            'uploader_type': row.get('uploader_type'),
+            'created_at': row.get('created_at'),
+        })
+
     def _strengths(self, progress: list[SubjectProgress], assessments: list[AssessmentSummary]) -> list[str]:
         strengths: list[str] = []
         for item in assessments:
@@ -266,7 +305,7 @@ class ChildReportService:
     def _filter_rows(self, rows: list[dict], period: str, subject: str, date_key: str) -> list[dict]:
         filtered = rows
         if subject != 'All':
-            filtered = [row for row in filtered if row.get('subject') == subject]
+            filtered = [row for row in filtered if (row.get('subject') or row.get('detected_subject')) == subject]
         start = self._period_start(period)
         if not start:
             return filtered
@@ -293,8 +332,9 @@ class ChildReportService:
             except Exception:
                 return datetime.min.replace(tzinfo=UTC)
 
-    def _last_updated(self, assessments: list[dict], threads: list[dict], messages: list[dict]) -> str | None:
+    def _last_updated(self, assessments: list[dict], threads: list[dict], messages: list[dict], homework_rows: list[dict] | None = None) -> str | None:
         values = [row.get('created_at') for row in assessments] + [row.get('updated_at') for row in threads] + [row.get('created_at') for row in messages]
+        values += [row.get('created_at') for row in (homework_rows or [])]
         dates = [self._parse_date(value) for value in values if value]
         if not dates:
             return None

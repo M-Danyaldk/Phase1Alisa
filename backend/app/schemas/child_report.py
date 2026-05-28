@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+from .homework import HomeworkHistoryItem
+
 
 class SubjectProgress(BaseModel):
     subject: str
@@ -61,6 +63,7 @@ class ChildReportResponse(BaseModel):
     subject_progress: list[SubjectProgress]
     recent_assessments: list[AssessmentSummary]
     recent_tutor_sessions: list[TutorSessionSummary]
+    homework_uploads: list[HomeworkHistoryItem] = []
     strengths: list[str]
     weak_areas: list[str]
     recommended_next_steps: list[str]

@@ -3,9 +3,6 @@ export type SignupFormValues = {
   email: string;
   password: string;
   confirm_password: string;
-  grade_level: string;
-  date_of_birth: string;
-  parent_guardian_email: string;
 };
 
 export type SignupStartResponse = {
@@ -36,9 +33,6 @@ export type ProfileResponse = {
   status?: 'active' | 'suspended' | 'inactive';
   admin_permissions?: string[];
   admin_2fa_enabled?: boolean;
-  grade_level?: string | null;
-  date_of_birth?: string | null;
-  parent_guardian_email?: string | null;
   avatar_url?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -46,13 +40,23 @@ export type ProfileResponse = {
 
 export type ProfileUpdateValues = {
   full_name: string;
-  grade_level: string;
-  date_of_birth: string;
-  parent_guardian_email: string;
 };
 
 export type PendingVerification = {
   email: string;
   expires_in_minutes: number;
   message?: string;
+};
+
+export type ForgotPasswordResponse = {
+  message: string;
+};
+
+export type VerifyResetCodeResponse = {
+  reset_allowed: boolean;
+  message: string;
+};
+
+export type ResetPasswordResponse = {
+  message: string;
 };
