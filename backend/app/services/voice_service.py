@@ -14,6 +14,7 @@ from ..schemas.chat_history import ChatMessageCreateRequest, ChatThreadCreateReq
 from ..schemas.voice import VoiceMessageResponse
 from .access_control import child_billing_access_state
 from .chat_store import ChatStore
+from .learning_memory_service import LearningMemoryService
 from .learning_profile_service import LearningProfileService
 from .llm.router import LLMRouter
 from .session_activity_service import SessionActivityService
@@ -33,6 +34,39 @@ MAX_AUDIO_BYTES = 12 * 1024 * 1024
 class VoiceService:
     def __init__(self) -> None:
         self.settings = get_settings()
+
+    async def synthesize_nudge(self, parent_id: str, child: dict, message: str) -> VoiceMessageResponse:
+        timings: dict[str, int] = {}
+        total_start = time.perf_counter()
+        child_id = child['id']
+        await self._ensure_voice_allowed(child_id, child.get('name'))
+        await SessionActivityService().ensure_can_tutor(parent_id, child_id)
+        try:
+            audio_bytes = await self._timed(timings, 'tts_ms', self._synthesize(message))
+        except Exception as exc:
+            logger.warning('OpenAI TTS nudge failed for child %s: %s', child_id, exc)
+            timings['total_ms'] = self._elapsed_ms(total_start)
+            return VoiceMessageResponse(
+                assistant_text=message,
+                fallback_to_chat=True,
+                error_message=VOICE_FALLBACK_MESSAGE,
+                provider='openai',
+                model=self.settings.openai_tts_model or 'gpt-4o-mini-tts',
+                timings=timings,
+                metadata={'voice_mode': True, 'nudge': True},
+            )
+        timings['total_ms'] = self._elapsed_ms(total_start)
+        return VoiceMessageResponse(
+            assistant_text=message,
+            assistant_audio_base64=base64.b64encode(audio_bytes).decode('ascii'),
+            audio_mime_type='audio/mpeg',
+            fallback_to_chat=False,
+            provider='openai',
+            model=self.settings.openai_tts_model or 'gpt-4o-mini-tts',
+            tts_model=self.settings.openai_tts_model,
+            timings=timings,
+            metadata={'voice_mode': True, 'nudge': True},
+        )
 
     async def handle_message(
         self,
@@ -189,6 +223,7 @@ class VoiceService:
     ) -> dict:
         child_id = child['id']
         assessment_context = await LearningProfileService().context_for_child_subject(child_id, subject)
+        learning_memory_service = LearningMemoryService()
         topic_resolution = TopicResolver().resolve(
             subject=subject,
             topic=topic,
@@ -196,6 +231,13 @@ class VoiceService:
             assessment_context=assessment_context,
         )
         resolved_topic = topic_resolution['topic']
+        prior_memory = await learning_memory_service.relevant_for_child_subject(
+            child_id,
+            subject,
+            topic=resolved_topic,
+            student_message=transcript,
+            working_level=(assessment_context or {}).get('assessed_level'),
+        )
         prompt_student = self._student_with_assessed_level(self._student_from_child(student, child), subject, assessment_context)
 
         chat_store: ChatStore | None = None
@@ -268,6 +310,7 @@ class VoiceService:
             'Do not use * for multiplication. Use x for multiplication and / for division.',
             'Do not end with an unfinished sentence or a heading without content.',
             *build_progress_tracker_directives(next_state),
+            *learning_memory_service.memory_directives(prior_memory),
             *directives,
         ]
         system = compact_chat_system_prompt(prompt_student, subject, resolved_topic, directives, active_task, assessment_context)
@@ -312,6 +355,27 @@ class VoiceService:
             except Exception as exc:
                 logger.warning('Voice chat history save failed after LLM response: %s', exc)
                 history_error = str(exc)
+
+        await learning_memory_service.record_exchange_summary(
+            parent_id=parent_id,
+            child_id=child_id,
+            subject=subject,
+            topic=resolved_topic,
+            grade_level=child.get('grade_level'),
+            working_level=(assessment_context or {}).get('assessed_level'),
+            student_message=transcript,
+            assistant_text=formatted_reply,
+            tutoring_state=final_state,
+            thread_id=chat_thread_id,
+            source='voice_session',
+            metadata={
+                'provider': result.provider,
+                'model': result.model,
+                'topic_source': topic_resolution['source'],
+                'assessed_level': topic_resolution.get('assessed_level'),
+                'voice_mode': True,
+            },
+        )
 
         return {
             'assistant_text': formatted_reply,

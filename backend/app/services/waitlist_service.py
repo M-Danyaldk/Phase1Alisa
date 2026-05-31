@@ -1,16 +1,17 @@
 import logging
 from datetime import UTC, datetime
+import json
 
 import httpx
-from fastapi import HTTPException
 from email_validator import EmailNotValidError, validate_email
+from fastapi import HTTPException
 
 from ..config import get_settings
 from ..database import execute, fetch_all
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 logger = logging.getLogger(__name__)
-WAITLIST_SUCCESS_MESSAGE = 'Thank you — we will be in touch soon!'
+WAITLIST_SUCCESS_MESSAGE = "You're on the waitlist. Access is scheduled to open on June 14."
 
 
 class WaitlistService:
@@ -18,17 +19,22 @@ class WaitlistService:
         self.settings = get_settings()
         self.supabase = SupabaseClient()
 
-    async def signup(self, email: str) -> dict:
+    async def signup(self, email: str, parent_name: str | None = None, child_grade: str | None = None, interest_note: str | None = None) -> dict:
         normalized_email = self._normalize_email(email)
+        details = {
+            'parent_name': self._clean(parent_name),
+            'child_grade': self._clean(child_grade),
+            'interest_note': self._clean(interest_note),
+        }
         try:
-            record = await self._save_email(normalized_email)
+            record = await self._save_email(normalized_email, details)
         except Exception as exc:
             logger.warning('Waitlist signup save failed: %s', exc)
             raise HTTPException(status_code=503, detail='Something went wrong. Please try again.') from exc
 
         created_at = record.get('created_at') or datetime.now(UTC).isoformat()
-        await self._send_emails(normalized_email, created_at)
-        return {'success': True, 'message': WAITLIST_SUCCESS_MESSAGE}
+        await self._send_emails(normalized_email, created_at, details)
+        return {'success': True, 'message': self._success_message()}
 
     def _normalize_email(self, email: str) -> str:
         try:
@@ -37,11 +43,21 @@ class WaitlistService:
             raise HTTPException(status_code=422, detail='Please enter a valid email address.') from exc
         return validated.normalized.lower()
 
-    async def _save_email(self, email: str) -> dict:
+    def _clean(self, value: str | None) -> str:
+        return (value or '').strip()
+
+    async def _save_email(self, email: str, details: dict[str, str]) -> dict:
         payload = {
             'email': email,
             'source': 'prelaunch_landing',
             'status': 'pending',
+            'metadata': {
+                'parent_name': details['parent_name'],
+                'child_grade': details['child_grade'],
+                'interest_note': details['interest_note'],
+                'source': 'prelaunch_landing',
+                'submitted_at': datetime.now(UTC).isoformat(),
+            },
             'updated_at': datetime.now(UTC).isoformat(),
         }
         if self.supabase.configured():
@@ -54,19 +70,23 @@ class WaitlistService:
                 message = str(exc).lower()
                 if 'duplicate' in message or 'unique' in message:
                     return {'email': email, 'source': 'prelaunch_landing', 'status': 'pending'}
-                raise
+                if 'metadata' not in message:
+                    raise
+                fallback = {key: value for key, value in payload.items() if key != 'metadata'}
+                records = await self.supabase.upsert('waitlist', fallback, 'email')
+                return records[0] if records else fallback
 
         existing = fetch_all('SELECT * FROM waitlist WHERE email = ? LIMIT 1', (email,))
         if existing:
             return existing[0]
         row_id = execute(
-            'INSERT INTO waitlist(email, source, status) VALUES (?, ?, ?)',
-            (email, 'prelaunch_landing', 'pending'),
+            'INSERT INTO waitlist(email, source, status, metadata) VALUES (?, ?, ?, ?)',
+            (email, 'prelaunch_landing', 'pending', json.dumps(payload['metadata'])),
         )
         saved = fetch_all('SELECT * FROM waitlist WHERE id = ? LIMIT 1', (row_id,))
         return saved[0] if saved else payload
 
-    async def _send_emails(self, email: str, created_at: str) -> None:
+    async def _send_emails(self, email: str, created_at: str, details: dict[str, str]) -> None:
         if not self.settings.resend_api_key.strip():
             logger.info('RESEND_API_KEY is missing; waitlist emails skipped.')
             return
@@ -75,17 +95,22 @@ class WaitlistService:
             subject="You're on the MsAlisia waitlist",
             text=(
                 'Thank you for joining the MsAlisia waitlist.\n\n'
-                "You'll be among the first to know when we launch and will receive access to a free 7-day trial.\n\n"
-                'We will be in touch soon.\n\n'
+                f'Access is scheduled to open on {self._open_date_label()}.\n\n'
                 'The MsAlisia Team'
             ),
         )
+        detail_lines = [
+            f"Parent name: {details['parent_name'] or 'Not provided'}",
+            f"Child grade: {details['child_grade'] or 'Not provided'}",
+            f"Interest note: {details['interest_note'] or 'Not provided'}",
+        ]
         await self._send_resend_email(
             to=self.settings.waitlist_notify_email,
             subject='New MsAlisia Waitlist Signup',
             text=(
                 'A new user joined the MsAlisia pre-launch waitlist.\n\n'
                 f'Email: {email}\n'
+                f"{chr(10).join(detail_lines)}\n"
                 'Source: prelaunch_landing\n'
                 f'Time: {created_at}'
             ),
@@ -108,3 +133,18 @@ class WaitlistService:
             response.raise_for_status()
         except Exception as exc:
             logger.warning('Resend waitlist email failed for %s: %s', to, exc)
+
+    def _success_message(self) -> str:
+        return f"You're on the waitlist. Access is scheduled to open on {self._open_date_label()}."
+
+    def _open_date_label(self) -> str:
+        raw_date = self.settings.waitlist_open_date.strip() or '2026-06-14'
+        try:
+            parsed = datetime.fromisoformat(raw_date)
+            return f'{parsed.strftime("%B")} {parsed.day}'
+        except Exception:
+            try:
+                parsed = datetime.strptime(raw_date, '%Y-%m-%d')
+                return f'{parsed.strftime("%B")} {parsed.day}'
+            except Exception:
+                return 'June 14'

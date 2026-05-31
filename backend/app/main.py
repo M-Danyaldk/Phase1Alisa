@@ -1,7 +1,8 @@
 from pathlib import Path
 import logging
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
@@ -15,22 +16,28 @@ from .routes.auth import router as auth_router
 from .routes.billing import router as billing_router
 from .routes.child_profiles import router as child_profiles_router
 from .routes.child_reports import router as child_reports_router
+from .routes.data_deletion import router as data_deletion_router
 from .routes.internal_email import router as internal_email_router
 from .routes.homework import parent_router as parent_homework_router
 from .routes.homework import router as homework_router
+from .routes.problem_reports import router as problem_reports_router
 from .routes.session_activity import router as session_activity_router
 from .routes.student_dashboard import router as student_dashboard_router
 from .routes.student_auth import router as student_auth_router
 from .routes.waitlist import router as waitlist_router
 from .routes.voice import router as voice_router
+from .routes.referrals import internal_router as internal_referrals_router
+from .routes.referrals import router as referrals_router
 from .schemas.chat_history import ChatMessageCreateRequest, ChatThreadCreateRequest
 from .services.access_control import require_child_access, require_parent_access, require_student_child_access
 from .services.assessment_service import evaluate_assessment
 from .services.app_data_service import AppDataService
 from .services.chat_store import ChatStore
 from .services.homework_service import HomeworkService
+from .services.learning_memory_service import LearningMemoryService
 from .services.llm.router import LLMRouter
 from .services.learning_profile_service import LearningProfileService
+from .services.monitoring_service import MonitoringService
 from .services.session_activity_service import SessionActivityService
 from .services.tutor_answer_checker import TutorAnswerChecker
 from .services.topic_resolver import TopicResolver
@@ -40,6 +47,7 @@ from .utils.tutor_response import format_student_reply, looks_incomplete_respons
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+MonitoringService().configure()
 app = FastAPI(title='MsAlisia Phase 1 MVP API', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_list(), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 app.include_router(admin_router)
@@ -47,15 +55,28 @@ app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(child_profiles_router)
 app.include_router(child_reports_router)
+app.include_router(data_deletion_router)
 app.include_router(internal_email_router)
 app.include_router(homework_router)
 app.include_router(parent_homework_router)
+app.include_router(problem_reports_router)
 app.include_router(session_activity_router)
 app.include_router(student_dashboard_router)
 app.include_router(student_auth_router)
 app.include_router(chat_history_router)
 app.include_router(waitlist_router)
 app.include_router(voice_router)
+app.include_router(referrals_router)
+app.include_router(internal_referrals_router)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    await MonitoringService().capture_exception(request, exc)
+    return JSONResponse(
+        status_code=500,
+        content={'detail': 'Something went wrong. Please try again or contact support if it continues.'},
+    )
 
 @app.on_event('startup')
 def startup() -> None:
@@ -107,6 +128,14 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     )
     resolved_topic = topic_resolution['topic']
     prompt_student = _student_with_assessed_level(payload.student, payload.subject, assessment_context)
+    learning_memory_service = LearningMemoryService()
+    prior_memory = await learning_memory_service.relevant_for_child_subject(
+        payload.child_id,
+        payload.subject,
+        topic=resolved_topic,
+        student_message=payload.message,
+        working_level=(assessment_context or {}).get('assessed_level'),
+    )
     chat_store: ChatStore | None = None
     chat_user_id: str | None = child_user['id']
     chat_thread_id: str | None = payload.thread_id
@@ -178,6 +207,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         'Do not use * for multiplication. Use × for multiplication and ÷ for division.',
         'Do not end with an unfinished sentence or a heading without content.',
         *build_progress_tracker_directives(tutoring_state),
+        *learning_memory_service.memory_directives(prior_memory),
         *directives,
     ]
     system = compact_chat_system_prompt(prompt_student, payload.subject, resolved_topic, directives, active_task, assessment_context)
@@ -226,6 +256,25 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             payload.child_id,
             subject=payload.subject,
             topic=resolved_topic,
+        )
+        await learning_memory_service.record_exchange_summary(
+            parent_id=child_user['id'],
+            child_id=payload.child_id,
+            subject=payload.subject,
+            topic=resolved_topic,
+            grade_level=f'Grade {prompt_student.grade}',
+            working_level=(assessment_context or {}).get('assessed_level'),
+            student_message=payload.message,
+            assistant_text=formatted_reply,
+            tutoring_state=next_state,
+            thread_id=chat_thread_id,
+            source='session',
+            metadata={
+                'provider': result.provider,
+                'model': result.model,
+                'topic_source': topic_resolution['source'],
+                'assessed_level': topic_resolution.get('assessed_level'),
+            },
         )
     return ChatResponse(
         reply=formatted_reply,
@@ -281,7 +330,7 @@ async def homework_feedback(
 
 @app.get('/api/future-modules')
 def future_modules() -> dict:
-    modules = ['Voice Learning', 'Mobile App', 'Teacher Portal', 'School/LMS Integrations', 'Advanced Analytics', 'Full K-12 Expansion', 'Advanced Handwriting AI', 'Science', 'Social Studies', 'Test Prep']
+    modules = ['Voice Learning', 'Mobile App', 'Teacher Portal', 'School/LMS Integrations', 'Advanced Analytics', 'Additional K-12 Enrichment', 'Advanced Handwriting AI', 'Science', 'Social Studies', 'Test Prep']
     return {'modules': [{'name': name, 'status': 'Coming Soon'} for name in modules]}
 
 

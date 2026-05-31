@@ -21,6 +21,7 @@ EMAIL_TRIGGER_TYPES = {
     'payment_failed',
     'annual_renewal_reminder',
     'weekly_progress',
+    'referral_success',
 }
 
 
@@ -188,6 +189,20 @@ class EmailService:
             metadata=metadata,
         )
 
+    async def queue_referral_success(
+        self,
+        *,
+        parent_id: str,
+        recipient_email: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict:
+        return await self.create_event(
+            trigger_type='referral_success',
+            parent_id=parent_id,
+            recipient_email=recipient_email,
+            metadata=metadata,
+        )
+
     async def send_signup_verification_code(self, *, recipient_email: str, code: str, expires_in_minutes: int) -> str | None:
         if not self.settings.resend_api_key.strip():
             raise RuntimeError('RESEND_API_KEY is not configured.')
@@ -198,6 +213,17 @@ class EmailService:
         if not self.settings.resend_api_key.strip():
             raise RuntimeError('RESEND_API_KEY is not configured.')
         content = self._password_reset_code(code, expires_in_minutes)
+        return await self._send_resend_email(recipient_email.strip().lower(), content)
+
+    async def send_support_alert(self, *, recipient_email: str, subject: str, text: str) -> str | None:
+        if not self.settings.resend_api_key.strip():
+            raise RuntimeError('RESEND_API_KEY is not configured.')
+        escaped_text = escape(text).replace('\n', '<br />')
+        content = EmailContent(
+            subject=subject,
+            text=text,
+            html=f'<p>{escaped_text}</p>',
+        )
         return await self._send_resend_email(recipient_email.strip().lower(), content)
 
     async def process_due_events(self, limit: int = 25) -> dict:
@@ -400,6 +426,7 @@ class EmailService:
             'payment_failed': self._payment_failed(manage_url),
             'annual_renewal_reminder': self._annual_renewal_reminder(data, manage_url),
             'weekly_progress': self._weekly_progress(data, child_name, app_url),
+            'referral_success': self._referral_success(app_url),
         }
         return templates[trigger_type]
 
@@ -600,7 +627,7 @@ class EmailService:
 
     def _signup_welcome(self, app_url: str) -> EmailContent:
         return self._content(
-            'Welcome to MsAlisia - Your Free Trial Starts Now',
+            'Welcome to MsAlisia — Your Free Trial Starts Now',
             [
                 'Welcome to MsAlisia. Your free trial starts now.',
                 'To get started, create or review your child profile, choose the subjects your child will practice, and begin with a short assessment.',
@@ -677,7 +704,7 @@ class EmailService:
 
     def _payment_failed(self, manage_url: str) -> EmailContent:
         return self._content(
-            'Action needed - your MsAlisia payment',
+            'Action needed — payment issue with your MsAlisia account',
             [
                 'We could not complete your MsAlisia payment.',
                 'Please update your payment method to keep your child learning with Ms. Alisia.',
@@ -691,7 +718,7 @@ class EmailService:
         amount = str(data.get('amount') or '').strip()
         amount_line = f'Renewal amount: {amount}.' if amount else 'You can review your plan and payment details before renewal.'
         return self._content(
-            'Your MsAlisia annual plan renews in 7 days',
+            'Your MsAlisia annual subscription renews in 7 days',
             [
                 f'Your MsAlisia annual plan renews on {renewal_date}.',
                 amount_line,
@@ -716,6 +743,17 @@ class EmailService:
                 f'Subject highlights: {highlights}',
                 f'Recommended next step: {recommended_next_step}',
                 'Every bit of steady practice helps build confidence.',
+                f'Open MsAlisia: {app_url}',
+                'The MsAlisia Team',
+            ],
+        )
+
+    def _referral_success(self, app_url: str) -> EmailContent:
+        return self._content(
+            'You earned a free week!',
+            [
+                'Great news — your referral has qualified, and you earned one free week of MsAlisia access.',
+                'Thank you for sharing MsAlisia with another family.',
                 f'Open MsAlisia: {app_url}',
                 'The MsAlisia Team',
             ],

@@ -81,6 +81,17 @@ class SupabaseClient:
             )
         return self._json_or_raise(response)
 
+    async def rpc(self, function_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        self._require_config()
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f'{self.base_url}/rest/v1/rpc/{function_name}',
+                json=payload,
+                headers=self._service_headers(),
+            )
+        result = self._json_or_raise(response)
+        return result if isinstance(result, list) else []
+
     async def create_auth_user(self, email: str, password: str, metadata: dict[str, Any]) -> dict[str, Any]:
         self._require_config()
         async with httpx.AsyncClient(timeout=30) as client:

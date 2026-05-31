@@ -1,7 +1,7 @@
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 
 from ..models import ChatHistoryItem, StudentProfile, TutoringState
-from ..schemas.voice import VoiceMessageResponse
+from ..schemas.voice import VoiceMessageResponse, VoiceNudgeRequest, VoiceNudgeResponse
 from ..services.access_control import require_student_child_access
 from ..services.voice_service import VoiceService, parse_voice_json
 
@@ -54,4 +54,25 @@ async def voice_message(
         history=history,
         tutoring_state=tutoring_state,
         thread_id=thread_id,
+    )
+
+
+@router.post('/nudge', response_model=VoiceNudgeResponse)
+async def voice_nudge(
+    payload: VoiceNudgeRequest,
+    authorization: str = Header(default=''),
+) -> VoiceNudgeResponse:
+    access = await require_student_child_access(authorization, payload.child_id)
+    result = await VoiceService().synthesize_nudge(
+        parent_id=access['id'],
+        child=access['child'],
+        message=payload.message,
+    )
+    return VoiceNudgeResponse(
+        assistant_audio_base64=result.assistant_audio_base64,
+        audio_mime_type=result.audio_mime_type,
+        fallback_to_chat=result.fallback_to_chat,
+        error_message=result.error_message,
+        tts_model=result.tts_model,
+        timings=result.timings,
     )

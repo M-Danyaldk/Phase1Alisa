@@ -1,6 +1,6 @@
-import { apiPostForm } from '../api';
+import { apiPost, apiPostForm } from '../api';
 import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState } from '../../types';
-import { VoiceMessageResponse } from '../../types/voice';
+import { VoiceMessageResponse, VoiceNudgeResponse } from '../../types/voice';
 
 function authHeaders(accessToken: string): Record<string, string> {
   return { Authorization: `Bearer ${accessToken}` };
@@ -40,6 +40,10 @@ export function sendVoiceMessage({
   payload.append('tutoring_state_json', JSON.stringify(tutoringState));
   if (threadId) payload.append('thread_id', threadId);
   return apiPostForm<VoiceMessageResponse>('/api/voice/message', payload, authHeaders(accessToken));
+}
+
+export function sendVoiceNudge(accessToken: string, childId: string, message: string): Promise<VoiceNudgeResponse> {
+  return apiPost<VoiceNudgeResponse>('/api/voice/nudge', { child_id: childId, message }, authHeaders(accessToken));
 }
 
 function audioExtension(contentType: string): string {

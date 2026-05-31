@@ -53,6 +53,33 @@ class AdminReportsResponse(BaseModel):
     audit_logs: list[dict]
 
 
+class OwnerFinancialSummaryResponse(BaseModel):
+    summary: dict
+
+
+class OwnerFinancialSubscriptionsResponse(BaseModel):
+    subscriptions: list[dict]
+
+
+class OwnerFinancialFailedPaymentsResponse(BaseModel):
+    failed_payments: list[dict]
+
+
+class OwnerFinancialDiscountsResponse(BaseModel):
+    discounts: list[dict]
+    coupon_redemptions: list[dict]
+
+
+class OwnerFinancialReferralsResponse(BaseModel):
+    referral_codes: list[dict]
+    referrals: list[dict]
+    referral_rewards: list[dict]
+
+
+class OwnerFinancialEventsResponse(BaseModel):
+    events: list[dict]
+
+
 class AdminSettingsResponse(BaseModel):
     settings: list[dict]
 

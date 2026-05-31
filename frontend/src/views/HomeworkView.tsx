@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ProblemReportButton } from '../components/ProblemReportButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { getStudentHomeworkHistory, homeworkAcceptTypes, uploadStudentHomework } from '../lib/api/homework';
 import { ChildView, StudentProfile } from '../types';
@@ -54,6 +55,7 @@ export function HomeworkView({
 
   return <div className="page-stack narrow">
     <SectionHeader eyebrow="Homework" title={`${student.name}'s homework helper`} desc="Upload a clear photo or PDF. Ms. Alisia checks what she can see before helping one step at a time." />
+    <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
     <div className="form-card">
       <div className="field-group">
         <strong>Homework photo or file</strong>
@@ -72,6 +74,14 @@ export function HomeworkView({
       <button className="primary-button" onClick={analyze} disabled={loading || !childId || !accessToken}>{loading ? 'Uploading...' : 'Take a Photo or Upload'}</button>
       {message && <p className="error-note">{message}</p>}
       {uploadResult && <HomeworkResult upload={uploadResult} onStart={() => setView?.('learn')} />}
+      <ProblemReportButton
+        accessToken={accessToken}
+        childId={childId}
+        source="homework"
+        studentSession={studentSession}
+        messageContext={uploadResult?.ai_validation_summary || message || null}
+        disabled={!accessToken || !childId}
+      />
     </div>
     <HomeworkHistory uploads={history} loading={historyLoading} />
   </div>;

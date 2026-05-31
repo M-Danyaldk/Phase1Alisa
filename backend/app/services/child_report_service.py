@@ -5,10 +5,12 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from ..schemas.child_report import AssessmentSummary, ChildReportResponse, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview
+from ..schemas.child_report import AssessmentSummary, ChildReportResponse, LearningMemorySummary, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview
 from ..schemas.homework import HomeworkHistoryItem
 from .app_data_service import AppDataService
 from .supabase_client import SupabaseClient, SupabaseClientError
+from .working_level_override_service import WorkingLevelOverrideService
+from .learning_memory_service import LearningMemoryService
 
 
 class ChildReportService:
@@ -22,16 +24,19 @@ class ChildReportService:
         threads = self._filter_rows(await self._thread_rows(parent_id, child_id), period, subject_filter, 'updated_at')
         messages = self._filter_rows(await self._message_rows(parent_id, child_id), period, subject_filter, 'created_at')
         homework_rows = self._filter_rows(await self._homework_rows(child_id), period, subject_filter, 'created_at')
+        memory_rows = self._filter_rows(await LearningMemoryService().recent_for_child(parent_id, child_id, limit=10), period, subject_filter, 'updated_at')
 
-        subject_progress = self._subject_progress(child, assessments, threads, messages)
+        overrides = await WorkingLevelOverrideService().active_overrides_for_child(child_id)
+        subject_progress = self._subject_progress(child, assessments, threads, messages, overrides)
         if subject_filter != 'All':
             subject_progress = [item for item in subject_progress if item.subject == subject_filter]
         recent_assessments = [self._assessment_summary(row) for row in assessments[:6]]
         recent_sessions = self._session_summaries(threads, messages)
         strengths = self._strengths(subject_progress, recent_assessments)
         weak_areas = self._weak_areas(recent_assessments)
-        next_steps = self._next_steps(child, subject_progress, weak_areas)
-        last_updated = self._last_updated(assessments, threads, messages, homework_rows)
+        recent_memory = [self._memory_summary(row) for row in memory_rows[:6]]
+        next_steps = self._next_steps(child, subject_progress, weak_areas, recent_memory)
+        last_updated = self._last_updated(assessments, threads, messages, homework_rows, memory_rows)
         questions_practiced = len([message for message in messages if message.get('role') == 'student'])
         lessons_completed = len([thread for thread in threads if (thread.get('updated_at') or thread.get('created_at'))])
 
@@ -53,6 +58,7 @@ class ChildReportService:
             subject_progress=subject_progress,
             recent_assessments=recent_assessments,
             recent_tutor_sessions=recent_sessions,
+            recent_learning_memory=recent_memory,
             homework_uploads=[self._homework_summary(row, child.get('name')) for row in homework_rows[:10]],
             strengths=strengths,
             weak_areas=weak_areas,
@@ -144,7 +150,7 @@ class ChildReportService:
         except SupabaseClientError:
             return []
 
-    def _subject_progress(self, child: dict, assessments: list[dict], threads: list[dict], messages: list[dict]) -> list[SubjectProgress]:
+    def _subject_progress(self, child: dict, assessments: list[dict], threads: list[dict], messages: list[dict], overrides: dict[str, dict] | None = None) -> list[SubjectProgress]:
         subjects = child.get('subjects') or ['Math', 'ELA', 'Writing']
         if isinstance(subjects, str):
             try:
@@ -169,7 +175,12 @@ class ChildReportService:
             assessment_rows = assessments_by_subject.get(subject, [])
             thread_rows = threads_by_subject.get(subject, [])
             message_rows = messages_by_subject.get(subject, [])
-            level = assessment_rows[0]['estimated_level'] if assessment_rows else f'{child["grade_level"]} - not assessed yet'
+            enrolled_grade = child['grade_level']
+            assessed_level = assessment_rows[0]['estimated_level'] if assessment_rows else None
+            override = (overrides or {}).get(subject)
+            override_level = (override or {}).get('approved_working_level')
+            level = override_level or assessed_level or f'{enrolled_grade} - not assessed yet'
+            working_level_source = 'parent_override' if override_level else ('assessment' if assessed_level else 'enrolled_grade')
             gaps = self._json_list(assessment_rows[0].get('learning_gaps')) if assessment_rows else []
             last_activity = None
             if thread_rows:
@@ -179,6 +190,10 @@ class ChildReportService:
             progress.append(SubjectProgress(
                 subject=subject,
                 level=level,
+                enrolled_grade=enrolled_grade,
+                working_level_source=working_level_source,
+                override_active=bool(override_level),
+                override_level=override_level,
                 progress_percentage=self._progress_percent(len(assessment_rows), len(thread_rows), len(message_rows)),
                 current_topic=thread_rows[0].get('topic') if thread_rows else None,
                 strong_area=self._strong_area(subject, len(message_rows), assessment_rows),
@@ -228,6 +243,20 @@ class ChildReportService:
             for thread in threads[:8]
         ]
 
+    def _memory_summary(self, row: dict) -> LearningMemorySummary:
+        return LearningMemorySummary(
+            id=row.get('id'),
+            subject=row.get('subject') or 'Unknown',
+            topic=row.get('topic'),
+            worked_on=row.get('worked_on'),
+            struggled_with=row.get('struggled_with'),
+            mastered=row.get('mastered'),
+            next_step=row.get('next_step'),
+            child_facing_summary=row.get('child_facing_summary'),
+            parent_facing_summary=row.get('parent_facing_summary'),
+            updated_at=row.get('updated_at') or row.get('created_at'),
+        )
+
     def _homework_summary(self, row: dict, child_name: str | None) -> HomeworkHistoryItem:
         metadata = row.get('metadata') or {}
         if isinstance(metadata, str):
@@ -272,8 +301,12 @@ class ChildReportService:
             weak.extend([f'{item.subject}: {gap}' for gap in item.learning_gaps[:2]])
         return weak[:6] or ['No weak areas recorded yet. Start with a quick assessment.']
 
-    def _next_steps(self, child: dict, progress: list[SubjectProgress], weak_areas: list[str]) -> list[str]:
+    def _next_steps(self, child: dict, progress: list[SubjectProgress], weak_areas: list[str], memory: list[LearningMemorySummary] | None = None) -> list[str]:
         steps: list[str] = []
+        if memory:
+            latest_next = memory[0].next_step
+            if latest_next:
+                steps.append(latest_next)
         if weak_areas and not weak_areas[0].startswith('No weak areas'):
             steps.append('Review the first weak area with a short guided tutoring session.')
         missing = [item.subject for item in progress if item.assessment_count == 0]
@@ -332,15 +365,19 @@ class ChildReportService:
             except Exception:
                 return datetime.min.replace(tzinfo=UTC)
 
-    def _last_updated(self, assessments: list[dict], threads: list[dict], messages: list[dict], homework_rows: list[dict] | None = None) -> str | None:
+    def _last_updated(self, assessments: list[dict], threads: list[dict], messages: list[dict], homework_rows: list[dict] | None = None, memory_rows: list[dict] | None = None) -> str | None:
         values = [row.get('created_at') for row in assessments] + [row.get('updated_at') for row in threads] + [row.get('created_at') for row in messages]
         values += [row.get('created_at') for row in (homework_rows or [])]
+        values += [row.get('updated_at') or row.get('created_at') for row in (memory_rows or [])]
         dates = [self._parse_date(value) for value in values if value]
         if not dates:
             return None
         return max(dates).isoformat()
 
     def _current_level(self, child: dict, progress: list[SubjectProgress]) -> str:
+        override = next((item for item in progress if item.override_active and item.override_level), None)
+        if override:
+            return f'Working at {override.override_level} level - enrolled in {child["grade_level"]}'
         assessed = [item.level for item in progress if 'not assessed' not in item.level.lower()]
         if assessed:
             return assessed[0]

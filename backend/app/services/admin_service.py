@@ -52,6 +52,12 @@ class AdminService:
             raise HTTPException(status_code=403, detail='This admin account does not have the required permission.')
         return profile
 
+    async def require_super_admin(self, authorization: str) -> dict:
+        profile = await self.require_admin(authorization)
+        if profile.get('role') != 'super_admin':
+            raise HTTPException(status_code=403, detail='Super admin access is required.')
+        return profile
+
     async def overview(self, admin: dict) -> dict:
         students, assessments, llm_events, users, subscriptions, audit_logs = await asyncio.gather(
             self._safe_select('students', 'order=created_at.desc&limit=10'),

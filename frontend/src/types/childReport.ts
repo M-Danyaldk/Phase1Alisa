@@ -3,6 +3,10 @@ import { HomeworkUpload } from './homework';
 export type SubjectProgress = {
   subject: string;
   level: string;
+  enrolled_grade?: string | null;
+  working_level_source?: string;
+  override_active?: boolean;
+  override_level?: string | null;
   progress_percentage: number;
   current_topic?: string | null;
   strong_area?: string | null;
@@ -42,6 +46,19 @@ export type TutorSessionSummary = {
   last_activity_at?: string | null;
 };
 
+export type LearningMemorySummary = {
+  id?: string | null;
+  subject: string;
+  topic?: string | null;
+  worked_on?: string | null;
+  struggled_with?: string | null;
+  mastered?: string | null;
+  next_step?: string | null;
+  child_facing_summary?: string | null;
+  parent_facing_summary?: string | null;
+  updated_at?: string | null;
+};
+
 export type ChildReport = {
   child_id: string;
   child_name: string;
@@ -60,6 +77,7 @@ export type ChildReport = {
   subject_progress: SubjectProgress[];
   recent_assessments: AssessmentSummary[];
   recent_tutor_sessions: TutorSessionSummary[];
+  recent_learning_memory: LearningMemorySummary[];
   homework_uploads: HomeworkUpload[];
   strengths: string[];
   weak_areas: string[];

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Mic, Square } from 'lucide-react';
 import { classNames } from '../lib/classNames';
 import { MarkdownText } from './MarkdownText';
+import { ProblemReportButton } from './ProblemReportButton';
 import { ChatMessage, TutoringState } from '../types';
 
 type Props = {
@@ -24,7 +25,17 @@ type Props = {
   onSend: () => void;
   onQuickAction: (prompt: string) => void;
   onVoiceNotice?: (message: string) => void;
+  onVoiceEnabledChange?: (enabled: boolean) => void;
   onVoiceSubmit?: (audio: Blob) => Promise<void>;
+  reportContext?: {
+    accessToken: string;
+    childId: string;
+    subject?: 'Math' | 'ELA' | 'Writing';
+    studentSession?: boolean;
+    sessionId?: string | null;
+    threadId?: string | null;
+    messageContext?: string | null;
+  };
 };
 
 const CHAT_FALLBACK_MESSAGE = 'No problem — we will use chat instead!';
@@ -49,7 +60,9 @@ export function ChatWorkspace({
   onSend,
   onQuickAction,
   onVoiceNotice,
+  onVoiceEnabledChange,
   onVoiceSubmit,
+  reportContext,
 }: Props) {
   const skill = tutoringState.skill || 'Practice';
   const step = tutoringState.step_number && tutoringState.step_number > 0 ? `Step ${tutoringState.step_number}` : 'Getting started';
@@ -60,6 +73,13 @@ export function ChatWorkspace({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const voiceUnavailable = inputDisabled || voiceDisabled || voiceProcessing;
+
+  useEffect(() => {
+    if (!voiceAllowed && voiceEnabled) {
+      setVoiceEnabled(false);
+      onVoiceEnabledChange?.(false);
+    }
+  }, [onVoiceEnabledChange, voiceAllowed, voiceEnabled]);
 
   function supportedMimeType(): string | undefined {
     const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
@@ -168,7 +188,16 @@ export function ChatWorkspace({
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Explain again in simpler words.'); }} disabled={inputDisabled}>Explain again</button>
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Check my answer: '); }} disabled={inputDisabled}>Check my answer</button>
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Give me one short example.'); }} disabled={inputDisabled}>Give me an example</button>
-      <button type="button" disabled title="Reporting will be added in a later phase.">Report a Problem</button>
+      {reportContext && <ProblemReportButton
+        accessToken={reportContext.accessToken}
+        childId={reportContext.childId}
+        source="learning"
+        subject={reportContext.subject}
+        studentSession={reportContext.studentSession}
+        sessionId={reportContext.sessionId}
+        threadId={reportContext.threadId}
+        messageContext={reportContext.messageContext}
+      />}
     </div>
     {voiceAllowed && <div className="voice-panel" aria-label="Voice learning controls">
       <label className="voice-toggle">
@@ -176,9 +205,11 @@ export function ChatWorkspace({
           type="checkbox"
           checked={voiceEnabled}
           onChange={event => {
-            setVoiceEnabled(event.target.checked);
-            if (!event.target.checked && recording) stopRecording();
-            if (event.target.checked) onVoiceNotice?.('');
+            const enabled = event.target.checked;
+            setVoiceEnabled(enabled);
+            onVoiceEnabledChange?.(enabled);
+            if (!enabled && recording) stopRecording();
+            if (enabled) onVoiceNotice?.('');
           }}
           disabled={inputDisabled || voiceDisabled}
         />

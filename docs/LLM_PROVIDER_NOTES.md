@@ -52,7 +52,7 @@ GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
 
 All responses are routed through `backend/app/prompts.py`, which enforces:
 
-- Grades 3-6 scope
+- Grades 3-12 scope
 - Subject-specific rules for Math, ELA, and Writing
 - One-concept-at-a-time tutoring
 - Short explanations

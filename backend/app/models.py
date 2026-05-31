@@ -1,7 +1,7 @@
 from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
 
-from .curriculum import SUPPORTED_GRADES
+from .curriculum import LAUNCH_GRADES
 
 Subject = Literal['Math', 'ELA', 'Writing']
 TopicSource = Literal['manual', 'default', 'assessment']
@@ -9,7 +9,7 @@ TopicSource = Literal['manual', 'default', 'assessment']
 class StudentProfile(BaseModel):
     id: Optional[int] = None
     name: str = Field(default='Student', min_length=1)
-    grade: int = Field(default=4, ge=min(SUPPORTED_GRADES), le=max(SUPPORTED_GRADES))
+    grade: int = Field(default=4, ge=min(LAUNCH_GRADES), le=max(LAUNCH_GRADES))
     math_level: str = 'Not assessed yet'
     ela_level: str = 'Not assessed yet'
     writing_level: str = 'Not assessed yet'
@@ -74,7 +74,7 @@ class AssessmentRequest(BaseModel):
     student: StudentProfile
     child_id: Optional[str] = None
     subject: Subject
-    grade: int = Field(default=4, ge=min(SUPPORTED_GRADES), le=max(SUPPORTED_GRADES))
+    grade: int = Field(default=4, ge=min(LAUNCH_GRADES), le=max(LAUNCH_GRADES))
     questions: list[str]
     answers: list[str]
 

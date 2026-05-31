@@ -22,3 +22,12 @@ export type VoiceMessageResponse = {
   timings: Record<string, number>;
   metadata?: Record<string, unknown>;
 };
+
+export type VoiceNudgeResponse = {
+  assistant_audio_base64?: string | null;
+  audio_mime_type?: string | null;
+  fallback_to_chat: boolean;
+  error_message?: string | null;
+  tts_model?: string | null;
+  timings: Record<string, number>;
+};

@@ -81,13 +81,18 @@ class BillingService:
     async def billing_status(self, parent_id: str, email: str) -> dict:
         trial_record = await self._trial_history_for_email(email)
         children = await self.list_child_access(parent_id, email=email)
+        family_discount = await self._family_discount_summary(parent_id)
+        coupon_redemptions = await self._coupon_redemptions_for_parent(parent_id)
         return {
             'parent_id': parent_id,
             'email': self._normalize_email(email),
             'trial_available': trial_record is None,
+            'paid_checkout_required': trial_record is not None,
             'trial_blocked_reason': 'trial_already_used' if trial_record else None,
             'children': children,
             'plans': self.plans(),
+            'family_discount': family_discount,
+            'coupon_redemptions': coupon_redemptions,
         }
 
     async def list_child_access(self, parent_id: str, email: str | None = None) -> list[dict]:
@@ -204,13 +209,14 @@ class BillingService:
             'message': 'Free trial started.',
         }
 
-    async def create_checkout_session(self, parent_id: str, email: str, child_id: str, plan_key: PlanKey) -> dict:
+    async def create_checkout_session(self, parent_id: str, email: str, child_id: str, plan_key: PlanKey, coupon_code: str | None = None) -> dict:
         stripe = self._stripe_module()
         child = await self._child(parent_id, child_id)
         plan = self._plan(plan_key)
         stripe_price_id = self._stripe_price_id(plan)
         customer_id = await self._get_or_create_stripe_customer(parent_id, email)
         family_discount = await self._family_discount_state(parent_id)
+        coupon = await self._validate_coupon_code(stripe, coupon_code)
 
         checkout_payload = {
             'mode': 'subscription',
@@ -235,17 +241,29 @@ class BillingService:
                 'plan_key': plan_key,
                 'plan_type': plan['plan_type'],
                 'billing_interval': plan['billing_interval'],
+                'family_discount_checkout_eligible': str(bool(family_discount['checkout_eligible'])).lower(),
             },
         }
-        if family_discount['eligible'] and self.settings.stripe_family_discount_coupon_id:
+        if coupon:
+            checkout_payload['discounts'] = [{'promotion_code': coupon['promotion_code_id']}]
+            checkout_payload['metadata']['coupon_code'] = coupon['coupon_code']
+            checkout_payload['subscription_data']['metadata']['coupon_code'] = coupon['coupon_code']
+        elif family_discount['checkout_eligible'] and self.settings.stripe_family_discount_coupon_id:
             checkout_payload['discounts'] = [{'coupon': self.settings.stripe_family_discount_coupon_id}]
-        elif family_discount['eligible']:
+            checkout_payload['metadata']['family_discount_applied'] = 'true'
+            checkout_payload['subscription_data']['metadata']['family_discount_applied'] = 'true'
+        elif family_discount['checkout_eligible']:
             logger.warning('Family discount eligible for parent %s but STRIPE_FAMILY_DISCOUNT_COUPON_ID is not configured.', parent_id)
             checkout_payload['allow_promotion_codes'] = True
         else:
             checkout_payload['allow_promotion_codes'] = True
 
         session = await anyio.to_thread.run_sync(lambda: stripe.checkout.Session.create(**checkout_payload))
+        if coupon:
+            await self._record_coupon_redemption(parent_id, child_id, coupon, 'valid', payment_reference=session.id, metadata={
+                'plan_key': plan_key,
+                'checkout_session_id': session.id,
+            })
         return {
             'checkout_url': session.url,
             'session_id': session.id,
@@ -764,21 +782,153 @@ class BillingService:
     async def _family_discount_state(self, parent_id: str) -> dict:
         access_rows = await self._access_rows(parent_id)
         active_count = len([row for row in access_rows if row.get('access_status') == 'active'])
-        eligible = active_count >= 1
-        if eligible:
+        current_eligible = active_count >= 2
+        checkout_eligible = active_count >= 1
+        await self._record_family_discount_state(parent_id, active_count, current_eligible, checkout_eligible)
+        return {
+            'eligible': current_eligible,
+            'checkout_eligible': checkout_eligible,
+            'active_child_subscriptions': active_count,
+            'discount_percent': 5,
+            'stripe_coupon_configured': bool(self.settings.stripe_family_discount_coupon_id),
+        }
+
+    async def _family_discount_summary(self, parent_id: str) -> dict:
+        access_rows = await self._access_rows(parent_id)
+        active_count = len([row for row in access_rows if row.get('access_status') == 'active'])
+        current_eligible = active_count >= 2
+        checkout_eligible = active_count >= 1
+        await self._record_family_discount_state(parent_id, active_count, current_eligible, checkout_eligible)
+        return {
+            'active_child_subscriptions': active_count,
+            'eligible': current_eligible,
+            'checkout_eligible': checkout_eligible,
+            'discount_percent': 5,
+            'stripe_coupon_configured': bool(self.settings.stripe_family_discount_coupon_id),
+            'status': 'eligible' if current_eligible else ('eligible_next_checkout' if checkout_eligible else 'ineligible'),
+            'message': self._family_discount_message(active_count, current_eligible, checkout_eligible),
+            'not_retroactive': True,
+            'annual_non_refundable': True,
+            'removal_timing': 'next_renewal',
+        }
+
+    async def _record_family_discount_state(self, parent_id: str, active_count: int, current_eligible: bool, checkout_eligible: bool) -> None:
+        status = 'eligible' if current_eligible else ('pending' if checkout_eligible else 'ineligible')
+        latest = None
+        try:
+            rows = await self.supabase.select(
+                'billing_discounts',
+                f'parent_id=eq.{quote(parent_id)}&discount_type=eq.family&order=created_at.desc&limit=1',
+            )
+            latest = rows[0] if rows else None
+        except SupabaseClientError as exc:
+            if self._missing_milestone2_table(exc):
+                return
+            logger.warning('Could not load family discount state for parent %s: %s', parent_id, exc)
+            return
+
+        metadata = {
+            'active_child_subscriptions': active_count,
+            'checkout_eligible_for_next_child': checkout_eligible,
+            'rule': '5 percent discount when parent has 2 or more active child subscriptions; second child checkout is eligible.',
+            'not_retroactive': True,
+            'removal_timing': 'next_renewal',
+        }
+        should_insert = not latest or latest.get('eligibility_status') != status
+        if should_insert:
             try:
                 await self.supabase.insert('billing_discounts', {
                     'parent_id': parent_id,
                     'discount_type': 'family',
                     'discount_percent': 5,
                     'stripe_coupon_id': self.settings.stripe_family_discount_coupon_id or None,
-                    'eligibility_status': 'eligible' if self.settings.stripe_family_discount_coupon_id else 'pending',
-                    'metadata': {'active_child_subscriptions_before_checkout': active_count},
+                    'eligibility_status': status,
+                    'removes_at_period_end': active_count < 2 and latest and latest.get('eligibility_status') in {'eligible', 'applied'},
+                    'metadata': metadata,
                 })
             except SupabaseClientError as exc:
                 if not self._missing_milestone2_table(exc):
-                    logger.warning('Could not save family discount eligibility for parent %s: %s', parent_id, exc)
-        return {'eligible': eligible, 'active_child_subscriptions': active_count}
+                    logger.warning('Could not save family discount state for parent %s: %s', parent_id, exc)
+
+        remove_at_period_end = active_count < 2 and latest and latest.get('eligibility_status') in {'eligible', 'applied'}
+        await self._mark_family_discount_subscription_flags(parent_id, current_eligible, bool(remove_at_period_end))
+
+    async def _mark_family_discount_subscription_flags(self, parent_id: str, eligible: bool, remove_at_period_end: bool) -> None:
+        try:
+            await self.supabase.update('billing_subscriptions', {'parent_id': f'eq.{parent_id}'}, {
+                'family_discount_eligible': eligible,
+                'family_discount_remove_at_period_end': remove_at_period_end,
+                'stripe_coupon_id': self.settings.stripe_family_discount_coupon_id or None,
+                'updated_at': datetime.now(UTC).isoformat(),
+            })
+        except SupabaseClientError as exc:
+            if self._missing_milestone2_table(exc) or self._missing_family_discount_columns(exc):
+                return
+            logger.warning('Could not update family discount subscription flags for parent %s: %s', parent_id, exc)
+
+    def _family_discount_message(self, active_count: int, current_eligible: bool, checkout_eligible: bool) -> str:
+        if current_eligible:
+            return 'Family discount is available for this account because 2 or more child subscriptions are active.'
+        if checkout_eligible:
+            return 'Your next child subscription checkout is eligible for the family discount because it will bring the account to 2 active child subscriptions.'
+        return 'Family discount starts when 2 or more child subscriptions are active.'
+
+    async def _validate_coupon_code(self, stripe, coupon_code: str | None) -> dict | None:
+        code = (coupon_code or '').strip()
+        if not code:
+            return None
+        try:
+            result = await anyio.to_thread.run_sync(lambda: stripe.PromotionCode.list(code=code, active=True, limit=1))
+        except Exception as exc:
+            logger.warning('Stripe coupon validation failed for submitted code: %s', exc)
+            raise HTTPException(status_code=503, detail='Could not verify this coupon code right now. Please try again.') from exc
+
+        promotions = self._stripe_to_dict(result).get('data') or []
+        if not promotions:
+            raise HTTPException(status_code=422, detail='This coupon code is not valid or is no longer active.')
+        promotion = promotions[0]
+        coupon = promotion.get('coupon') or {}
+        if coupon.get('valid') is False:
+            raise HTTPException(status_code=422, detail='This coupon code is not valid or is no longer active.')
+        promotion_code_id = self._stripe_id(promotion.get('id'))
+        if not promotion_code_id:
+            raise HTTPException(status_code=422, detail='This coupon code is not valid or is no longer active.')
+        return {
+            'coupon_code': code,
+            'promotion_code_id': promotion_code_id,
+            'coupon_id': self._stripe_id(coupon.get('id')),
+            'coupon_percent_off': coupon.get('percent_off'),
+            'coupon_amount_off': coupon.get('amount_off'),
+            'coupon_currency': coupon.get('currency'),
+        }
+
+    async def _record_coupon_redemption(self, parent_id: str, child_id: str, coupon: dict, status: str, payment_reference: str | None = None, metadata: dict | None = None) -> None:
+        try:
+            await self.supabase.insert('coupon_redemptions', {
+                'parent_id': parent_id,
+                'child_id': child_id,
+                'coupon_code': coupon['coupon_code'],
+                'stripe_coupon_id': coupon.get('coupon_id'),
+                'stripe_promotion_code_id': coupon.get('promotion_code_id'),
+                'validation_status': status,
+                'payment_reference': payment_reference,
+                'metadata': self._json_safe(metadata or {}),
+            })
+        except SupabaseClientError as exc:
+            if not self._missing_coupon_redemptions_table(exc):
+                logger.warning('Could not record coupon redemption for parent %s: %s', parent_id, exc)
+
+    async def _coupon_redemptions_for_parent(self, parent_id: str) -> list[dict]:
+        try:
+            return await self.supabase.select(
+                'coupon_redemptions',
+                f'parent_id=eq.{quote(parent_id)}&order=created_at.desc&limit=10',
+            )
+        except SupabaseClientError as exc:
+            if self._missing_coupon_redemptions_table(exc):
+                return []
+            logger.warning('Could not load coupon redemptions for parent %s: %s', parent_id, exc)
+            return []
 
     def _missing_profile_stripe_column(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
@@ -1068,3 +1218,15 @@ class BillingService:
     def _missing_financial_events_table(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
         return 'financial_events' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
+
+    def _missing_coupon_redemptions_table(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'coupon_redemptions' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
+
+    def _missing_family_discount_columns(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'schema cache' in message and any(column in message for column in [
+            'family_discount_eligible',
+            'family_discount_remove_at_period_end',
+            'stripe_coupon_id',
+        ])

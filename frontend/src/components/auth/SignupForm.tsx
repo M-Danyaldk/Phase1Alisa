@@ -6,6 +6,7 @@ const initialValues: SignupFormValues = {
   email: '',
   password: '',
   confirm_password: '',
+  coppa_parent_consent_accepted: false,
 };
 
 function isValidEmail(email: string): boolean {
@@ -19,6 +20,7 @@ function validate(values: SignupFormValues): string {
   if (!values.password) return 'Password is required.';
   if (values.password.length < 6) return 'Password must be at least 6 characters.';
   if (values.confirm_password !== values.password) return 'Confirm password must match password.';
+  if (!values.coppa_parent_consent_accepted) return 'Please confirm parent/guardian consent before continuing.';
   return '';
 }
 
@@ -55,6 +57,14 @@ export function SignupForm({ onSubmit, onLogin }: { onSubmit: (values: SignupFor
       <label>Parent email<input type="email" value={values.email} onChange={e => setValues({ ...values, email: e.target.value })} /></label>
       <label>Password<input type="password" value={values.password} onChange={e => setValues({ ...values, password: e.target.value })} /></label>
       <label>Confirm Password<input type="password" value={values.confirm_password} onChange={e => setValues({ ...values, confirm_password: e.target.value })} /></label>
+      <label className="checkbox-row consent-row">
+        <input
+          type="checkbox"
+          checked={values.coppa_parent_consent_accepted}
+          onChange={e => setValues({ ...values, coppa_parent_consent_accepted: e.target.checked })}
+        />
+        <span>I confirm that I am the parent or legal guardian of the child I am enrolling and I consent to the collection and use of my child's information for MsAlisia learning services.</span>
+      </label>
       {error && <p className="error-note">{error}</p>}
       <button className="primary-button" onClick={submit} disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</button>
       <button className="link-button" onClick={onLogin} type="button">Already have an account? Log in</button>

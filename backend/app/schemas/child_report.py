@@ -6,6 +6,10 @@ from .homework import HomeworkHistoryItem
 class SubjectProgress(BaseModel):
     subject: str
     level: str
+    enrolled_grade: str | None = None
+    working_level_source: str = 'assessment'
+    override_active: bool = False
+    override_level: str | None = None
     progress_percentage: int = 0
     current_topic: str | None = None
     strong_area: str | None = None
@@ -45,6 +49,19 @@ class TutorSessionSummary(BaseModel):
     last_activity_at: str | None = None
 
 
+class LearningMemorySummary(BaseModel):
+    id: str | None = None
+    subject: str
+    topic: str | None = None
+    worked_on: str | None = None
+    struggled_with: str | None = None
+    mastered: str | None = None
+    next_step: str | None = None
+    child_facing_summary: str | None = None
+    parent_facing_summary: str | None = None
+    updated_at: str | None = None
+
+
 class ChildReportResponse(BaseModel):
     child_id: str
     child_name: str
@@ -63,6 +80,7 @@ class ChildReportResponse(BaseModel):
     subject_progress: list[SubjectProgress]
     recent_assessments: list[AssessmentSummary]
     recent_tutor_sessions: list[TutorSessionSummary]
+    recent_learning_memory: list[LearningMemorySummary] = []
     homework_uploads: list[HomeworkHistoryItem] = []
     strengths: list[str]
     weak_areas: list[str]

@@ -17,7 +17,7 @@ import { LearningView } from './views/LearningView';
 import { ManageChildrenView } from './views/ManageChildrenView';
 import { ParentOnboardingView } from './views/ParentOnboardingView';
 import { ParentDashboardView } from './views/ParentDashboardView';
-import { PrelaunchLandingView } from './views/PrelaunchLandingView';
+import { CompliancePage, PrelaunchLandingView } from './views/PrelaunchLandingView';
 import { ProfileView } from './views/ProfileView';
 import { ReportsView } from './views/ReportsView';
 import { ChildView, ParentView, StudentProfile } from './types';
@@ -35,6 +35,7 @@ type AuthView = 'login' | 'signup' | 'verify';
 
 const AUTH_SESSION_KEY = 'msalisia-auth-session';
 const STUDENT_SESSION_KEY = 'msalisia-student-session';
+const REFERRAL_CODE_KEY = 'msalisia-referral-code';
 
 function readStoredJson<T>(key: string): T | null {
   const stored = localStorage.getItem(key);
@@ -64,10 +65,12 @@ export function App() {
   const [childrenLoading, setChildrenLoading] = useState(() => Boolean(localStorage.getItem(AUTH_SESSION_KEY)));
   const [childrenError, setChildrenError] = useState('');
   const [showParentOnboarding, setShowParentOnboarding] = useState(false);
+  const [paidCheckoutRequiredAfterSignup, setPaidCheckoutRequiredAfterSignup] = useState(false);
   const [studentSession, setStudentSession] = useState<StudentSession | null>(() => readStoredJson<StudentSession>(STUDENT_SESSION_KEY));
   const [studentMe, setStudentMe] = useState<StudentMe | null>(null);
   const [studentSessionLoading, setStudentSessionLoading] = useState(() => Boolean(localStorage.getItem(STUDENT_SESSION_KEY)));
   const [studentSessionError, setStudentSessionError] = useState('');
+  const [studentSessionNotice, setStudentSessionNotice] = useState('');
   const [childDashboardNotice, setChildDashboardNotice] = useState('');
 
   useEffect(() => {
@@ -83,6 +86,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (pathname.startsWith('/ref/')) {
+      const code = pathname.split('/')[2]?.trim();
+      if (code) localStorage.setItem(REFERRAL_CODE_KEY, code);
+      setAuthView('signup');
+      navigate('/signup');
+      return;
+    }
     if (pathname === '/login') setAuthView('login');
     if (pathname === '/signup') setAuthView('signup');
     if (pathname === '/verify') setAuthView('verify');
@@ -164,22 +174,25 @@ export function App() {
       navigate('/admin/dashboard');
       return;
     }
+    let loadedChildren: ChildProfile[] = [];
     try {
-      await loadChildren(nextSession);
+      loadedChildren = await loadChildren(nextSession);
     } catch (error) {
       setChildren([]);
       setSelectedChildId('');
       setShowParentOnboarding(false);
       setChildrenError(error instanceof Error ? error.message : 'Could not load child profiles.');
     }
+    const paidCheckoutRequired = nextSession.paid_checkout_required === true;
+    setPaidCheckoutRequiredAfterSignup(paidCheckoutRequired);
     setSession(nextSession);
     setPendingVerification(null);
     setAuthView('login');
-    setParentView('home');
+    setParentView(paidCheckoutRequired && loadedChildren.length ? 'billing' : 'home');
     setChildView('home');
     setProfileLoading(false);
     setChildrenLoading(false);
-    navigate('/dashboard');
+    navigate(paidCheckoutRequired && loadedChildren.length ? '/billing' : '/dashboard');
   }
 
   function logout() {
@@ -191,27 +204,19 @@ export function App() {
     setSelectedChildId('');
     setChildrenError('');
     setShowParentOnboarding(false);
+    setPaidCheckoutRequiredAfterSignup(false);
     setProfileError('');
     setParentView('home');
     setChildView('home');
     setAuthView('login');
   }
 
-  function parentLoginPath() {
-    localStorage.removeItem(AUTH_SESSION_KEY);
-    setSession(null);
-    setCurrentProfile(null);
-    setChildren([]);
-    setSelectedChildId('');
-    setAuthView('login');
-    setStudentSessionError('');
-    window.location.assign('/login');
-  }
-
   function completeStudentLogin(nextSession: StudentSession) {
     const levels = nextSession.learning_levels || {};
     localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(nextSession));
     setStudentSession(nextSession);
+    setStudentSessionNotice('');
+    setStudentSessionError('');
     setChildDashboardNotice('');
     setStudentMe({
       role: 'child',
@@ -231,11 +236,12 @@ export function App() {
     setChildView('home');
   }
 
-  async function logoutStudent() {
+  async function logoutStudent(notice = '') {
     const token = studentSession?.access_token;
     localStorage.removeItem(STUDENT_SESSION_KEY);
     setStudentSession(null);
     setStudentMe(null);
+    setStudentSessionNotice(notice);
     setChildDashboardNotice('');
     setChildView('home');
     if (token) {
@@ -277,6 +283,7 @@ export function App() {
         localStorage.removeItem(STUDENT_SESSION_KEY);
         setStudentSession(null);
         setStudentMe(null);
+        setStudentSessionNotice('');
         const message = error instanceof Error ? error.message : '';
         setStudentSessionError(message.includes('There is something your parent needs to take care of') ? message : 'Please log in again to open your classroom.');
       })
@@ -312,7 +319,12 @@ export function App() {
 
   const landingPath = pathname === '/';
   if (landingPath) {
-    return <PrelaunchLandingView onLogin={() => navigate('/login')} />;
+    return <PrelaunchLandingView onLogin={() => navigate('/login')} onNavigate={navigate} />;
+  }
+
+  if (pathname === '/privacy' || pathname === '/ai-disclosure' || pathname === '/data-deletion' || pathname === '/support') {
+    const type = pathname.slice(1) as 'privacy' | 'ai-disclosure' | 'data-deletion' | 'support';
+    return <CompliancePage type={type} onNavigate={navigate} />;
   }
 
   const adminPath = pathname === '/admin' || pathname.startsWith('/admin/');
@@ -380,7 +392,7 @@ export function App() {
 
     if (!studentSession || !studentMe) {
       return <>
-        <StudentLoginView onLoggedIn={completeStudentLogin} onParentLogin={parentLoginPath} />
+        <StudentLoginView onLoggedIn={completeStudentLogin} notice={studentSessionNotice} />
         {studentSessionError && <p className="error-note auth-error">{studentSessionError}</p>}
       </>;
     }
@@ -406,6 +418,9 @@ export function App() {
       parental_consent_accepted: true,
     };
     const childAccessBlocked = studentMe.access_allowed === false;
+    const requireStudentRelogin = (message: string) => {
+      void logoutStudent(message);
+    };
     const childBlockedMessage = studentMe.child_blocked_message || 'Hi there! There is something your parent needs to take care of. Go find them and let them know — they will have you back learning in no time!';
 
     return <ChildShell
@@ -413,7 +428,7 @@ export function App() {
       view={childView}
       connected={connected}
       onViewChange={setChildView}
-      onExit={logoutStudent}
+      onExit={() => logoutStudent()}
       exitLabel="Logout"
     >
       <ChildOnly allowed>
@@ -427,20 +442,20 @@ export function App() {
           setChildDashboardNotice('');
           if (view === 'learn' || view === 'assessments' || view === 'homework') setChildView(view);
         }} />}
-        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
         {!childAccessBlocked && childView === 'assessments' && <AssessmentView student={sessionStudent} setStudent={setStudent} childId={studentMe.child_id} accessToken={studentSession.access_token} studentSession />}
-        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession voiceAllowed={studentMe.voice_allowed === true} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
@@ -452,7 +467,7 @@ export function App() {
   const authPath = pathname === '/login' || pathname === '/signup' || pathname === '/verify';
   if (!session) {
     if (!authPath) {
-      return <PrelaunchLandingView onLogin={() => navigate('/login')} />;
+      return <PrelaunchLandingView onLogin={() => navigate('/login')} onNavigate={navigate} />;
     }
     return <div className="auth-shell">
       <div className="auth-brand">
@@ -491,7 +506,12 @@ export function App() {
           onChildCreated={handleOnboardingChildCreated}
           onContinue={() => {
             setShowParentOnboarding(false);
-            setParentView('home');
+            if (paidCheckoutRequiredAfterSignup) {
+              setParentView('billing');
+              navigate('/billing');
+            } else {
+              setParentView('home');
+            }
           }}
         />
       </main>
@@ -513,6 +533,7 @@ export function App() {
     >
       <ParentOnly allowed>
         {parentView === 'home' && <ParentDashboardView
+          accessToken={session.access_token || ''}
           parentName={currentProfile?.full_name || 'Parent'}
           children={children}
           selectedChildId={selectedChildId}
@@ -544,7 +565,7 @@ function parentPathForView(view: ParentView): string {
 
 function adminSectionFromPath(pathname: string): AdminSection {
   const section = pathname.split('/')[2] as AdminSection | undefined;
-  if (section === 'users' || section === 'subscriptions' || section === 'reports' || section === 'settings' || section === 'admins') {
+  if (section === 'users' || section === 'subscriptions' || section === 'reports' || section === 'settings' || section === 'admins' || section === 'owner-financials') {
     return section;
   }
   return 'dashboard';

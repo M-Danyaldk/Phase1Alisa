@@ -56,11 +56,11 @@ export function HomeView({
     {error && <p className="error-note">{error}</p>}
 
     <div className="student-dashboard-hero">
-      <StudentSummaryCard student={student} weeklyFocus={dashboard.weeklyFocus} />
+      <StudentSummaryCard student={student} weeklyFocus={dashboard.weeklyFocus} weeklyRhythm={dashboard.weeklyRhythm} />
       <StudentNextActions actions={dashboard.recommendedNextActions} setView={setView} />
     </div>
 
-    <StudentStatusCards assessmentStatus={dashboard.assessmentStatus} homeworkStatus={dashboard.homeworkStatus} weeklyFocus={dashboard.weeklyFocus} />
+    <StudentStatusCards assessmentStatus={dashboard.assessmentStatus} homeworkStatus={dashboard.homeworkStatus} weeklyFocus={dashboard.weeklyFocus} weeklyRhythm={dashboard.weeklyRhythm} />
     <StudentProgressCards progress={dashboard.subjectProgress} />
 
     <div className="student-dashboard-grid">

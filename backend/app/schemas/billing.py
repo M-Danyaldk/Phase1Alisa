@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 AccessStatus = Literal['trial', 'active', 'inactive', 'past_due']
 PlanKey = Literal['text_monthly', 'text_annual', 'voice_monthly', 'voice_annual']
@@ -61,9 +61,12 @@ class BillingStatusResponse(BaseModel):
     parent_id: str
     email: str
     trial_available: bool
+    paid_checkout_required: bool = False
     trial_blocked_reason: str | None = None
     children: list[ChildAccessResponse]
     plans: list[BillingPlanResponse]
+    family_discount: dict | None = None
+    coupon_redemptions: list[dict] = Field(default_factory=list)
 
 
 class StartTrialRequest(BaseModel):
@@ -82,6 +85,7 @@ class StartTrialResponse(BaseModel):
 class CheckoutSessionRequest(BaseModel):
     child_id: str
     plan_key: PlanKey
+    coupon_code: str | None = None
 
 
 class CheckoutSessionResponse(BaseModel):

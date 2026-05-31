@@ -3,12 +3,17 @@ export type SignupFormValues = {
   email: string;
   password: string;
   confirm_password: string;
+  referral_code?: string;
+  coppa_parent_consent_accepted: boolean;
 };
 
 export type SignupStartResponse = {
   email: string;
   expires_in_minutes: number;
   message: string;
+  trial_available?: boolean;
+  paid_checkout_required?: boolean;
+  trial_blocked_reason?: string | null;
 };
 
 export type AuthUser = {
@@ -23,6 +28,9 @@ export type AuthSessionResponse = {
   token_type?: string | null;
   user?: AuthUser | null;
   message: string;
+  trial_available?: boolean;
+  paid_checkout_required?: boolean;
+  trial_blocked_reason?: string | null;
 };
 
 export type ProfileResponse = {

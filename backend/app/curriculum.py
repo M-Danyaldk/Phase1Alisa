@@ -1,6 +1,10 @@
 from typing import Dict, List
 
-SUPPORTED_GRADES = list(range(3, 13))
+LAUNCH_GRADES = [3, 4, 5, 6]
+FUTURE_GRADES = [7, 8, 9, 10, 11, 12]
+INTERNAL_SUPPORTED_GRADES = [*LAUNCH_GRADES, *FUTURE_GRADES]
+SUPPORTED_GRADES = LAUNCH_GRADES
+LAUNCH_GRADE_ERROR = 'Grades 7–12 are prepared for future release and are not available at launch.'
 LAUNCH_SUBJECTS = ['Math', 'ELA', 'Writing']
 FUTURE_SUBJECTS = ['Science', 'Social Studies']
 
@@ -50,6 +54,18 @@ def is_supported_grade(grade: int) -> bool:
     return grade in SUPPORTED_GRADES
 
 
+def is_launch_grade_label(grade_level: str) -> bool:
+    return grade_number_from_label(grade_level) in LAUNCH_GRADES
+
+
+def grade_number_from_label(grade_level: str) -> int | None:
+    digits = ''.join(character for character in str(grade_level or '') if character.isdigit())
+    if not digits:
+        return None
+    grade = int(digits)
+    return grade if grade in INTERNAL_SUPPORTED_GRADES else None
+
+
 def subject_topics(subject: str, grade: int) -> list[str]:
     return CURRICULUM.get(subject, {}).get(grade, [])
 
@@ -60,12 +76,24 @@ def adjacent_progression(subject: str, enrolled_grade: int) -> str:
 
 
 def curriculum_payload() -> dict:
+    launch_subjects = {
+        subject: {
+            grade: topics
+            for grade, topics in grade_topics.items()
+            if grade in LAUNCH_GRADES
+        }
+        for subject, grade_topics in CURRICULUM.items()
+    }
     return {
-        'supported_grades': SUPPORTED_GRADES,
-        'grades': SUPPORTED_GRADES,
+        'launch_grades': LAUNCH_GRADES,
+        'future_grades': FUTURE_GRADES,
+        'supported_grades': LAUNCH_GRADES,
+        'grades': LAUNCH_GRADES,
+        'internal_supported_grades': INTERNAL_SUPPORTED_GRADES,
+        'future_curriculum_ready': True,
         'launch_subjects': LAUNCH_SUBJECTS,
         'future_subjects': FUTURE_SUBJECTS,
-        'subjects': CURRICULUM,
+        'subjects': launch_subjects,
         'subject_metadata': {
             'Math': {'label': 'Math', 'status': 'launch'},
             'ELA': {'label': 'English Language Arts', 'status': 'launch'},

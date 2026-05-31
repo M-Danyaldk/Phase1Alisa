@@ -5,6 +5,13 @@ export type WaitlistSignupResponse = {
   message: string;
 };
 
-export function joinWaitlist(email: string): Promise<WaitlistSignupResponse> {
-  return apiPost<WaitlistSignupResponse>('/api/waitlist/signup', { email });
+export type WaitlistSignupPayload = {
+  parent_name: string;
+  email: string;
+  child_grade?: string;
+  interest_note?: string;
+};
+
+export function joinWaitlist(payload: WaitlistSignupPayload): Promise<WaitlistSignupResponse> {
+  return apiPost<WaitlistSignupResponse>('/api/waitlist/signup', payload);
 }

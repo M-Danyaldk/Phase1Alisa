@@ -59,7 +59,7 @@ async def start_trial(payload: StartTrialRequest, authorization: str = Header(de
 @router.post('/checkout/session', response_model=CheckoutSessionResponse)
 async def create_checkout_session(payload: CheckoutSessionRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> CheckoutSessionResponse:
     user = await require_parent_access(authorization, x_access_mode)
-    result = await BillingService().create_checkout_session(user['id'], user.get('email') or '', payload.child_id, payload.plan_key)
+    result = await BillingService().create_checkout_session(user['id'], user.get('email') or '', payload.child_id, payload.plan_key, payload.coupon_code)
     return CheckoutSessionResponse(**result)
 
 

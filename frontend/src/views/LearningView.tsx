@@ -5,7 +5,7 @@ import { LearningContextPanel } from '../components/LearningContextPanel';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiPost } from '../lib/api';
 import { getSessionStatus, pauseInactiveSession, recordInactivityNudge, recordSessionActivity, resumeSession } from '../lib/api/sessionActivity';
-import { sendVoiceMessage } from '../lib/api/voice';
+import { sendVoiceMessage, sendVoiceNudge } from '../lib/api/voice';
 import { ChatThread, getChatHistory, getChatThreads, getChildChatThreads } from '../lib/chatApi';
 import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState } from '../types';
 import { SessionStatusResponse } from '../types/sessionActivity';
@@ -16,6 +16,8 @@ const SESSION_ACTIVITY_PING_MS = 10 * 1000;
 const SESSION_STATUS_POLL_MS = 30 * 1000;
 const INACTIVE_PAUSE_SECONDS = 180;
 const INACTIVE_PAUSE_MESSAGE = 'Looks like you stepped away — your session is saved. Come back whenever you are ready!';
+const INACTIVE_RELOGIN_MESSAGE = 'Looks like you stepped away - your session is saved. Please log in again when you are ready to continue.';
+const BRAIN_BREAK_RELOGIN_MESSAGE = 'Your Brain Break is complete. Please log in again when you are ready to continue learning.';
 const DEFAULT_BRAIN_BREAK_MESSAGE = 'Great work today! Your brain needs a short rest to absorb everything you have learned. Take a 30-minute break and come back ready to learn even more!';
 
 const subjectDefaults: Record<Subject, string> = {
@@ -55,7 +57,7 @@ function detectSubjectFromMessage(message: string): Subject | null {
   return null;
 }
 
-export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', studentSession = false, voiceAllowed = false, onInactivePause }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; studentSession?: boolean; voiceAllowed?: boolean; onInactivePause?: (message: string) => void }) {
+export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', studentSession = false, voiceAllowed = false, onInactivePause, onRequireRelogin }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; studentSession?: boolean; voiceAllowed?: boolean; onInactivePause?: (message: string) => void; onRequireRelogin?: (message: string) => void }) {
   const initialTutoringState: TutoringState = { active_problem: '', current_step: '', attempt_count: 0, answer_revealed: false, mode: 'solve', status: 'idle', memory_note: '' };
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
   const [subject, setSubject] = useState<Subject>(initialSubject);
@@ -79,11 +81,14 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const [sessionNotice, setSessionNotice] = useState('');
   const [voiceNotice, setVoiceNotice] = useState('');
   const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const [voiceModeActive, setVoiceModeActive] = useState(false);
   const [brainBreakWarning, setBrainBreakWarning] = useState('');
   const [lastActivityAt, setLastActivityAt] = useState(() => Date.now());
   const lastActivityPingRef = useRef(0);
   const nudgeRecordedRef = useRef(false);
+  const nudgeAudioPlayedRef = useRef(false);
   const pauseRecordedRef = useRef(false);
+  const brainBreakWasActiveRef = useRef(false);
   const trackingEnabled = Boolean(studentSession && accessToken && childId);
   const sessionId = sessionStatus?.session_id || null;
   const brainBreakActive = Boolean(sessionStatus?.brain_break_active);
@@ -126,11 +131,14 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setSessionNotice('');
     setVoiceNotice('');
     setVoiceProcessing(false);
+    setVoiceModeActive(false);
     setBrainBreakWarning('');
     setLastActivityAt(Date.now());
     lastActivityPingRef.current = 0;
     nudgeRecordedRef.current = false;
+    nudgeAudioPlayedRef.current = false;
     pauseRecordedRef.current = false;
+    brainBreakWasActiveRef.current = false;
   }, [accessToken, childId, initialSubject]);
 
   useEffect(() => {
@@ -181,6 +189,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     if (!trackingEnabled || brainBreakActive || loading || sessionStatus?.session_status === 'paused_inactive') return;
 
     nudgeRecordedRef.current = false;
+    nudgeAudioPlayedRef.current = false;
     pauseRecordedRef.current = false;
 
     const nudgeDelay = Math.max(0, INACTIVITY_NUDGE_MS - (Date.now() - lastActivityAt));
@@ -200,8 +209,9 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         .then(status => {
           applySessionStatus(status);
           setNudgeVisible(false);
-          setSessionNotice(INACTIVE_PAUSE_MESSAGE);
-          onInactivePause?.(INACTIVE_PAUSE_MESSAGE);
+          setSessionNotice(INACTIVE_RELOGIN_MESSAGE);
+          if (onRequireRelogin) onRequireRelogin(INACTIVE_RELOGIN_MESSAGE);
+          else onInactivePause?.(INACTIVE_RELOGIN_MESSAGE);
         })
         .catch(error => setSessionNotice(childFriendlySessionMessage(error)));
     }, pauseDelay);
@@ -210,7 +220,22 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       window.clearTimeout(nudgeTimer);
       window.clearTimeout(pauseTimer);
     };
-  }, [accessToken, brainBreakActive, childId, lastActivityAt, loading, onInactivePause, sessionId, sessionStatus?.session_status, trackingEnabled]);
+  }, [accessToken, brainBreakActive, childId, lastActivityAt, loading, onInactivePause, onRequireRelogin, sessionId, sessionStatus?.session_status, trackingEnabled]);
+
+  useEffect(() => {
+    if (!nudgeVisible || !voiceAvailable || !voiceModeActive || tutorDisabled || brainBreakActive || nudgeAudioPlayedRef.current) return;
+    const message = `Still there, ${student.name}? Ms. Alisia is waiting for you!`;
+    nudgeAudioPlayedRef.current = true;
+    sendVoiceNudge(accessToken, childId, message)
+      .then(data => {
+        if (data.assistant_audio_base64 && data.audio_mime_type) {
+          playAssistantAudio(data.assistant_audio_base64, data.audio_mime_type);
+        }
+      })
+      .catch(() => {
+        // The visual nudge is already visible, so voice nudge failure can stay quiet.
+      });
+  }, [accessToken, brainBreakActive, childId, nudgeVisible, student.name, tutorDisabled, voiceAvailable, voiceModeActive]);
 
   useEffect(() => {
     setTopic(prev => prev === subjectDefaults.Math || prev === subjectDefaults.ELA || prev === subjectDefaults.Writing ? subjectDefaults[subject] : prev);
@@ -421,13 +446,19 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }
 
   function applySessionStatus(status: SessionStatusResponse) {
+    const hadBrainBreak = brainBreakWasActiveRef.current;
     setSessionStatus(status);
     setBrainBreakWarning(warningMessage(status.warnings_due));
     if (status.brain_break_active || status.brain_break_required) {
+      brainBreakWasActiveRef.current = true;
       setNudgeVisible(false);
       setSessionNotice(status.message || DEFAULT_BRAIN_BREAK_MESSAGE);
     } else if (status.session_status !== 'paused_inactive') {
       setSessionNotice('');
+    }
+    if (hadBrainBreak && !status.brain_break_active && !status.brain_break_required) {
+      brainBreakWasActiveRef.current = false;
+      onRequireRelogin?.(BRAIN_BREAK_RELOGIN_MESSAGE);
     }
   }
 
@@ -437,6 +468,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setNudgeVisible(false);
     pauseRecordedRef.current = false;
     nudgeRecordedRef.current = false;
+    nudgeAudioPlayedRef.current = false;
     const now = Date.now();
     if (now - lastActivityPingRef.current < SESSION_ACTIVITY_PING_MS) return;
     lastActivityPingRef.current = now;
@@ -461,6 +493,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setLastActivityAt(Date.now());
     pauseRecordedRef.current = false;
     nudgeRecordedRef.current = false;
+    nudgeAudioPlayedRef.current = false;
     if (!trackingEnabled) return;
     try {
       const status = await resumeSession(accessToken, childId, sessionId);
@@ -506,7 +539,17 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         voiceProcessing={voiceProcessing}
         voiceNotice={voiceNotice}
         onVoiceNotice={setVoiceNotice}
+        onVoiceEnabledChange={setVoiceModeActive}
         onVoiceSubmit={submitVoice}
+        reportContext={{
+          accessToken,
+          childId,
+          subject,
+          studentSession,
+          sessionId,
+          threadId: activeThread?.id || null,
+          messageContext: latestAssistantMessage(messages),
+        }}
       />
       <LearningContextPanel
         student={student}
@@ -520,6 +563,11 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       />
     </div>
   </div>;
+}
+
+function latestAssistantMessage(messages: ChatMessage[]): string | null {
+  const latest = [...messages].reverse().find(message => message.role === 'msalisia');
+  return latest?.content?.slice(0, 1200) || null;
 }
 
 function playAssistantAudio(audioBase64: string, mimeType: string) {

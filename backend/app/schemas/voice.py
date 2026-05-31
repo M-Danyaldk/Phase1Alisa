@@ -29,3 +29,17 @@ class VoiceMessageResponse(BaseModel):
     assessed_level: str | None = None
     timings: dict[str, int] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceNudgeRequest(BaseModel):
+    child_id: str
+    message: str = Field(min_length=1, max_length=240)
+
+
+class VoiceNudgeResponse(BaseModel):
+    assistant_audio_base64: str | None = None
+    audio_mime_type: str | None = None
+    fallback_to_chat: bool = False
+    error_message: str | None = None
+    tts_model: str | None = None
+    timings: dict[str, int] = Field(default_factory=dict)

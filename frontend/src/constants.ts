@@ -1,9 +1,18 @@
 import { StudentProfile, Subject } from './types';
 
-export const supportedGrades = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-export const gradeLevelOptions = supportedGrades.map(grade => `Grade ${grade}`);
+export const launchGrades = [3, 4, 5, 6];
+export const futureGrades = [7, 8, 9, 10, 11, 12];
+export const internalSupportedGrades = [...launchGrades, ...futureGrades];
+export const supportedGrades = launchGrades;
+export const gradeLevelOptions = launchGrades.map(grade => `Grade ${grade}`);
+export const futureGradeLevelOptions = futureGrades.map(grade => `Grade ${grade}`);
+export const internalGradeLevelOptions = internalSupportedGrades.map(grade => `Grade ${grade}`);
 export const launchSubjects: Subject[] = ['Math', 'ELA', 'Writing'];
 export const futureSubjects = ['Science', 'Social Studies'];
+
+export function isLaunchGradeLevel(gradeLevel: string): boolean {
+  return gradeLevelOptions.includes(gradeLevel);
+}
 
 export const initialStudent: StudentProfile = {
   name: 'Ava',

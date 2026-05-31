@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, Query, Response
 
 from ..schemas.admin import (
     AdminAuditLogsResponse,
     AdminInviteRequest,
     AdminInviteResponse,
     AdminOverviewResponse,
+    OwnerFinancialDiscountsResponse,
+    OwnerFinancialEventsResponse,
+    OwnerFinancialFailedPaymentsResponse,
+    OwnerFinancialReferralsResponse,
+    OwnerFinancialSubscriptionsResponse,
+    OwnerFinancialSummaryResponse,
     AdminPermissionsUpdateRequest,
     AdminReportsResponse,
     AdminSettingsResponse,
@@ -15,6 +21,7 @@ from ..schemas.admin import (
     AdminUserStatusUpdateRequest,
 )
 from ..services.admin_service import AdminService
+from ..services.owner_financial_service import OwnerFinancialService
 
 router = APIRouter(prefix='/api/admin', tags=['admin'])
 
@@ -95,6 +102,68 @@ async def admin_audit_logs(authorization: str = Header(default='')) -> dict:
     service = AdminService()
     admin = await service.require_admin(authorization, 'view_analytics')
     return {'audit_logs': await service.audit_logs(admin)}
+
+
+@router.get('/owner-financials/summary', response_model=OwnerFinancialSummaryResponse)
+async def owner_financial_summary(authorization: str = Header(default='')) -> dict:
+    await AdminService().require_super_admin(authorization)
+    return {'summary': await OwnerFinancialService().summary()}
+
+
+@router.get('/owner-financials/subscriptions', response_model=OwnerFinancialSubscriptionsResponse)
+async def owner_financial_subscriptions(
+    authorization: str = Header(default=''),
+    limit: int = Query(default=250, ge=1, le=1000),
+) -> dict:
+    await AdminService().require_super_admin(authorization)
+    return {'subscriptions': await OwnerFinancialService().subscriptions(limit=limit)}
+
+
+@router.get('/owner-financials/failed-payments', response_model=OwnerFinancialFailedPaymentsResponse)
+async def owner_financial_failed_payments(
+    authorization: str = Header(default=''),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict:
+    await AdminService().require_super_admin(authorization)
+    return {'failed_payments': await OwnerFinancialService().failed_payments(limit=limit)}
+
+
+@router.get('/owner-financials/discounts', response_model=OwnerFinancialDiscountsResponse)
+async def owner_financial_discounts(
+    authorization: str = Header(default=''),
+    limit: int = Query(default=150, ge=1, le=500),
+) -> dict:
+    await AdminService().require_super_admin(authorization)
+    return await OwnerFinancialService().discounts(limit=limit)
+
+
+@router.get('/owner-financials/referrals', response_model=OwnerFinancialReferralsResponse)
+async def owner_financial_referrals(
+    authorization: str = Header(default=''),
+    limit: int = Query(default=150, ge=1, le=500),
+) -> dict:
+    await AdminService().require_super_admin(authorization)
+    return await OwnerFinancialService().referrals(limit=limit)
+
+
+@router.get('/owner-financials/events', response_model=OwnerFinancialEventsResponse)
+async def owner_financial_events(
+    authorization: str = Header(default=''),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> dict:
+    await AdminService().require_super_admin(authorization)
+    return {'events': await OwnerFinancialService().events(limit=limit)}
+
+
+@router.get('/owner-financials/export')
+async def owner_financial_export(authorization: str = Header(default='')) -> Response:
+    await AdminService().require_super_admin(authorization)
+    csv_body = await OwnerFinancialService().export_csv()
+    return Response(
+        content=csv_body,
+        media_type='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="msalisia-owner-financials.csv"'},
+    )
 
 
 @router.post('/admins/invite', response_model=AdminInviteResponse)

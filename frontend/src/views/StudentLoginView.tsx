@@ -9,7 +9,7 @@ const loginMessages = [
   'Time to shine today!',
 ];
 
-export function StudentLoginView({ onLoggedIn, onParentLogin }: { onLoggedIn: (session: StudentSession) => void; onParentLogin: () => void }) {
+export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (session: StudentSession) => void; notice?: string }) {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,7 +40,7 @@ export function StudentLoginView({ onLoggedIn, onParentLogin }: { onLoggedIn: (s
       <span>MsAlisia</span>
     </div>
     <div className="auth-panel student-login-panel">
-      <SectionHeader eyebrow="Hey there!" title="Start learning" desc={loginMessage} />
+      <SectionHeader title="HEY THERE!" desc={loginMessage} />
       <div className="auth-form">
         <label>Username
           <input value={username} onChange={event => setUsername(event.target.value.toLowerCase())} onKeyDown={event => { if (event.key === 'Enter') submit(); }} />
@@ -48,9 +48,9 @@ export function StudentLoginView({ onLoggedIn, onParentLogin }: { onLoggedIn: (s
         <label>PIN
           <input type="password" value={pin} onChange={event => setPin(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submit(); }} />
         </label>
+        {notice && <p className="success-note">{notice}</p>}
         {error && <p className="error-note">{error}</p>}
         <button className="primary-button" onClick={submit} disabled={loading}>{loading ? 'Opening...' : "Let's Go!"}</button>
-        <button className="link-button" type="button" onClick={onParentLogin}>Parent login</button>
       </div>
     </div>
   </div>;

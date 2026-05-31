@@ -82,6 +82,7 @@ class SessionActivityService:
         await self._insert_activity_event(parent_id, child_id, session.get('id'), 'auto_pause', inactive_seconds_delta=inactive_delta)
         await self._insert_pause_event(parent_id, child_id, session, 'inactivity', inactive_total)
         await self._update_counter_inactive(parent_id, child_id, inactive_delta)
+        await self._revoke_student_sessions(parent_id, child_id)
         counter = await self._counter(parent_id, child_id)
         return self._status_response(child_id, {**session, 'session_status': 'paused', 'inactive_time_seconds': inactive_total}, counter)
 
@@ -132,6 +133,7 @@ class SessionActivityService:
         })
         await self._insert_activity_event(parent_id, child_id, session.get('id'), 'message_received', active_seconds_delta=active_delta)
         counter = await self._add_active_seconds(parent_id, child_id, active_delta)
+        await self._add_weekly_active_seconds(parent_id, child_id, active_delta)
         counter = await self._apply_warnings_and_break(parent_id, child_id, session.get('id'), counter)
         return self._status_response(child_id, {**session, 'active_time_seconds': session_active_total}, counter)
 
@@ -160,6 +162,7 @@ class SessionActivityService:
         records = await self.supabase.insert('learning_sessions', payload)
         if not records:
             raise HTTPException(status_code=503, detail='Ms. Alisia could not save this session right now. Please try again soon.')
+        await self._increment_weekly_rhythm(parent_id, child_id)
         return records[0]
 
     async def _require_session(self, parent_id: str, child_id: str, session_id: str | None) -> dict:
@@ -219,6 +222,100 @@ class SessionActivityService:
             'inactive_seconds': int(counter.get('inactive_seconds') or 0) + max(0, inactive_delta),
             'updated_at': self._now().isoformat(),
         })
+
+    async def _increment_weekly_rhythm(self, parent_id: str, child_id: str) -> None:
+        rhythm = await self._weekly_rhythm(parent_id, child_id)
+        if not rhythm:
+            return
+        session_count = int(rhythm.get('session_count') or 0) + 1
+        label, child_message, parent_summary = self._weekly_rhythm_copy(session_count)
+        payload = {
+            **rhythm,
+            'session_count': session_count,
+            'achievement_label': label,
+            'child_visible_message': child_message,
+            'parent_visible_summary': parent_summary,
+            'updated_at': self._now().isoformat(),
+        }
+        try:
+            if rhythm.get('id'):
+                await self.supabase.update('weekly_learning_rhythm', {'id': f'eq.{rhythm["id"]}'}, {
+                    'session_count': session_count,
+                    'achievement_label': label,
+                    'child_visible_message': child_message,
+                    'parent_visible_summary': parent_summary,
+                    'updated_at': payload['updated_at'],
+                })
+            else:
+                await self.supabase.upsert('weekly_learning_rhythm', payload, 'child_id,week_start_date')
+        except SupabaseClientError as exc:
+            if not self._missing_weekly_rhythm_table(exc):
+                logger.warning('Could not update weekly learning rhythm for child %s: %s', child_id, exc)
+
+    async def _add_weekly_active_seconds(self, parent_id: str, child_id: str, active_delta: int) -> None:
+        rhythm = await self._weekly_rhythm(parent_id, child_id)
+        if not rhythm:
+            return
+        active_seconds = int(rhythm.get('active_tutoring_seconds') or 0) + max(0, active_delta)
+        try:
+            if rhythm.get('id'):
+                await self.supabase.update('weekly_learning_rhythm', {'id': f'eq.{rhythm["id"]}'}, {
+                    'active_tutoring_seconds': active_seconds,
+                    'updated_at': self._now().isoformat(),
+                })
+            else:
+                session_count = max(1, int(rhythm.get('session_count') or 0))
+                label, child_message, parent_summary = self._weekly_rhythm_copy(session_count)
+                await self.supabase.upsert('weekly_learning_rhythm', {
+                    **rhythm,
+                    'session_count': session_count,
+                    'achievement_label': label,
+                    'child_visible_message': child_message,
+                    'parent_visible_summary': parent_summary,
+                    'active_tutoring_seconds': active_seconds,
+                    'updated_at': self._now().isoformat(),
+                }, 'child_id,week_start_date')
+        except SupabaseClientError as exc:
+            if not self._missing_weekly_rhythm_table(exc):
+                logger.warning('Could not update weekly active seconds for child %s: %s', child_id, exc)
+
+    async def _weekly_rhythm(self, parent_id: str, child_id: str) -> dict:
+        week_start = self._week_start()
+        week_end = week_start + timedelta(days=6)
+        try:
+            records = await self.supabase.select('weekly_learning_rhythm', f'child_id=eq.{quote(child_id)}&week_start_date=eq.{quote(week_start.date().isoformat())}&limit=1')
+            if records:
+                return records[0]
+        except SupabaseClientError as exc:
+            if self._missing_weekly_rhythm_table(exc):
+                return {}
+            logger.warning('Could not load weekly learning rhythm for child %s: %s', child_id, exc)
+            return {}
+        now = self._now().isoformat()
+        return {
+            'parent_id': parent_id,
+            'child_id': child_id,
+            'week_start_date': week_start.date().isoformat(),
+            'week_end_date': week_end.date().isoformat(),
+            'session_count': 0,
+            'active_tutoring_seconds': 0,
+            'achievement_label': 'fresh_start',
+            'child_visible_message': 'A fresh week is ready when you are. No pressure, just one good step.',
+            'parent_visible_summary': 'Fresh Start: no sessions yet this week.',
+            'created_at': now,
+            'updated_at': now,
+        }
+
+    def _weekly_rhythm_copy(self, session_count: int) -> tuple[str, str, str]:
+        if session_count >= 5:
+            return ('superstar', 'You showed up a lot this week. Amazing effort. A little rest helps your brain keep all that learning strong.', 'Superstar: 5+ sessions this week. Encourage a healthy rest rhythm.')
+        if session_count == 4:
+            return ('perfect_week', 'Four learning sessions this week. That is a beautiful rhythm.', 'Perfect Week!: 4 sessions this week.')
+        if session_count == 3:
+            return ('strong_week', 'Three sessions this week. You are building a strong learning rhythm.', 'Strong Week!: 3 sessions this week.')
+        if session_count >= 1:
+            return ('getting_started', 'You started your learning rhythm this week. One step counts.', f'Getting Started: {session_count} session(s) this week.')
+        return ('fresh_start', 'A fresh week is ready when you are. No pressure, just one good step.', 'Fresh Start: no sessions yet this week.')
 
     async def _apply_warnings_and_break(self, parent_id: str, child_id: str, session_id: str | None, counter: dict) -> dict:
         active_seconds = int(counter.get('active_tutoring_seconds') or 0)
@@ -284,6 +381,7 @@ class SessionActivityService:
             now,
             completed=True,
         )
+        await self._revoke_student_sessions(updated.get('parent_id'), updated.get('child_id'))
         return updated
 
     async def _insert_activity_event(
@@ -304,6 +402,22 @@ class SessionActivityService:
             'active_seconds_delta': active_seconds_delta,
             'inactive_seconds_delta': inactive_seconds_delta,
         })
+
+    async def _revoke_student_sessions(self, parent_id: str | None, child_id: str | None) -> None:
+        if not parent_id or not child_id:
+            return
+        try:
+            await self.supabase.update('student_sessions', {
+                'parent_id': f'eq.{parent_id}',
+                'child_id': f'eq.{child_id}',
+                'revoked_at': 'is.null',
+            }, {
+                'revoked_at': self._now().isoformat(),
+            })
+        except SupabaseClientError as exc:
+            if 'student_sessions' in str(exc).lower() and ('schema cache' in str(exc).lower() or 'does not exist' in str(exc).lower()):
+                return
+            raise
 
     async def _insert_pause_event(self, parent_id: str, child_id: str, session: dict, reason: str, inactive_total: int) -> None:
         await self.supabase.insert('session_pause_events', {
@@ -390,3 +504,12 @@ class SessionActivityService:
 
     def _today(self) -> str:
         return self._now().date().isoformat()
+
+    def _week_start(self) -> datetime:
+        now = self._now()
+        monday = now - timedelta(days=now.weekday())
+        return datetime(monday.year, monday.month, monday.day, tzinfo=UTC)
+
+    def _missing_weekly_rhythm_table(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'weekly_learning_rhythm' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)

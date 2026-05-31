@@ -45,7 +45,7 @@ export function ParentShell({
     </div>
   </div>;
   const status = <div className={classNames('status-pill', connected)}>
-    Backend: {connected === 'checking' ? 'Checking...' : connected === 'online' ? 'Online' : 'Offline demo mode'}
+    Backend: {connected === 'checking' ? 'Checking...' : connected === 'online' ? 'Online' : 'Offline'}
   </div>;
   const navItems = (closeAfterClick = false) => <>
     <NavItem icon={<Home />} label="Dashboard" active={view === 'home'} onClick={() => { onViewChange('home'); if (closeAfterClick) setMenuOpen(false); }} />

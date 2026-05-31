@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BarChart3, Bot, BookOpen, Calendar, Download, FileText, Settings, ShieldCheck, Users, WalletCards } from 'lucide-react';
+import { AlertTriangle, BarChart3, Bot, BookOpen, Calendar, Download, FileText, Gift, ReceiptText, Settings, ShieldCheck, Tags, Users, WalletCards } from 'lucide-react';
 import { NavigationDrawer } from '../components/navigation/NavigationDrawer';
 import { InfoCard } from '../components/InfoCard';
 import { NavItem } from '../components/NavItem';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiGet, apiPatch, apiPost } from '../lib/api';
-import { AdminAuditLog, AdminLearningActivity, AdminOverview, AdminSetting, AdminSubscription, AdminUser, LLMEvent, StoredAssessmentResult } from '../types';
+import { AdminAuditLog, AdminLearningActivity, AdminOverview, AdminSetting, AdminSubscription, AdminUser, LLMEvent, OwnerFinancialDiscount, OwnerFinancialEvent, OwnerFinancialFailedPayment, OwnerFinancialReferral, OwnerFinancialSubscription, OwnerFinancialSummary, StoredAssessmentResult } from '../types';
 import { ProfileResponse } from '../types/auth';
 
-type AdminSection = 'dashboard' | 'users' | 'subscriptions' | 'reports' | 'settings' | 'admins';
+type AdminSection = 'dashboard' | 'users' | 'subscriptions' | 'reports' | 'settings' | 'admins' | 'owner-financials';
 
 type Props = {
   accessToken: string;
@@ -30,6 +30,15 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
   const [reportAssessments, setReportAssessments] = useState<StoredAssessmentResult[]>([]);
   const [reportLlmEvents, setReportLlmEvents] = useState<LLMEvent[]>([]);
   const [settings, setSettings] = useState<AdminSetting[]>([]);
+  const [ownerSummary, setOwnerSummary] = useState<OwnerFinancialSummary | null>(null);
+  const [ownerSubscriptions, setOwnerSubscriptions] = useState<OwnerFinancialSubscription[]>([]);
+  const [ownerFailedPayments, setOwnerFailedPayments] = useState<OwnerFinancialFailedPayment[]>([]);
+  const [ownerDiscounts, setOwnerDiscounts] = useState<OwnerFinancialDiscount[]>([]);
+  const [ownerCoupons, setOwnerCoupons] = useState<OwnerFinancialDiscount[]>([]);
+  const [ownerReferralCodes, setOwnerReferralCodes] = useState<OwnerFinancialReferral[]>([]);
+  const [ownerReferrals, setOwnerReferrals] = useState<OwnerFinancialReferral[]>([]);
+  const [ownerReferralRewards, setOwnerReferralRewards] = useState<OwnerFinancialReferral[]>([]);
+  const [ownerEvents, setOwnerEvents] = useState<OwnerFinancialEvent[]>([]);
   const [search, setSearch] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState('All');
   const [userStatusFilter, setUserStatusFilter] = useState('All');
@@ -41,10 +50,15 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
   const [inviteName, setInviteName] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const isSuperAdmin = profile.role === 'super_admin';
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      if (section === 'owner-financials' && !isSuperAdmin) {
+        setError('Super admin access is required.');
+        return;
+      }
       setLoading(true);
       setError('');
       try {
@@ -73,6 +87,27 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
           const data = await apiGet<{ settings: AdminSetting[] }>('/api/admin/settings', authHeaders);
           if (!cancelled) setSettings(data.settings);
         }
+        if (section === 'owner-financials') {
+          const [summaryData, subscriptionsData, failedData, discountsData, referralsData, eventsData] = await Promise.all([
+            apiGet<{ summary: OwnerFinancialSummary }>('/api/admin/owner-financials/summary', authHeaders),
+            apiGet<{ subscriptions: OwnerFinancialSubscription[] }>('/api/admin/owner-financials/subscriptions', authHeaders),
+            apiGet<{ failed_payments: OwnerFinancialFailedPayment[] }>('/api/admin/owner-financials/failed-payments', authHeaders),
+            apiGet<{ discounts: OwnerFinancialDiscount[]; coupon_redemptions: OwnerFinancialDiscount[] }>('/api/admin/owner-financials/discounts', authHeaders),
+            apiGet<{ referral_codes: OwnerFinancialReferral[]; referrals: OwnerFinancialReferral[]; referral_rewards: OwnerFinancialReferral[] }>('/api/admin/owner-financials/referrals', authHeaders),
+            apiGet<{ events: OwnerFinancialEvent[] }>('/api/admin/owner-financials/events', authHeaders),
+          ]);
+          if (!cancelled) {
+            setOwnerSummary(summaryData.summary);
+            setOwnerSubscriptions(subscriptionsData.subscriptions);
+            setOwnerFailedPayments(failedData.failed_payments);
+            setOwnerDiscounts(discountsData.discounts);
+            setOwnerCoupons(discountsData.coupon_redemptions);
+            setOwnerReferralCodes(referralsData.referral_codes);
+            setOwnerReferrals(referralsData.referrals);
+            setOwnerReferralRewards(referralsData.referral_rewards);
+            setOwnerEvents(eventsData.events);
+          }
+        }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Admin request failed.');
       } finally {
@@ -81,7 +116,7 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
     }
     load();
     return () => { cancelled = true; };
-  }, [authHeaders, section, search]);
+  }, [authHeaders, section, search, isSuperAdmin]);
 
   async function updateUserStatus(userId: string, status: AdminUser['status']) {
     const previous = users;
@@ -147,6 +182,24 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
     });
   }
 
+  async function exportOwnerFinancials() {
+    setError('');
+    try {
+      const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBase}/api/admin/owner-financials/export`, { headers: authHeaders });
+      if (!response.ok) throw new Error('Could not export owner financial data.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `msalisia-owner-financials-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : 'Could not export owner financial data.');
+    }
+  }
+
   const adminUsers = users.filter(user => user.role === 'admin' || user.role === 'super_admin');
   const brand = <div className="brand-block">
     <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
@@ -164,6 +217,7 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
     <NavItem icon={<Users />} label="Users" active={section === 'users'} onClick={() => changeSection('users', closeAfterClick)} />
     <NavItem icon={<WalletCards />} label="Subscriptions" active={section === 'subscriptions'} onClick={() => changeSection('subscriptions', closeAfterClick)} />
     <NavItem icon={<FileText />} label="Reports" active={section === 'reports'} onClick={() => changeSection('reports', closeAfterClick)} />
+    {isSuperAdmin && <NavItem icon={<ReceiptText />} label="Owner Financials" active={section === 'owner-financials'} onClick={() => changeSection('owner-financials', closeAfterClick)} />}
     <NavItem icon={<Settings />} label="Settings" active={section === 'settings'} onClick={() => changeSection('settings', closeAfterClick)} />
     <NavItem icon={<ShieldCheck />} label="Admins" active={section === 'admins'} onClick={() => changeSection('admins', closeAfterClick)} />
   </>;
@@ -196,6 +250,7 @@ export function AdminView({ accessToken, profile, section, onSectionChange, onLo
       {section === 'users' && <UsersSection users={users} currentUser={profile} search={search} roleFilter={userRoleFilter} statusFilter={userStatusFilter} updatingId={updatingUserId} onSearch={setSearch} onRoleFilter={setUserRoleFilter} onStatusFilter={setUserStatusFilter} onStatus={updateUserStatus} />}
       {section === 'subscriptions' && <SubscriptionsSection subscriptions={subscriptions} updatingId={updatingSubscriptionId} onStatus={updateSubscription} />}
       {section === 'reports' && <ReportsSection learningActivity={learningActivity} assessments={reportAssessments} llmEvents={reportLlmEvents} logs={auditLogs} />}
+      {section === 'owner-financials' && (isSuperAdmin ? <OwnerFinancialsSection summary={ownerSummary} subscriptions={ownerSubscriptions} failedPayments={ownerFailedPayments} discounts={ownerDiscounts} coupons={ownerCoupons} referralCodes={ownerReferralCodes} referrals={ownerReferrals} referralRewards={ownerReferralRewards} events={ownerEvents} onExport={exportOwnerFinancials} /> : <AccessDeniedSection />)}
       {section === 'settings' && <SettingsSection settings={settings} onUpdate={updateSetting} />}
       {section === 'admins' && <AdminsSection users={adminUsers} inviteEmail={inviteEmail} inviteName={inviteName} invitePassword={invitePassword} onEmail={setInviteEmail} onName={setInviteName} onPassword={setInvitePassword} onInvite={inviteAdmin} />}
     </main>
@@ -321,6 +376,162 @@ function SubscriptionsSection({ subscriptions, updatingId, onStatus }: { subscri
       </div>}
     </section>
   </div>;
+}
+
+function OwnerFinancialsSection({
+  summary,
+  subscriptions,
+  failedPayments,
+  discounts,
+  coupons,
+  referralCodes,
+  referrals,
+  referralRewards,
+  events,
+  onExport,
+}: {
+  summary: OwnerFinancialSummary | null;
+  subscriptions: OwnerFinancialSubscription[];
+  failedPayments: OwnerFinancialFailedPayment[];
+  discounts: OwnerFinancialDiscount[];
+  coupons: OwnerFinancialDiscount[];
+  referralCodes: OwnerFinancialReferral[];
+  referrals: OwnerFinancialReferral[];
+  referralRewards: OwnerFinancialReferral[];
+  events: OwnerFinancialEvent[];
+  onExport: () => void;
+}) {
+  return <div className="page-stack">
+    <div className="report-actions">
+      <button className="secondary-button" onClick={onExport}><Download /> Export Financial CSV</button>
+      {summary?.generated_at && <button className="secondary-button"><Calendar /> Updated {formatDateTime(summary.generated_at)}</button>}
+    </div>
+    <div className="report-metric-grid">
+      <FinancialMetric icon={<WalletCards />} title="Total Revenue" value={money(summary?.total_revenue_cents_estimate, summary?.currency)} note="stored payments estimate" accent="green" />
+      <FinancialMetric icon={<Calendar />} title="Current Month" value={money(summary?.current_month_revenue_cents_estimate, summary?.currency)} note="stored payments estimate" accent="purple" />
+      <FinancialMetric icon={<BarChart3 />} title="MRR Estimate" value={money(summary?.mrr_cents_estimate, summary?.currency)} note={`${money(summary?.arr_cents_estimate, summary?.currency)} ARR estimate`} accent="blue" />
+      <FinancialMetric icon={<AlertTriangle />} title="Failed Payments" value={String(summary?.failed_payments_count ?? 0)} note="payment events" accent="gold" />
+    </div>
+    <div className="report-metric-grid">
+      <FinancialMetric icon={<WalletCards />} title="Active Subs" value={String(summary?.active_subscriptions_count ?? 0)} note={`${summary?.paused_unpaid_subscriptions_count ?? 0} paused/unpaid`} accent="green" />
+      <FinancialMetric icon={<BookOpen />} title="Active Trials" value={String(summary?.active_trials_count ?? 0)} note={`${summary?.expired_trials_count ?? 0} expired`} accent="purple" />
+      <FinancialMetric icon={<Tags />} title="Discounts/Coupons" value={String((summary?.family_discount_usage_count ?? 0) + (summary?.coupon_redemption_count ?? 0))} note="family + coupon records" accent="blue" />
+      <FinancialMetric icon={<Gift />} title="Referral Rewards" value={String(summary?.referral_reward_count ?? 0)} note="reward records" accent="gold" />
+    </div>
+    {!!summary?.notes?.length && <section className="report-card"><h3>Financial data notes</h3><ul>{summary.notes.map(note => <li key={note}>{note}</li>)}</ul></section>}
+    <OwnerTable
+      title="Subscriptions"
+      icon={<WalletCards />}
+      columns={['Parent', 'Child', 'Plan', 'Status', 'Renewal', 'Amount', 'Discount']}
+      rows={subscriptions.map(item => [
+        item.parent_email || item.parent_name || 'Unknown parent',
+        item.child_name || 'Unlinked child',
+        `${labelValue(item.plan_type)} / ${labelValue(item.billing_interval)}`,
+        <span className={`admin-badge ${ownerStatusBadge(item.status || item.payment_failure_status || '')}`}>{labelValue(item.status)}</span>,
+        formatDateTime(item.current_period_ends_at),
+        money(item.amount_cents_estimate),
+        item.family_discount_status || item.discount_status || 'None',
+      ])}
+      empty="No subscription records found."
+    />
+    <OwnerTable
+      title="Failed Payments"
+      icon={<AlertTriangle />}
+      columns={['Parent', 'Child', 'Plan', 'Amount', 'Date', 'Status', 'Grace Ends']}
+      rows={failedPayments.map(item => [
+        item.parent_email || 'Unknown parent',
+        item.child_name || 'Unlinked child',
+        `${labelValue(item.plan_type)} / ${labelValue(item.billing_interval)}`,
+        money(item.amount_cents, item.currency),
+        formatDateTime(item.failure_date),
+        item.billing_status || item.access_status || item.latest_event_type || 'Failed',
+        formatDateTime(item.grace_period_ends_at),
+      ])}
+      empty="No failed payment records found."
+    />
+    <div className="report-split-grid">
+      <OwnerTable
+        title="Discounts & Coupons"
+        icon={<Tags />}
+        columns={['Type', 'Parent', 'Status', 'Value', 'Created']}
+        rows={[...discounts.map(item => [
+          String(item.discount_type || 'discount'),
+          String(item.parent_email || item.parent_name || 'Unknown parent'),
+          String(item.eligibility_status || 'recorded'),
+          item.discount_percent ? `${item.discount_percent}%` : String(item.coupon_code || item.stripe_coupon_id || 'Recorded'),
+          formatDateTime(String(item.created_at || '')),
+        ]), ...coupons.map(item => [
+          'coupon',
+          String(item.parent_email || item.parent_name || 'Unknown parent'),
+          String(item.validation_status || 'recorded'),
+          String(item.coupon_code || 'Coupon'),
+          formatDateTime(String(item.created_at || '')),
+        ])]}
+        empty="No discount or coupon records found."
+      />
+      <OwnerTable
+        title="Referrals"
+        icon={<Gift />}
+        columns={['Type', 'Parent', 'Status', 'Detail', 'Created']}
+        rows={[
+          ...referralCodes.map(item => ['code', String(item.parent_email || item.parent_name || 'Unknown parent'), item.is_active ? 'active' : 'inactive', String(item.referral_code || item.referral_url || 'Referral code'), formatDateTime(String(item.created_at || ''))]),
+          ...referrals.map(item => ['referral', String(item.referrer_email || item.referrer_name || 'Unknown referrer'), String(item.status || 'recorded'), String(item.referred_email || item.referred_name || 'Referred parent'), formatDateTime(String(item.created_at || ''))]),
+          ...referralRewards.map(item => ['reward', String(item.referrer_email || item.referrer_name || 'Unknown referrer'), String(item.reward_status || 'recorded'), money(Number(item.reward_amount_cents || 0)), formatDateTime(String(item.created_at || ''))]),
+        ]}
+        empty="No referral records found."
+      />
+    </div>
+    <OwnerTable
+      title="Financial Events"
+      icon={<ReceiptText />}
+      columns={['Event', 'Parent', 'Child', 'Amount', 'Status', 'Date', 'Reference']}
+      rows={events.map(item => [
+        String(item.event_type || 'event'),
+        String(item.parent_email || item.parent_name || 'Unknown parent'),
+        String(item.child_name || 'Unlinked child'),
+        money(Number(item.amount_cents || 0), String(item.currency || 'usd')),
+        String(item.billing_status || 'recorded'),
+        formatDateTime(String(item.occurred_at || '')),
+        shortId(String(item.stripe_invoice_id || item.stripe_subscription_id || item.id || '')),
+      ])}
+      empty="No financial event records found."
+    />
+  </div>;
+}
+
+function AccessDeniedSection() {
+  return <section className="report-card">
+    <h3>Access denied</h3>
+    <p className="muted-copy">Owner Financials are available only to super admin accounts.</p>
+  </section>;
+}
+
+function FinancialMetric({ icon, title, value, note, accent }: { icon: ReactNode; title: string; value: string; note: string; accent: 'purple' | 'blue' | 'green' | 'gold' }) {
+  return <div className="report-metric-card">
+    <div className={`report-metric-icon ${accent}`}>{icon}</div>
+    <div>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </div>
+  </div>;
+}
+
+function OwnerTable({ title, icon, columns, rows, empty }: { title: string; icon: ReactNode; columns: string[]; rows: ReactNode[][]; empty: string }) {
+  return <section className="report-card admin-report-table-card">
+    <div className="admin-table-heading">
+      <h3>{icon}{title}</h3>
+      <span className="muted-copy">{rows.length} record(s)</span>
+    </div>
+    {!rows.length && <p className="muted-copy table-empty-note">{empty}</p>}
+    {!!rows.length && <div className="admin-table-scroll">
+      <table className="admin-table">
+        <thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
+        <tbody>{rows.slice(0, 25).map((row, rowIndex) => <tr key={`${title}-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${title}-${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>}
+    {rows.length > 25 && <p className="admin-table-footnote">Showing 25 of {rows.length} records.</p>}
+  </section>;
 }
 
 function SettingsSection({ settings, onUpdate }: { settings: AdminSetting[]; onUpdate: (key: string, value: Record<string, unknown>, reason: string) => Promise<void> }) {
@@ -625,6 +836,22 @@ function statusBadgeClass(value: string): 'green' | 'gold' | 'purple' {
   return 'purple';
 }
 
+function ownerStatusBadge(value: string): 'green' | 'gold' | 'purple' {
+  const normalized = value.toLowerCase();
+  if (normalized === 'active' || normalized === 'trialing' || normalized === 'paid') return 'green';
+  if (normalized.includes('past') || normalized.includes('failed') || normalized.includes('unpaid') || normalized.includes('canceled') || normalized.includes('paused')) return 'gold';
+  return 'purple';
+}
+
+function money(cents?: number | null, currency = 'usd'): string {
+  const amount = Number(cents || 0) / 100;
+  return amount.toLocaleString(undefined, { style: 'currency', currency: currency || 'usd' });
+}
+
+function labelValue(value?: string | null): string {
+  return value ? humanAction(value) : 'Not set';
+}
+
 function subscriptionStatusLabel(value: AdminSubscription['access_status']): string {
   const labels: Record<AdminSubscription['access_status'], string> = {
     active: 'Active',
@@ -702,6 +929,7 @@ function titleFor(section: AdminSection): string {
     reports: 'Reports and audit logs',
     settings: 'Platform settings',
     admins: 'Admin management',
+    'owner-financials': 'Owner financials',
   }[section];
 }
 

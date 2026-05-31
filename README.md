@@ -6,7 +6,7 @@ This package contains the frontend, backend, and documentation for a Phase 1 MVP
 
 The Phase 1 MVP is designed around:
 
-- Grades 3-6 curriculum support
+- Grades 3-12 curriculum support
 - Adaptive progression by subject
 - Math, ELA, and Writing assessment engine
 - Writing composition support
@@ -65,3 +65,5 @@ Backend: `http://localhost:8000`
 ## Important
 
 Do not commit real API keys. Put keys in `.env` only.
+
+Before launch, confirm Supabase automatic backups are enabled in the Supabase dashboard. This cannot be verified or enabled from application code.

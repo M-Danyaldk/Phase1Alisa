@@ -33,6 +33,17 @@ export function buildStudentDashboardMock(student: StudentProfile): StudentDashb
     assessmentStatus: assessedCount ? `${assessedCount} of 3 subjects have a starting signal` : 'No assessments completed yet',
     homeworkStatus: 'No homework upload reviewed yet',
     weeklyFocus: student.focus_notes || 'Start with short lessons and quick check-ins',
+    weeklyRhythm: {
+      childId: 'mock-child',
+      weekStartDate: '',
+      weekEndDate: '',
+      sessionCount: 0,
+      activeTutoringSeconds: 0,
+      achievementLabel: 'fresh_start',
+      displayLabel: 'Fresh Start',
+      childMessage: 'A fresh week is ready when you are. No pressure, just one good step.',
+      parentSummary: 'Fresh Start: no sessions yet this week.',
+    },
     subjectProgress: progress,
     recentActivity: assessedCount ? [
       {

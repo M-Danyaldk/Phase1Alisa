@@ -1,5 +1,5 @@
 import { ReactNode, useMemo, useState } from 'react';
-import { gradeLevelOptions, launchSubjects } from '../../constants';
+import { gradeLevelOptions, isLaunchGradeLevel, launchSubjects } from '../../constants';
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../../types/childProfile';
 
 const subjects = launchSubjects as ChildSubject[];
@@ -30,7 +30,7 @@ function valuesFromChild(child?: ChildProfile | null): ChildProfileFormValues {
   if (!child) return defaultValues;
   return {
     name: child.name,
-    grade_level: child.grade_level,
+    grade_level: isLaunchGradeLevel(child.grade_level) ? child.grade_level : defaultValues.grade_level,
     date_of_birth: child.date_of_birth || '',
     subjects: child.subjects,
     learning_goals: child.learning_goals || '',

@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from ..core.security import calculate_age
+from ..curriculum import LAUNCH_GRADE_ERROR, is_launch_grade_label
 
 ChildStatus = Literal['active', 'inactive', 'pending_consent']
 SubjectName = Literal['Math', 'ELA', 'Writing']
@@ -11,7 +12,7 @@ SubjectName = Literal['Math', 'ELA', 'Writing']
 
 class ChildProfileCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    grade_level: str = Field(pattern=r'^Grade ([3-9]|1[0-2])$')
+    grade_level: str
     date_of_birth: date | None = None
     subjects: list[SubjectName] = Field(default_factory=lambda: ['Math', 'ELA', 'Writing'])
     learning_goals: str = ''
@@ -21,6 +22,8 @@ class ChildProfileCreateRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_child_profile(self):
+        if not is_launch_grade_label(self.grade_level):
+            raise ValueError(LAUNCH_GRADE_ERROR)
         if not self.subjects:
             raise ValueError('Select at least one subject.')
         if self.date_of_birth and calculate_age(self.date_of_birth) < 13 and not self.parental_consent_accepted:
@@ -30,7 +33,7 @@ class ChildProfileCreateRequest(BaseModel):
 
 class ChildProfileUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    grade_level: str = Field(pattern=r'^Grade ([3-9]|1[0-2])$')
+    grade_level: str
     date_of_birth: date | None = None
     subjects: list[SubjectName] = Field(default_factory=lambda: ['Math', 'ELA', 'Writing'])
     learning_goals: str = ''
@@ -41,6 +44,8 @@ class ChildProfileUpdateRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_child_profile_update(self):
+        if not is_launch_grade_label(self.grade_level):
+            raise ValueError(LAUNCH_GRADE_ERROR)
         if not self.subjects:
             raise ValueError('Select at least one subject.')
         if self.date_of_birth and calculate_age(self.date_of_birth) < 13 and not self.parental_consent_accepted:

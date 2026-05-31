@@ -25,6 +25,39 @@ export type ChildAccess = {
   updated_at?: string | null;
 };
 
+export type FamilyDiscountStatus = {
+  active_child_subscriptions: number;
+  eligible: boolean;
+  checkout_eligible: boolean;
+  discount_percent: number;
+  stripe_coupon_configured: boolean;
+  status: 'eligible' | 'eligible_next_checkout' | 'ineligible' | string;
+  message: string;
+  not_retroactive: boolean;
+  annual_non_refundable: boolean;
+  removal_timing: 'next_renewal' | string;
+};
+
+export type CouponRedemption = {
+  id?: string;
+  coupon_code: string;
+  validation_status: string;
+  payment_reference?: string | null;
+  created_at?: string | null;
+};
+
+export type BillingStatus = {
+  parent_id: string;
+  email: string;
+  trial_available: boolean;
+  paid_checkout_required: boolean;
+  trial_blocked_reason?: string | null;
+  children: ChildAccess[];
+  plans: BillingPlan[];
+  family_discount?: FamilyDiscountStatus | null;
+  coupon_redemptions?: CouponRedemption[];
+};
+
 export type BillingPlan = {
   plan_key: BillingPlanKey;
   plan_type: BillingPlanType;

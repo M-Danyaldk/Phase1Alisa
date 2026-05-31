@@ -155,3 +155,60 @@ export type AdminLearningActivity = {
   latest_level?: string | null;
   assessment_count: number;
 };
+
+export type OwnerFinancialSummary = {
+  currency: string;
+  total_revenue_cents_estimate: number;
+  current_month_revenue_cents_estimate: number;
+  mrr_cents_estimate: number;
+  arr_cents_estimate: number;
+  active_subscriptions_count: number;
+  paused_unpaid_subscriptions_count: number;
+  canceled_subscriptions_count: number;
+  active_trials_count: number;
+  expired_trials_count: number;
+  failed_payments_count: number;
+  text_plan_count: number;
+  voice_plan_count: number;
+  monthly_plan_count: number;
+  annual_plan_count: number;
+  family_discount_usage_count: number;
+  coupon_redemption_count: number;
+  referral_reward_count: number;
+  generated_at?: string;
+  notes?: string[];
+};
+
+export type OwnerFinancialSubscription = {
+  id?: string;
+  parent_name?: string | null;
+  parent_email?: string | null;
+  child_name?: string | null;
+  plan_type?: string | null;
+  billing_interval?: string | null;
+  status?: string | null;
+  current_period_ends_at?: string | null;
+  amount_cents_estimate?: number;
+  discount_status?: string | null;
+  family_discount_status?: string | null;
+  payment_failure_status?: string | null;
+};
+
+export type OwnerFinancialFailedPayment = {
+  id?: string;
+  parent_email?: string | null;
+  child_name?: string | null;
+  plan_type?: string | null;
+  billing_interval?: string | null;
+  amount_cents?: number;
+  currency?: string;
+  failure_date?: string | null;
+  billing_status?: string | null;
+  access_status?: string | null;
+  grace_period_ends_at?: string | null;
+  latest_event_type?: string | null;
+};
+
+export type OwnerFinancialDiscount = Record<string, unknown>;
+export type OwnerFinancialReferral = Record<string, unknown>;
+export type OwnerFinancialEvent = Record<string, unknown>;

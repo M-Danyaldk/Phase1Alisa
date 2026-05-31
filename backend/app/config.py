@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_ENV_FILE, extra='ignore')
 
     app_env: str = 'development'
+    sentry_dsn: str = ''
+    owner_alert_email: str = ''
     cors_origins: str = 'http://localhost:5173,http://127.0.0.1:5173'
     database_path: str = './msalisia_phase1.db'
     uploads_path: str = './uploads'
@@ -27,6 +29,8 @@ class Settings(BaseSettings):
     openai_tts_model: str = 'gpt-4o-mini-tts'
     openai_tts_voice: str = 'alloy'
     openai_tts_api_url: str = 'https://api.openai.com/v1/audio/speech'
+    openai_embedding_model: str = 'text-embedding-3-small'
+    openai_embeddings_api_url: str = 'https://api.openai.com/v1/embeddings'
 
     groq_api_key: str = ''
     groq_model: str = 'llama-3.3-70b-versatile'
@@ -51,6 +55,7 @@ class Settings(BaseSettings):
     resend_api_key: str = ''
     resend_from_email: str = 'enrol@msalisia.com'
     waitlist_notify_email: str = 'enrol@msalisia.com'
+    waitlist_open_date: str = '2026-06-14'
     internal_cron_secret: str = ''
     app_public_url: str = ''
 

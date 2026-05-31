@@ -10,7 +10,7 @@ This package provides a Phase 1 MVP scaffold for MsAlisia. It is built to show t
 - Student profile context
 - Assessment center for Math, ELA, and Writing
 - Adaptive tutoring chat with Ms Alisia
-- Grades 3-6 curriculum structure
+- Grades 3-12 curriculum structure
 - Subject-level progression
 - Homework and handwriting upload workflow
 - Parent reports
@@ -27,7 +27,7 @@ The UI includes Coming Soon cards for:
 - Teacher Portal
 - School/LMS Integrations
 - Advanced Analytics
-- Full K-12 Expansion
+- Additional K-12 Enrichment
 - Advanced Handwriting AI
 - Science
 - Social Studies
@@ -48,7 +48,7 @@ Routing:
 
 The prompt layer is course-aware and includes:
 
-- Grades 3-6 curriculum context
+- Grades 3-12 curriculum context
 - Subject-specific teaching rules
 - Safety behavior
 - Short response requirements
@@ -57,7 +57,7 @@ The prompt layer is course-aware and includes:
 
 ## 5. Curriculum Structure
 
-Grades 3-6 are included for:
+Grades 3-12 are included for:
 
 - Math
 - English Language Arts

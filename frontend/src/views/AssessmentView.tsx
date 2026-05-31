@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ProblemReportButton } from '../components/ProblemReportButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { ResultPanel } from '../components/ResultPanel';
 import { assessmentQuestions } from '../constants';
@@ -37,6 +38,7 @@ export function AssessmentView({ student, setStudent, childId = '', accessToken 
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Assessment center" title="Learning check-in" desc="Complete a short check-in so MsAlisia can choose helpful next steps." />
+    <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
     <div className="tabs">
       {(['Math', 'ELA', 'Writing'] as Subject[]).map(s => <button key={s} className={subject === s ? 'selected' : ''} onClick={() => { setSubject(s); setAnswers(['', '', '']); setResult(null); setError(''); }}>{s}</button>)}
     </div>
@@ -47,6 +49,15 @@ export function AssessmentView({ student, setStudent, childId = '', accessToken 
         <h3>{subject} quick check</h3>
         {assessmentQuestions[subject].map((q, idx) => <label key={q}>{q}<textarea value={answers[idx]} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Student answer..." /></label>)}
         <button className="primary-button" onClick={submit} disabled={loading || !studentSession}>{loading ? 'Evaluating...' : studentSession ? 'Evaluate Assessment' : 'Login Required'}</button>
+        <ProblemReportButton
+          accessToken={accessToken}
+          childId={childId}
+          source="assessment"
+          subject={subject}
+          studentSession={studentSession}
+          messageContext={result?.parent_summary || error || null}
+          disabled={!studentSession || !accessToken || !childId}
+        />
       </div>
       <ResultPanel result={result} />
     </div>

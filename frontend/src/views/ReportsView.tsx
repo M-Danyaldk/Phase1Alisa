@@ -4,9 +4,12 @@ import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { homeworkAcceptTypes, uploadParentHomework } from '../lib/api/homework';
 import { getFilteredChildReport, getWeeklyEmailPreview } from '../lib/api/reports';
-import { AssessmentSummary, ChildReport, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview } from '../types/childReport';
+import { getWorkingLevelOverrides, resetWorkingLevelOverride, setWorkingLevelOverride } from '../lib/api/workingLevelOverrides';
+import { AssessmentSummary, ChildReport, LearningMemorySummary, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview } from '../types/childReport';
 import { StudentProfile, Subject, View } from '../types';
 import { HomeworkUpload } from '../types/homework';
+import { WorkingLevelOverrideItem, WorkingLevelOverridesResponse } from '../types/workingLevelOverrides';
+import { launchGrades } from '../constants';
 
 type Period = 'week' | 'month' | 'all';
 type SubjectFilter = 'All' | Subject;
@@ -32,10 +35,15 @@ export function ReportsView({
   const [parentFileName, setParentFileName] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
+  const [workingLevels, setWorkingLevels] = useState<WorkingLevelOverridesResponse | null>(null);
+  const [workingLevelSelections, setWorkingLevelSelections] = useState<Record<string, string>>({});
+  const [workingLevelMessage, setWorkingLevelMessage] = useState('');
+  const [workingLevelSaving, setWorkingLevelSaving] = useState('');
 
   useEffect(() => {
     if (!accessToken || !childId) {
       setReport(null);
+      setWorkingLevels(null);
       return;
     }
     setLoading(true);
@@ -47,6 +55,12 @@ export function ReportsView({
     getWeeklyEmailPreview(accessToken, childId)
       .then(setEmailPreview)
       .catch(() => setEmailPreview(null));
+    getWorkingLevelOverrides(accessToken, childId)
+      .then(records => {
+        setWorkingLevels(records);
+        setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
+      })
+      .catch(() => setWorkingLevels(null));
   }, [accessToken, childId, period, subjectFilter]);
 
   const subjectProgress = report?.subject_progress || fallbackSubjectProgress(student);
@@ -69,6 +83,44 @@ export function ReportsView({
       setUploadMessage(error instanceof Error ? error.message : 'Could not upload homework right now.');
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function saveWorkingLevel(subject: Subject) {
+    if (!accessToken || !childId) return;
+    const nextLevel = workingLevelSelections[subject];
+    if (!nextLevel) return;
+    setWorkingLevelSaving(subject);
+    setWorkingLevelMessage('');
+    try {
+      const records = await setWorkingLevelOverride(accessToken, childId, subject, nextLevel);
+      setWorkingLevels(records);
+      setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
+      setWorkingLevelMessage(`${subject} working level saved.`);
+      getFilteredChildReport(accessToken, childId, period, subjectFilter).then(setReport).catch(() => undefined);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '';
+      setWorkingLevelMessage(detail ? `Could not save the working level right now. ${detail}` : 'Could not save the working level right now.');
+    } finally {
+      setWorkingLevelSaving('');
+    }
+  }
+
+  async function resetWorkingLevel(subject: Subject) {
+    if (!accessToken || !childId) return;
+    setWorkingLevelSaving(subject);
+    setWorkingLevelMessage('');
+    try {
+      const records = await resetWorkingLevelOverride(accessToken, childId, subject);
+      setWorkingLevels(records);
+      setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
+      setWorkingLevelMessage(`${subject} working level reset to the assessment or enrolled grade.`);
+      getFilteredChildReport(accessToken, childId, period, subjectFilter).then(setReport).catch(() => undefined);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '';
+      setWorkingLevelMessage(detail ? `Could not reset the working level right now. ${detail}` : 'Could not reset the working level right now.');
+    } finally {
+      setWorkingLevelSaving('');
     }
   }
 
@@ -117,6 +169,17 @@ export function ReportsView({
 
     <SubjectProgressSection progress={subjectProgress} />
 
+    <WorkingLevelOverrideSection
+      records={workingLevels?.subjects || []}
+      selections={workingLevelSelections}
+      saving={workingLevelSaving}
+      message={workingLevelMessage}
+      disabled={!accessToken || !childId}
+      onSelect={(subject, level) => setWorkingLevelSelections(current => ({ ...current, [subject]: level }))}
+      onSave={saveWorkingLevel}
+      onReset={resetWorkingLevel}
+    />
+
     <ParentHomeworkUpload
       childName={childName}
       fileName={parentFileName}
@@ -140,6 +203,7 @@ export function ReportsView({
     </div>
 
     <AssessmentSection assessments={report?.recent_assessments || []} />
+    <LearningMemorySection memories={report?.recent_learning_memory || []} />
     <SessionHistorySection sessions={report?.recent_tutor_sessions || []} />
 
     <div className="report-grid">
@@ -244,6 +308,78 @@ function SubjectProgressSection({ progress }: { progress: SubjectProgress[] }) {
   </div>;
 }
 
+function WorkingLevelOverrideSection({
+  records,
+  selections,
+  saving,
+  message,
+  disabled,
+  onSelect,
+  onSave,
+  onReset,
+}: {
+  records: WorkingLevelOverrideItem[];
+  selections: Record<string, string>;
+  saving: string;
+  message: string;
+  disabled: boolean;
+  onSelect: (subject: Subject, level: string) => void;
+  onSave: (subject: Subject) => void;
+  onReset: (subject: Subject) => void;
+}) {
+  if (!records.length) {
+    return <div className="report-card">
+      <h3>Subject Working Levels</h3>
+      <p className="muted-copy">Select a child to manage subject challenge levels.</p>
+    </div>;
+  }
+  return <div className="report-card">
+    <div className="section-row">
+      <h3>Subject Working Levels</h3>
+      <span className="muted-note">Parent control</span>
+    </div>
+    <p className="muted-copy">This changes the learning challenge level for this subject only. It does not change your child's enrolled grade.</p>
+    <div className="working-level-grid">
+      {records.map(item => <div className="working-level-row" key={item.subject}>
+        <div>
+          <strong>{item.subject}</strong>
+          <span>{item.display_text}</span>
+          <small>{item.override_active ? 'Parent override active' : `Assessment level: ${item.assessed_level || 'not assessed yet'}`}</small>
+        </div>
+        <label>Working level
+          <select
+            value={selections[item.subject] || item.effective_working_level}
+            disabled={disabled || saving === item.subject}
+            onChange={event => onSelect(item.subject, event.target.value)}
+          >
+            {gradeOptionsFrom(item.enrolled_grade).map(grade => <option key={grade} value={grade}>{grade}</option>)}
+          </select>
+        </label>
+        <div className="working-level-actions">
+          <button className="secondary-button" disabled={disabled || saving === item.subject} onClick={() => onSave(item.subject)}>
+            {saving === item.subject ? 'Saving...' : 'Save'}
+          </button>
+          <button className="ghost-button" disabled={disabled || saving === item.subject || !item.override_active} onClick={() => onReset(item.subject)}>
+            Reset
+          </button>
+        </div>
+      </div>)}
+    </div>
+    {message && <p className={message.startsWith('Could') ? 'error-note' : 'success-note'}>{message}</p>}
+  </div>;
+}
+
+function gradeOptionsFrom(enrolledGrade: string): string[] {
+  const start = Math.max(3, gradeNumber(enrolledGrade));
+  return launchGrades.filter(grade => grade >= start).map(grade => `Grade ${grade}`);
+}
+
+function gradeNumber(value: string): number {
+  const digits = value.replace(/\D/g, '');
+  const parsed = Number(digits);
+  return parsed >= 3 && parsed <= 6 ? parsed : 3;
+}
+
 function AssessmentSection({ assessments }: { assessments: AssessmentSummary[] }) {
   return <div className="report-card">
     <div className="section-row">
@@ -277,6 +413,23 @@ function SessionHistorySection({ sessions }: { sessions: TutorSessionSummary[] }
         <span>Next step: {item.next_step}</span>
       </div>
     </div>) : <p className="muted-copy">No saved tutoring sessions for this child yet.</p>}
+  </div>;
+}
+
+function LearningMemorySection({ memories }: { memories: LearningMemorySummary[] }) {
+  return <div className="report-card">
+    <h3>Recent Learning Memory</h3>
+    {memories.length ? memories.map(item => <div className="report-mini-card" key={item.id || `${item.subject}-${item.updated_at}`}>
+      <strong>{item.subject}{item.topic ? `: ${item.topic}` : ''}</strong>
+      <p>{item.parent_facing_summary || item.child_facing_summary || 'Ms. Alisia saved a recent learning summary.'}</p>
+      <div className="report-detail-list">
+        <span>Worked on: {item.worked_on || 'Not recorded yet'}</span>
+        <span>Needed support with: {item.struggled_with || 'No specific struggle recorded'}</span>
+        <span>Getting stronger with: {item.mastered || 'More practice will make this clearer'}</span>
+        <span>Next step: {item.next_step || 'Continue with one short guided practice session'}</span>
+        <span>Updated: {formatDate(item.updated_at) || 'No date'}</span>
+      </div>
+    </div>) : <p className="muted-copy">No saved learning memory yet. Ms. Alisia will build this as tutoring sessions are completed.</p>}
   </div>;
 }
 

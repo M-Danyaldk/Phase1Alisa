@@ -6,11 +6,15 @@ class SignupStartRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     confirm_password: str = Field(min_length=6)
+    referral_code: str | None = Field(default=None, max_length=64)
+    coppa_parent_consent_accepted: bool = False
 
     @model_validator(mode='after')
     def validate_signup(self):
         if self.password != self.confirm_password:
             raise ValueError('Confirm password must match password.')
+        if not self.coppa_parent_consent_accepted:
+            raise ValueError('Please confirm parent/guardian consent before continuing.')
         return self
 
 
@@ -18,6 +22,9 @@ class SignupStartResponse(BaseModel):
     email: EmailStr
     expires_in_minutes: int
     message: str
+    trial_available: bool = True
+    paid_checkout_required: bool = False
+    trial_blocked_reason: str | None = None
 
 
 class VerifySignupRequest(BaseModel):
@@ -37,6 +44,9 @@ class AuthSessionResponse(BaseModel):
     token_type: str | None = None
     user: AuthUser | None = None
     message: str
+    trial_available: bool = True
+    paid_checkout_required: bool = False
+    trial_blocked_reason: str | None = None
 
 
 class ProfileResponse(BaseModel):

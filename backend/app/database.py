@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS waitlist (
   email TEXT NOT NULL UNIQUE,
   source TEXT DEFAULT 'prelaunch_landing',
   status TEXT DEFAULT 'pending',
+  metadata TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -76,6 +77,9 @@ def init_db() -> None:
             conn.execute('ALTER TABLE assessment_results ADD COLUMN child_id TEXT')
         if 'recommended_next_topics' not in columns:
             conn.execute('ALTER TABLE assessment_results ADD COLUMN recommended_next_topics TEXT')
+        waitlist_columns = [row['name'] for row in conn.execute('PRAGMA table_info(waitlist)').fetchall()]
+        if 'metadata' not in waitlist_columns:
+            conn.execute('ALTER TABLE waitlist ADD COLUMN metadata TEXT')
         conn.commit()
 
 def execute(query: str, params: tuple[Any, ...] = ()) -> int:

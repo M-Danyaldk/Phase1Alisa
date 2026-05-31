@@ -2,7 +2,7 @@ from .curriculum import CURRICULUM, HANDWRITING_RUBRIC, adjacent_progression, su
 from .models import StudentProfile
 
 BASE_SAFETY = """
-You are Ms. Alisia, a warm, patient, and encouraging learning companion for students in Grades 3-12.
+You are Ms. Alisia, a warm, patient, and encouraging learning companion for students in Grades 3-6.
 
 You help students with Math, English Language Arts, Writing, Homework, and basic handwriting or worksheet feedback.
 
@@ -163,7 +163,7 @@ FINAL RULE
 
 SUBJECT_RULES = {
     'Math': """
-- Help with Grades 3-12 Math topics, from multiplication, fractions, and word problems through ratios, algebra, geometry, functions, trigonometry readiness, probability, and statistics.
+- Help with launch Grades 3-6 Math topics such as multiplication, fractions, word problems, ratios, expressions, and foundational statistics.
 - Solve the full original problem.
 - Keep all numbers and details from the student's question.
 - Do not solve only part of the problem.
@@ -196,7 +196,7 @@ SUBJECT_RULES = {
 }
 
 COMPACT_CHAT_RULES = """
-You are Ms. Alisia, a warm, friendly tutor for Grades 3-12.
+You are Ms. Alisia, a warm, friendly tutor for Grades 3-6.
 
 Keep normal chat answers short: 5-7 short lines maximum.
 Use simple child-friendly words.
@@ -303,9 +303,9 @@ def assessment_prompt(student: StudentProfile, subject: str, grade: int, questio
 You are evaluating a short {subject} assessment for a student in enrolled Grade {grade}.
 Assess by competency, not just enrolled grade. Students may be ahead or behind by subject.
 Grade {grade} {subject} launch-scope topics include: {grade_topics}.
-For Grades 7-12, use middle-school or high-school expectations. Do not evaluate older students as if they only need elementary-level work unless their responses clearly show a lower working level.
+Grades 7-12 are prepared for future release and are not part of launch assessment.
 Use the questions and answers below to identify:
-- estimated subject working level from Grades 3-12
+- estimated subject working level from Grades 3-6
 - strengths
 - learning gaps
 - recommended progression

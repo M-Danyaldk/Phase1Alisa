@@ -74,9 +74,8 @@ class LearningProfileService:
         if not child_id or subject not in SUBJECTS:
             return None
         assessment = await self.latest_assessment_context(child_id, subject)
-        if assessment:
-            return assessment
-        return await self.learning_profile(child_id, subject)
+        context = assessment or await self.learning_profile(child_id, subject) or {}
+        return await self._with_parent_override(child_id, subject, context)
 
     async def learning_profile(self, child_id: str, subject: str) -> dict | None:
         if self.supabase.configured():
@@ -131,11 +130,43 @@ class LearningProfileService:
 
     async def subject_levels_for_child(self, child_id: str) -> dict[str, str]:
         profiles = await self.learning_profiles_for_child(child_id)
-        return {
+        levels = {
             profile['subject']: profile['assessed_level']
             for profile in profiles
             if profile.get('subject') in SUBJECTS and profile.get('assessed_level')
         }
+        try:
+            from .working_level_override_service import WorkingLevelOverrideService
+            overrides = await WorkingLevelOverrideService().active_overrides_for_child(child_id)
+            for subject, override in overrides.items():
+                if override.get('approved_working_level'):
+                    levels[subject] = override['approved_working_level']
+        except Exception:
+            pass
+        return levels
+
+    async def _with_parent_override(self, child_id: str, subject: str, context: dict) -> dict | None:
+        try:
+            from .working_level_override_service import WorkingLevelOverrideService
+            override = await WorkingLevelOverrideService().active_override_for_subject(child_id, subject)
+        except Exception:
+            override = None
+        if not override:
+            return context or None
+        override_level = override.get('approved_working_level')
+        if not override_level:
+            return context or None
+        next_context = dict(context or {})
+        previous_level = next_context.get('assessed_level')
+        next_context.update({
+            'child_id': child_id,
+            'subject': subject,
+            'assessed_level': override_level,
+            'parent_override_level': override_level,
+            'previous_assessed_level': previous_level,
+            'working_level_source': 'parent_override',
+        })
+        return next_context
 
     def _normalize_profile(self, record: dict) -> dict:
         return {

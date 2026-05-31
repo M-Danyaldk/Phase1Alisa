@@ -29,20 +29,34 @@ class VerificationService:
             return await self.supabase.upsert('profiles', payload, on_conflict='id')
         except SupabaseClientError as exc:
             message = str(exc).lower()
-            if 'role' not in message and 'schema cache' not in message:
+            optional_profile_columns = {
+                'role',
+                'coppa_parent_consent_accepted',
+                'coppa_parent_consent_at',
+                'coppa_consent_version',
+                'coppa_consent_source',
+            }
+            if 'schema cache' not in message and not any(column in message for column in optional_profile_columns):
                 raise
-            fallback_payload = {key: value for key, value in payload.items() if key != 'role'}
+            fallback_payload = {key: value for key, value in payload.items() if key not in optional_profile_columns}
             return await self.supabase.upsert('profiles', fallback_payload, on_conflict='id')
 
     async def start_signup(self, payload: SignupStartRequest) -> dict:
-        email = payload.email.lower()
+        email = str(payload.email).strip().lower()
         await self._expire_existing_codes(email)
         code = generate_verification_code()
         expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.signup_code_ttl_minutes)
+        trial_eligibility = await self._trial_eligibility_for_email(email)
         pending_signup_data = {
             'full_name': payload.full_name.strip(),
             'email': email,
             'password': payload.password,
+            'referral_code': (payload.referral_code or '').strip(),
+            'coppa_parent_consent_accepted': payload.coppa_parent_consent_accepted,
+            'coppa_parent_consent_at': datetime.now(UTC).isoformat(),
+            'coppa_consent_version': '2026-06-14',
+            'coppa_consent_source': 'parent_signup',
+            'trial_eligibility': trial_eligibility,
         }
         try:
             records = await self.supabase.insert('signup_verification_codes', {
@@ -61,6 +75,7 @@ class VerificationService:
             'email': email,
             'expires_in_minutes': self.settings.signup_code_ttl_minutes,
             'message': 'We sent a verification code to your email. Please check your inbox.',
+            **trial_eligibility,
         }
 
     async def resend_code(self, email: str) -> dict:
@@ -169,6 +184,10 @@ class VerificationService:
             raise HTTPException(status_code=400, detail='Invalid code entered. Please try again.')
 
         pending_data = record.get('pending_signup_data') or {}
+        if not pending_data.get('coppa_parent_consent_accepted'):
+            await self._mark_code_used(record_id)
+            raise HTTPException(status_code=400, detail='Please confirm parent/guardian consent before continuing.')
+        trial_eligibility = await self._trial_eligibility_for_email(email)
         try:
             auth_user = await self.supabase.create_auth_user(
                 email=email,
@@ -176,6 +195,8 @@ class VerificationService:
                 metadata={
                     'full_name': pending_data.get('full_name'),
                     'role': 'parent',
+                    'coppa_parent_consent_accepted': True,
+                    'coppa_consent_version': pending_data.get('coppa_consent_version') or '2026-06-14',
                 },
             )
             user_id = auth_user['id']
@@ -184,11 +205,16 @@ class VerificationService:
                 'full_name': pending_data.get('full_name'),
                 'email': email,
                 'role': 'parent',
+                'coppa_parent_consent_accepted': True,
+                'coppa_parent_consent_at': pending_data.get('coppa_parent_consent_at') or datetime.now(UTC).isoformat(),
+                'coppa_consent_version': pending_data.get('coppa_consent_version') or '2026-06-14',
+                'coppa_consent_source': pending_data.get('coppa_consent_source') or 'parent_signup',
                 'updated_at': datetime.now(UTC).isoformat(),
             })
             await self._mark_code_used(record_id)
             session = await self.supabase.login_with_password(email, pending_data['password'])
             await self._queue_signup_welcome(user_id, email)
+            await self._record_referral_signup(user_id, email, pending_data.get('referral_code'))
         except SupabaseClientError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except KeyError as exc:
@@ -202,6 +228,7 @@ class VerificationService:
             'token_type': session.get('token_type'),
             'message': 'Account verified and created successfully.',
             'user': {'id': session_user.get('id', user_id), 'email': session_user.get('email', email)},
+            **trial_eligibility,
         }
 
     async def login(self, email: str, password: str) -> dict:
@@ -488,3 +515,34 @@ class VerificationService:
             await EmailService().queue_signup_welcome(parent_id=user_id, recipient_email=email)
         except Exception as exc:
             logger.warning('Signup welcome email event failed for parent %s: %s', user_id, exc)
+
+    async def _trial_eligibility_for_email(self, email: str) -> dict:
+        normalized_email = email.strip().lower()
+        try:
+            rows = await self.supabase.select(
+                'parent_trial_history',
+                f'normalized_email=eq.{quote(normalized_email)}&order=trial_started_at.desc&limit=1',
+            )
+        except SupabaseClientError as exc:
+            message = str(exc).lower()
+            if 'parent_trial_history' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message):
+                return {'trial_available': True, 'paid_checkout_required': False, 'trial_blocked_reason': None}
+            logger.warning('Could not check trial eligibility during signup: %s', exc)
+            return {'trial_available': True, 'paid_checkout_required': False, 'trial_blocked_reason': None}
+        used_trial = bool(rows)
+        return {
+            'trial_available': not used_trial,
+            'paid_checkout_required': used_trial,
+            'trial_blocked_reason': 'trial_already_used' if used_trial else None,
+        }
+
+    async def _record_referral_signup(self, user_id: str, email: str, referral_code: object) -> None:
+        code = str(referral_code or '').strip()
+        if not code:
+            return
+        try:
+            from .referral_service import ReferralService
+
+            await ReferralService().record_referred_signup(user_id, email, code)
+        except Exception as exc:
+            logger.warning('Referral attribution skipped for parent %s: %s', user_id, exc)
