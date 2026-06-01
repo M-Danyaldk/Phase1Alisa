@@ -24,11 +24,18 @@ export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (ses
     setLoading(true);
     setError('');
     try {
-      const session = await studentLogin(username, pin);
+      const classroomContextToken = localStorage.getItem('msalisia-classroom-context-token') || '';
+      if (!classroomContextToken) {
+        setError('Please start from your parent dashboard to open your classroom.');
+        return;
+      }
+      const session = await studentLogin(classroomContextToken, username, pin);
+      localStorage.removeItem('msalisia-classroom-context-token');
       onLoggedIn(session);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : '';
-      setError(message.includes('There is something your parent needs to take care of') ? message : 'Please check the username and PIN, then try again.');
+      if (message.includes('Please start from your parent dashboard')) setError(message);
+      else setError(message.includes('There is something your parent needs to take care of') ? message : 'Invalid student username or PIN.');
     } finally {
       setLoading(false);
     }
@@ -42,6 +49,7 @@ export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (ses
     <div className="auth-panel student-login-panel">
       <SectionHeader title="HEY THERE!" desc={loginMessage} />
       <div className="auth-form">
+        {!localStorage.getItem('msalisia-classroom-context-token') && <p className="info-note">Please start from your parent dashboard to open your classroom.</p>}
         <label>Username
           <input value={username} onChange={event => setUsername(event.target.value.toLowerCase())} onKeyDown={event => { if (event.key === 'Enter') submit(); }} />
         </label>

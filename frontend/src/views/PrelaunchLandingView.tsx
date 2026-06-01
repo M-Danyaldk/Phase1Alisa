@@ -5,17 +5,14 @@ import { submitDataDeletionRequest } from '../lib/api/dataDeletion';
 import { joinWaitlist } from '../lib/api/waitlist';
 
 const waitlistOpenDate = import.meta.env.VITE_WAITLIST_OPEN_DATE || '2026-06-14';
-const waitlistOpenDateLabel = new Date(`${waitlistOpenDate}T00:00:00`).toLocaleDateString(undefined, {
-  month: 'long',
-  day: 'numeric',
-});
-const successMessage = `You're on the waitlist. Access is scheduled to open on ${waitlistOpenDateLabel}.`;
+const publicAccessDateLabel = 'June 15';
+const successMessage = `You're on the waitlist. Access opens ${publicAccessDateLabel}. We'll reach out when it's your family's turn.`;
 
 function validEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
-export function PrelaunchLandingView({ onLogin, onNavigate }: { onLogin: () => void; onNavigate?: (path: string) => void }) {
+export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: string) => void }) {
   const [parentName, setParentName] = useState('');
   const [email, setEmail] = useState('');
   const [childGrade, setChildGrade] = useState('');
@@ -76,23 +73,23 @@ export function PrelaunchLandingView({ onLogin, onNavigate }: { onLogin: () => v
         <a href="#features">Features</a>
         <a href="#faq">FAQ</a>
       </nav>
-      <button className="prelaunch-login" type="button" onClick={onLogin}>Login</button>
     </header>
 
     <section className="prelaunch-hero" aria-labelledby="prelaunch-title">
       <div className="prelaunch-copy">
-        <span className="prelaunch-eyebrow">{accessOpen ? 'Access is open' : `Controlled launch access opens ${waitlistOpenDateLabel}`}</span>
+        <span className="prelaunch-eyebrow">{accessOpen ? 'Access is open' : 'Now accepting waitlist sign-ups.'}</span>
         <h1 id="prelaunch-title">Best Teacher. Best Mentor. Best Future.</h1>
         <p>MsAlisia is an AI tutor for Grades 3-6 that adapts to your child, supports Math, English Language Arts, and Writing, and keeps parents informed without adding more work to the day.</p>
         <div className="prelaunch-cta-row">
           <a className="primary-button" href={accessOpen ? '/signup' : '#waitlist'}>{accessOpen ? 'Create Parent Account' : 'Join Waitlist'}</a>
           <a className="secondary-button" href="#how-it-works">See How It Works</a>
         </div>
+        {!accessOpen && <p className="prelaunch-hero-note">Start with 7 days free when we launch.</p>}
       </div>
 
       <form className="prelaunch-form" id="waitlist" onSubmit={submit}>
         <h2>{accessOpen ? 'Access is open' : 'Join the waitlist'}</h2>
-        <p>{accessOpen ? 'Create your parent account when you are ready to begin.' : `Access is opening carefully on ${waitlistOpenDateLabel} so every family gets a strong start.`}</p>
+        <p>{accessOpen ? 'Create your parent account when you are ready to begin.' : "Access opens June 15 — join the waitlist and we'll reach out when it's your family's turn."}</p>
         <label>Parent name
           <input value={parentName} onChange={event => setParentName(event.target.value)} autoComplete="name" disabled={loading} required />
         </label>
@@ -107,7 +104,7 @@ export function PrelaunchLandingView({ onLogin, onNavigate }: { onLogin: () => v
         </label>
         <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Joining...' : 'Join Waitlist'}</button>
         {accessOpen && <button className="secondary-button" type="button" onClick={() => go('/signup')}>Create Parent Account</button>}
-        <p className="prelaunch-form-note">No payment information required. {accessOpen ? 'You can also create a parent account now.' : `Access is scheduled to open on ${waitlistOpenDateLabel}.`}</p>
+        <p className="prelaunch-form-note">{accessOpen ? 'No payment information required. You can also create a parent account now.' : 'No payment information required. Every new family starts with a free 7-day trial. Access opens June 15.'}</p>
         {message && <p className="prelaunch-success"><CheckCircle2 aria-hidden="true" />{message}</p>}
         {error && <p className="prelaunch-error">{error}</p>}
       </form>
@@ -122,11 +119,10 @@ export function PrelaunchLandingView({ onLogin, onNavigate }: { onLogin: () => v
         <LandingFeature icon={<Sparkles />} title="AI tutoring" text="Step-by-step help that adapts to each child's current level." />
         <LandingFeature icon={<ClipboardList />} title="Assessment engine" text="Learning checks help MsAlisia understand strengths and gaps." />
         <LandingFeature icon={<FileText />} title="Parent reports" text="Parents can see progress without needing to sit beside every lesson." />
-        <LandingFeature icon={<Mic />} title="Voice learning" text="Voice support is planned for Chat + Audio access." />
+        <LandingFeature icon={<Mic />} title="Voice learning" text="Voice learning is available on the Voice Plan — your child can speak with Ms. Alisia and hear responses aloud." />
         <LandingFeature icon={<Brain />} title="Brain Break" text="Healthy rest reminders support long learning sessions." />
         <LandingFeature icon={<UploadCloud />} title="Homework upload" text="Students can upload work for guided support." />
       </div>
-      <p className="landing-inline-note">Launch scope: Grades 3-6, Math, English Language Arts, and Writing. Grades 7-12, Science, and Social Studies are planned post-launch.</p>
     </section>
 
     <section className="landing-section landing-split" id="how-it-works">
@@ -144,15 +140,14 @@ export function PrelaunchLandingView({ onLogin, onNavigate }: { onLogin: () => v
     <section className="landing-section landing-trust">
       <div className="landing-section-heading">
         <span>Trust and safety</span>
-        <h2>Built for parent-supervised learning.</h2>
+        <h2>Built so your child is supported and you stay informed.</h2>
       </div>
       <div className="landing-feature-grid">
         <LandingFeature icon={<ShieldCheck />} title="Child-safe tutoring" text="Student-facing guidance stays encouraging and age-aware." />
         <LandingFeature icon={<HeartHandshake />} title="Parent visibility" text="Parents can review progress, reports, and access status." />
         <LandingFeature icon={<LockKeyhole />} title="Privacy-first data handling" text="Child data is not sold for advertising, and parents can request deletion." />
-        <LandingFeature icon={<Headphones />} title="AI disclosure" text="MsAlisia is an AI tutor, not a human tutor or clinical evaluator." />
+        <LandingFeature icon={<Headphones />} title="AI disclosure" text="MsAlisia is an AI tutor, not a human tutor." />
       </div>
-      <p className="landing-inline-note">Children see supportive learning messages. Clinical-style scores are kept out of child-facing screens.</p>
     </section>
 
     <section className="landing-section" id="faq">
@@ -277,7 +272,8 @@ function Step({ number, title, text }: { number: string; title: string; text: st
 }
 
 const faqItems = [
-  { question: 'What grades are supported?', answer: 'MsAlisia launch access is focused on Grades 3-6. Grades 7-12 are prepared for future release.' },
+  { question: 'What grades are supported?', answer: 'MsAlisia launches with Grades 3-6.' },
+  { question: 'Is there a free trial?', answer: 'Yes. Every new family starts with a free 7-day trial. No payment is required to begin.' },
   { question: 'What subjects are available?', answer: 'Launch subjects are Math, English Language Arts, and Writing.' },
   { question: 'How does the waitlist work?', answer: 'Join the waitlist and we will contact you when access is ready for your family.' },
   { question: 'Is MsAlisia an AI tutor?', answer: 'Yes. MsAlisia is an AI tutor, not a human tutor.' },
@@ -294,7 +290,7 @@ const complianceContent = {
     title: 'Privacy-first learning support',
     sections: [
       { title: 'What we collect', text: 'MsAlisia may collect parent account data, child profile data, tutoring/session data, assessment activity, homework uploads, and support messages needed to operate the service.' },
-      { title: 'Service providers', text: 'Billing is handled by Stripe. Emails are handled by Resend. AI tutoring uses configured AI providers through the backend.' },
+      { title: 'Service providers', text: 'Billing is handled by Stripe. Emails are handled by Resend. AI tutoring is powered by Anthropic. Voice responses are powered by OpenAI.' },
       { title: 'Advertising', text: 'We do not sell student data for advertising.' },
       { title: 'Deletion requests', text: 'Parents can request deletion of parent and child data by contacting privacy@msalisia.com.' },
     ],
@@ -304,7 +300,7 @@ const complianceContent = {
     title: 'You are interacting with an AI, not a human tutor.',
     sections: [
       { title: 'What MsAlisia is', text: 'MsAlisia is an AI learning assistant designed to provide tutoring support, practice guidance, and parent-visible learning summaries.' },
-      { title: 'What MsAlisia is not', text: 'MsAlisia is not a human tutor, therapist, doctor, or clinical evaluator. Parents should review important learning or wellbeing concerns with qualified professionals.' },
+      { title: 'What MsAlisia is not', text: 'MsAlisia is not a human tutor, therapist, or doctor. Parents should review important learning or wellbeing concerns with qualified professionals.' },
     ],
   },
   'data-deletion': {
@@ -312,7 +308,7 @@ const complianceContent = {
     title: 'Request deletion of parent or child data',
     sections: [
       { title: 'How to request deletion', text: 'Parents can request deletion by emailing privacy@msalisia.com from the parent account email address.' },
-      { title: 'Review process', text: 'Deletion requests are reviewed and handled according to account, billing, legal, and operational requirements.' },
+      { title: 'Review process', text: 'We review every deletion request carefully and will confirm once your data has been removed.' },
     ],
   },
   support: {

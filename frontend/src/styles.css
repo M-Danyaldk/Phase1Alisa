@@ -368,12 +368,12 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .prelaunch-nav { display: flex; align-items: center; gap: 20px; }
 .prelaunch-nav a { color: var(--muted); text-decoration: none; font-weight: 900; }
 .prelaunch-nav a:hover { color: var(--purple-dark); }
-.prelaunch-login { min-height: 44px; border: 1px solid #eadcf9; border-radius: 999px; padding: 10px 18px; color: #351067; background: #fffaf1; font-weight: 900; cursor: pointer; }
 .prelaunch-hero { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(360px, .92fr); gap: clamp(24px, 5vw, 70px); align-items: center; width: min(1180px, calc(100% - 36px)); margin: 0 auto; padding: clamp(46px, 8vw, 96px) 0; }
 .prelaunch-copy { min-width: 0; }
 .prelaunch-eyebrow, .landing-section-heading span { display: inline-flex; align-items: center; min-height: 34px; margin-bottom: 18px; color: #8f6407; background: #fff6df; border: 1px solid #efc86b; border-radius: 999px; padding: 0 14px; font-size: 13px; font-weight: 900; }
 .prelaunch-copy h1 { margin: 0; max-width: 720px; color: #2e0c55; font-size: clamp(44px, 7vw, 82px); line-height: 1.02; letter-spacing: 0; }
 .prelaunch-copy p { margin: 24px 0 0; color: #675d82; font-size: clamp(17px, 2vw, 22px); line-height: 1.65; max-width: 680px; }
+.prelaunch-hero-note { font-weight: 900; color: #4b2081 !important; }
 .prelaunch-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
 .prelaunch-cta-row a { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .prelaunch-form { display: grid; gap: 14px; padding: clamp(22px, 4vw, 30px); border: 1px solid #eadcf9; border-radius: 26px; background: rgba(255,255,255,.94); box-shadow: 0 24px 70px rgba(47, 20, 85, .08); }
@@ -516,7 +516,6 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .prelaunch-brand img { width: 50px; height: 50px; border-radius: 15px; }
   .prelaunch-brand strong { font-size: 26px; }
   .prelaunch-brand span { font-size: 14px; }
-  .prelaunch-login { top: 14px; right: 14px; padding: 9px 14px; }
   .prelaunch-content, .prelaunch-form { grid-template-columns: 1fr; }
   .prelaunch-copy { padding: 34px 18px 38px; }
   .prelaunch-eyebrow { margin-bottom: 22px; padding: 9px 15px; }
@@ -549,7 +548,6 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .prelaunch-brand { display: inline-flex; grid-template-columns: none; }
   .prelaunch-brand img { width: 42px; height: 42px; }
   .prelaunch-brand span { display: inline; margin: 0; color: #15003f; font-size: 20px; }
-  .prelaunch-login { position: static; min-height: 44px; padding: 9px 13px; }
   .prelaunch-copy h1 { font-size: 42px; }
   .prelaunch-copy p { font-size: 16px; }
   .prelaunch-form { padding: 18px; }

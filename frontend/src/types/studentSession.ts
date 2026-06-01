@@ -16,6 +16,13 @@ export type StudentSession = {
   message: string;
 };
 
+export type ClassroomContext = {
+  classroom_context_token: string;
+  child_id: string;
+  parent_id: string;
+  expires_at: string;
+};
+
 export type StudentMe = {
   role: 'child';
   child_id: string;
