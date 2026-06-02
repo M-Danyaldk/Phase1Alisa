@@ -13,6 +13,7 @@ from .supabase_client import SupabaseClient, SupabaseClientError
 logger = logging.getLogger(__name__)
 RESET_GENERIC_MESSAGE = 'If an account exists for this email, we sent password reset instructions.'
 RESET_SUCCESS_MESSAGE = 'Your password has been reset. Please log in.'
+SIGNUP_EXISTING_ACCOUNT_MESSAGE = 'An account already exists for this email. Please log in or reset your password.'
 
 
 class VerificationService:
@@ -43,6 +44,8 @@ class VerificationService:
 
     async def start_signup(self, payload: SignupStartRequest) -> dict:
         email = str(payload.email).strip().lower()
+        if await self._signup_account_exists(email):
+            raise HTTPException(status_code=409, detail=SIGNUP_EXISTING_ACCOUNT_MESSAGE)
         await self._expire_existing_codes(email)
         code = generate_verification_code()
         expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.signup_code_ttl_minutes)
@@ -79,16 +82,19 @@ class VerificationService:
         }
 
     async def resend_code(self, email: str) -> dict:
-        records = await self._latest_unused_code(email.lower())
+        normalized_email = email.strip().lower()
+        if await self._signup_account_exists(normalized_email):
+            raise HTTPException(status_code=409, detail=SIGNUP_EXISTING_ACCOUNT_MESSAGE)
+        records = await self._latest_unused_code(normalized_email)
         if not records:
             raise HTTPException(status_code=404, detail='No pending signup found for this email.')
         pending_data = records[0].get('pending_signup_data') or {}
         code = generate_verification_code()
         expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.signup_code_ttl_minutes)
-        await self._expire_existing_codes(email.lower())
+        await self._expire_existing_codes(normalized_email)
         try:
             records = await self.supabase.insert('signup_verification_codes', {
-                'email': email.lower(),
+                'email': normalized_email,
                 'hashed_code': hash_verification_code(code),
                 'expires_at': expires_at.isoformat(),
                 'attempts': 0,
@@ -98,9 +104,9 @@ class VerificationService:
         except SupabaseClientError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         record_id = records[0].get('id') if records else None
-        await self._send_signup_verification_email(email.lower(), code, record_id)
+        await self._send_signup_verification_email(normalized_email, code, record_id)
         return {
-            'email': email.lower(),
+            'email': normalized_email,
             'expires_in_minutes': self.settings.signup_code_ttl_minutes,
             'message': 'We sent a new verification code to your email. Please check your inbox.',
         }
@@ -161,7 +167,7 @@ class VerificationService:
         return {'message': RESET_SUCCESS_MESSAGE}
 
     async def verify_signup(self, email: str, code: str) -> dict:
-        email = email.lower()
+        email = email.strip().lower()
         records = await self._latest_unused_code(email)
         if not records:
             raise HTTPException(status_code=400, detail='Invalid code entered. Please try again.')
@@ -216,6 +222,9 @@ class VerificationService:
             await self._queue_signup_welcome(user_id, email)
             await self._record_referral_signup(user_id, email, pending_data.get('referral_code'))
         except SupabaseClientError as exc:
+            if self._is_existing_account_error(exc):
+                await self._mark_code_used(record_id)
+                raise HTTPException(status_code=409, detail=SIGNUP_EXISTING_ACCOUNT_MESSAGE) from exc
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=500, detail='Pending signup data is incomplete.') from exc
@@ -271,6 +280,26 @@ class VerificationService:
             logger.warning('Could not load parent profile for password reset: %s', exc)
             return None
         return records[0] if records else None
+
+    async def _signup_account_exists(self, email: str) -> bool:
+        try:
+            records = await self.supabase.select(
+                'profiles',
+                f'email=eq.{quote(email)}&status=neq.inactive&limit=1',
+            )
+        except SupabaseClientError as exc:
+            logger.warning('Could not check existing signup account for %s: %s', email, exc)
+            return False
+        return bool(records)
+
+    def _is_existing_account_error(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return exc.status_code in {409, 422} and (
+            'already' in message
+            or 'registered' in message
+            or 'exists' in message
+            or 'duplicate' in message
+        )
 
     async def _valid_reset_code(self, email: str, code: str, mutate_attempts: bool) -> dict:
         records = await self._latest_unused_reset_code(email)
