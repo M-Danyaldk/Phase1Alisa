@@ -11,7 +11,7 @@ from .supabase_client import SupabaseClient, SupabaseClientError
 
 USERNAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9._-]{2,31}$')
 SESSION_HOURS = 12
-CLASSROOM_CONTEXT_MINUTES = 15
+FAMILY_CODE_ATTEMPTS = 5
 
 
 class StudentAuthService:
@@ -60,34 +60,38 @@ class StudentAuthService:
             raise HTTPException(status_code=500, detail='Could not save student access.')
         return self._public_access(records[0])
 
-    async def create_classroom_context(self, parent_id: str, child_id: str) -> dict:
-        await self._child(parent_id, child_id, require_active=True)
-        token = generate_session_token()
-        expires_at = datetime.now(UTC) + timedelta(minutes=CLASSROOM_CONTEXT_MINUTES)
-        try:
-            await self.supabase.insert('classroom_login_contexts', {
-                'parent_id': parent_id,
-                'child_id': child_id,
-                'context_token_hash': hash_session_token(token),
-                'expires_at': expires_at.isoformat(),
-            })
-        except SupabaseClientError as exc:
-            if self._missing_classroom_contexts(exc):
-                raise HTTPException(status_code=503, detail='Classroom login contexts are not set up yet. Please run the Supabase migration first.') from exc
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-        return {
-            'classroom_context_token': token,
-            'child_id': child_id,
-            'parent_id': parent_id,
-            'expires_at': expires_at.isoformat(),
-        }
+    async def get_or_create_family_classroom_link(self, parent_id: str) -> dict:
+        existing = await self._active_family_link_for_parent(parent_id)
+        if existing:
+            return self._public_family_link(existing)
+        for _ in range(FAMILY_CODE_ATTEMPTS):
+            code = generate_session_token()
+            try:
+                records = await self.supabase.insert('family_classroom_links', {
+                    'parent_id': parent_id,
+                    'family_code': code,
+                    'is_active': True,
+                })
+            except SupabaseClientError as exc:
+                message = str(exc).lower()
+                if self._missing_family_links(exc):
+                    raise HTTPException(status_code=503, detail='Family classroom links are not set up yet. Please run the Supabase migration first.') from exc
+                if 'duplicate' in message or 'unique' in message:
+                    existing = await self._active_family_link_for_parent(parent_id)
+                    if existing:
+                        return self._public_family_link(existing)
+                    continue
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            if records:
+                return self._public_family_link(records[0])
+        raise HTTPException(status_code=500, detail='Could not create family classroom link.')
 
     async def login(self, payload: StudentLoginRequest) -> dict:
         username = self.normalize_username(payload.username)
-        context = await self._classroom_context(payload.classroom_context_token)
-        access = await self._access_for_context(context, username)
+        family_link = await self._family_link(payload.family_code)
+        access = await self._access_for_family(family_link, username)
         if not access or not access.get('is_active') or not verify_pin(payload.pin, access.get('pin_hash') or ''):
-            raise HTTPException(status_code=401, detail='Invalid student username or PIN.')
+            raise HTTPException(status_code=401, detail='That username or PIN didn’t work. Please check it and try again.')
         child = await self._child(access['parent_id'], access['child_id'], require_active=True)
         access_state = await self._billing_state(child)
         token = generate_session_token()
@@ -101,7 +105,7 @@ class StudentAuthService:
                 'token_hash': token_hash,
                 'expires_at': expires_at.isoformat(),
             })
-            await self.supabase.update('classroom_login_contexts', {'id': f'eq.{context["id"]}'}, {'used_at': datetime.now(UTC).isoformat()})
+            await self.supabase.update('family_classroom_links', {'id': f'eq.{family_link["id"]}'}, {'last_used_at': datetime.now(UTC).isoformat()})
             await self.supabase.update('student_access', {'id': f'eq.{access["id"]}'}, {'last_login_at': datetime.now(UTC).isoformat()})
         except SupabaseClientError as exc:
             if self._missing_student_access(exc):
@@ -171,30 +175,43 @@ class StudentAuthService:
             raise HTTPException(status_code=422, detail='Student username must be 3-32 characters and use only lowercase letters, numbers, dots, dashes, or underscores.')
         return value
 
-    async def _classroom_context(self, token: str) -> dict:
-        token_hash = hash_session_token(token)
+    def normalize_family_code(self, family_code: str) -> str:
+        value = family_code.strip()
+        if len(value) < 12:
+            raise HTTPException(status_code=401, detail='Please check your family classroom link and try again.')
+        return value
+
+    async def _active_family_link_for_parent(self, parent_id: str) -> dict | None:
         try:
-            records = await self.supabase.select('classroom_login_contexts', f'context_token_hash=eq.{quote(token_hash)}&limit=1')
+            records = await self.supabase.select(
+                'family_classroom_links',
+                f'parent_id=eq.{quote(parent_id)}&is_active=is.true&order=created_at.desc&limit=1',
+            )
         except SupabaseClientError as exc:
-            if self._missing_classroom_contexts(exc):
-                raise HTTPException(status_code=503, detail='Classroom login contexts are not set up yet. Please run the Supabase migration first.') from exc
+            if self._missing_family_links(exc):
+                return None
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return records[0] if records else None
+
+    async def _family_link(self, family_code: str) -> dict:
+        code = self.normalize_family_code(family_code)
+        try:
+            records = await self.supabase.select(
+                'family_classroom_links',
+                f'family_code=eq.{quote(code)}&is_active=is.true&limit=1',
+            )
+        except SupabaseClientError as exc:
+            if self._missing_family_links(exc):
+                raise HTTPException(status_code=503, detail='Family classroom links are not set up yet. Please run the Supabase migration first.') from exc
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not records:
-            raise HTTPException(status_code=401, detail='Please start from your parent dashboard to open your classroom.')
-        context = records[0]
-        if context.get('used_at'):
-            raise HTTPException(status_code=401, detail='Please start from your parent dashboard to open your classroom.')
-        expires_at = self._parse_datetime(context['expires_at'])
-        if expires_at <= datetime.now(UTC):
-            raise HTTPException(status_code=401, detail='Please start from your parent dashboard to open your classroom.')
-        return context
+            raise HTTPException(status_code=401, detail='Please check your family classroom link and try again.')
+        return records[0]
 
-    async def _access_for_context(self, context: dict, username: str) -> dict | None:
-        parent_id = context['parent_id']
-        child_id = context['child_id']
+    async def _access_for_family(self, family_link: dict, username: str) -> dict | None:
+        parent_id = family_link['parent_id']
         query = (
             f'parent_id=eq.{quote(parent_id)}'
-            f'&child_id=eq.{quote(child_id)}'
             f'&normalized_username=eq.{quote(username)}'
             '&limit=1'
         )
@@ -224,13 +241,21 @@ class StudentAuthService:
     def _public_access(self, record: dict) -> dict:
         return {key: value for key, value in record.items() if key != 'pin_hash'}
 
+    def _public_family_link(self, record: dict) -> dict:
+        return {
+            'family_code': record['family_code'],
+            'classroom_path': f'/student?family={record["family_code"]}',
+            'created_at': record.get('created_at'),
+            'updated_at': record.get('updated_at'),
+        }
+
     def _missing_student_access(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
         return ('student_access' in message or 'student_sessions' in message) and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
 
-    def _missing_classroom_contexts(self, exc: SupabaseClientError) -> bool:
+    def _missing_family_links(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
-        return 'classroom_login_contexts' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
+        return 'family_classroom_links' in message and ('schema cache' in message or 'could not find' in message or 'does not exist' in message)
 
     def _parse_datetime(self, value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))

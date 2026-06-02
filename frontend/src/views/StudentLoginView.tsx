@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { SectionHeader } from '../components/SectionHeader';
 import { studentLogin } from '../lib/api/studentAuth';
 import { StudentSession } from '../types/studentSession';
@@ -15,27 +15,26 @@ export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (ses
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loginMessage] = useState(() => loginMessages[Math.floor(Math.random() * loginMessages.length)]);
+  const familyCode = useMemo(() => new URLSearchParams(window.location.search).get('family')?.trim() || '', []);
 
   async function submit() {
     if (!username.trim() || !pin.trim()) {
       setError('Enter your Username and PIN.');
       return;
     }
+    if (!familyCode) {
+      setError('Please use your family classroom link to log in.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const classroomContextToken = localStorage.getItem('msalisia-classroom-context-token') || '';
-      if (!classroomContextToken) {
-        setError('Please start from your parent dashboard to open your classroom.');
-        return;
-      }
-      const session = await studentLogin(classroomContextToken, username, pin);
-      localStorage.removeItem('msalisia-classroom-context-token');
+      const session = await studentLogin(familyCode, username, pin);
       onLoggedIn(session);
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : '';
-      if (message.includes('Please start from your parent dashboard')) setError(message);
-      else setError(message.includes('There is something your parent needs to take care of') ? message : 'Invalid student username or PIN.');
+      if (message.includes('family classroom link')) setError(message);
+      else setError(message.includes('There is something your parent needs to take care of') ? message : 'That username or PIN didn’t work. Please check it and try again.');
     } finally {
       setLoading(false);
     }
@@ -49,7 +48,7 @@ export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (ses
     <div className="auth-panel student-login-panel">
       <SectionHeader title="HEY THERE!" desc={loginMessage} />
       <div className="auth-form">
-        {!localStorage.getItem('msalisia-classroom-context-token') && <p className="info-note">Please start from your parent dashboard to open your classroom.</p>}
+        {!familyCode && <p className="info-note">Please use your family classroom link to log in.</p>}
         <label>Username
           <input value={username} onChange={event => setUsername(event.target.value.toLowerCase())} onKeyDown={event => { if (event.key === 'Enter') submit(); }} />
         </label>

@@ -27,7 +27,6 @@ export function LoginForm({ onSubmit, onSignup, onForgotPassword, notice = '' }:
     <div className="auth-heading">
       <span>Welcome Back</span>
       <h2>Log in to continue</h2>
-      <p>Welcome to MsAlisia — log in to continue.</p>
     </div>
     <div className="auth-form">
       <label>Email Address<input type="email" value={email} onChange={e => setEmail(e.target.value)} /></label>

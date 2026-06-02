@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Header, HTTPException
 
 from ..schemas.student_auth import (
-    ClassroomContextResponse,
+    FamilyClassroomLinkResponse,
     StudentAccessResponse,
     StudentAccessUpsertRequest,
     StudentLoginRequest,
@@ -38,11 +38,11 @@ async def upsert_student_access(child_id: str, payload: StudentAccessUpsertReque
     return StudentAccessResponse(**record)
 
 
-@router.post('/children/{child_id}/classroom-context', response_model=ClassroomContextResponse)
-async def create_classroom_context(child_id: str, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ClassroomContextResponse:
+@router.get('/student/family-classroom-link', response_model=FamilyClassroomLinkResponse)
+async def family_classroom_link(authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> FamilyClassroomLinkResponse:
     user = await require_parent_access(authorization, x_access_mode)
-    result = await StudentAuthService().create_classroom_context(user['id'], child_id)
-    return ClassroomContextResponse(**result)
+    result = await StudentAuthService().get_or_create_family_classroom_link(user['id'])
+    return FamilyClassroomLinkResponse(**result)
 
 
 @router.post('/student/login', response_model=StudentSessionResponse)

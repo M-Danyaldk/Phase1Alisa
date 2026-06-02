@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { initialStudent } from './constants';
 import { checkHealth } from './lib/api';
 import { AdminOnly, ChildOnly, ParentOnly } from './guards/AccessGuards';
-import { createClassroomContext, getStudentMe, studentLogout } from './lib/api/studentAuth';
+import { getStudentMe, studentLogout } from './lib/api/studentAuth';
 import { childToStudent, profileToStudent } from './lib/studentProfile';
 import { ChildShell } from './layouts/ChildShell';
 import { ParentShell } from './layouts/ParentShell';
@@ -35,7 +35,6 @@ type AuthView = 'login' | 'signup' | 'verify';
 
 const AUTH_SESSION_KEY = 'msalisia-auth-session';
 const STUDENT_SESSION_KEY = 'msalisia-student-session';
-const CLASSROOM_CONTEXT_KEY = 'msalisia-classroom-context-token';
 const REFERRAL_CODE_KEY = 'msalisia-referral-code';
 
 function readStoredJson<T>(key: string): T | null {
@@ -214,7 +213,6 @@ export function App() {
 
   function completeStudentLogin(nextSession: StudentSession) {
     const levels = nextSession.learning_levels || {};
-    localStorage.removeItem(CLASSROOM_CONTEXT_KEY);
     localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(nextSession));
     setStudentSession(nextSession);
     setStudentSessionNotice('');
@@ -241,7 +239,6 @@ export function App() {
   async function logoutStudent(notice = '') {
     const token = studentSession?.access_token;
     localStorage.removeItem(STUDENT_SESSION_KEY);
-    localStorage.removeItem(CLASSROOM_CONTEXT_KEY);
     setStudentSession(null);
     setStudentMe(null);
     setStudentSessionNotice(notice);
@@ -311,19 +308,6 @@ export function App() {
   function handleOnboardingChildCreated(child: ChildProfile) {
     setChildren(prev => [...prev, child]);
     setSelectedChildId(child.id);
-  }
-
-  async function openChildSession(childId: string) {
-    const child = children.find(item => item.id === childId);
-    if (!child || child.status === 'inactive' || !session?.access_token) return;
-    setSelectedChildId(childId);
-    try {
-      const context = await createClassroomContext(session.access_token, childId);
-      localStorage.setItem(CLASSROOM_CONTEXT_KEY, context.classroom_context_token);
-      window.location.assign('/student');
-    } catch (error) {
-      setChildrenError(error instanceof Error ? error.message : 'Could not open the classroom. Please try again.');
-    }
   }
 
   const landingPath = pathname === '/';
@@ -547,7 +531,6 @@ export function App() {
           children={children}
           selectedChildId={selectedChildId}
           onSelectChild={setSelectedChildId}
-          onOpenChildSession={openChildSession}
           onViewChange={changeParentView}
         />}
         {parentView === 'profile' && currentProfile && session.access_token && <ProfileView accessToken={session.access_token} profile={currentProfile} onProfileUpdated={applyProfile} />}

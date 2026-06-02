@@ -19,16 +19,16 @@ class StudentAccessResponse(BaseModel):
 
 
 class StudentLoginRequest(BaseModel):
-    classroom_context_token: str = Field(min_length=20, max_length=256)
+    family_code: str = Field(min_length=12, max_length=128)
     username: str = Field(min_length=3, max_length=32)
     pin: str = Field(min_length=4, max_length=12)
 
 
-class ClassroomContextResponse(BaseModel):
-    classroom_context_token: str
-    child_id: str
-    parent_id: str
-    expires_at: str
+class FamilyClassroomLinkResponse(BaseModel):
+    family_code: str
+    classroom_path: str
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class StudentSessionResponse(BaseModel):

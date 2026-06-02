@@ -4,10 +4,12 @@ import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { getFilteredChildReport } from '../lib/api/reports';
 import { getMyReferrals } from '../lib/api/referrals';
+import { getFamilyClassroomLink } from '../lib/api/studentAuth';
 import { getParentWeeklyRhythm } from '../lib/api/studentDashboard';
 import { ParentView } from '../types';
 import { ChildProfile } from '../types/childProfile';
 import { ReferralSummary } from '../types/referrals';
+import { FamilyClassroomLink } from '../types/studentSession';
 import { WeeklyRhythm } from '../types/studentDashboard';
 
 type Props = {
@@ -16,7 +18,6 @@ type Props = {
   children: ChildProfile[];
   selectedChildId: string;
   onSelectChild: (childId: string) => void;
-  onOpenChildSession: (childId: string) => void;
   onViewChange: (view: ParentView) => void;
 };
 
@@ -26,14 +27,15 @@ export function ParentDashboardView({
   children,
   selectedChildId,
   onSelectChild,
-  onOpenChildSession,
   onViewChange,
 }: Props) {
   const selectedChild = children.find(child => child.id === selectedChildId) || children[0];
-  const selectedChildPaused = selectedChild?.status === 'inactive';
+  const hasActiveChild = children.some(child => child.status !== 'inactive');
   const [referralSummary, setReferralSummary] = useState<ReferralSummary | null>(null);
   const [weeklyRhythms, setWeeklyRhythms] = useState<WeeklyRhythm[]>([]);
+  const [familyLink, setFamilyLink] = useState<FamilyClassroomLink | null>(null);
   const [referralMessage, setReferralMessage] = useState('');
+  const [classroomMessage, setClassroomMessage] = useState('');
   const [hasLearningHistory, setHasLearningHistory] = useState(false);
 
   useEffect(() => {
@@ -45,6 +47,9 @@ export function ParentDashboardView({
     getParentWeeklyRhythm(accessToken)
       .then(data => { if (!cancelled) setWeeklyRhythms(data); })
       .catch(() => { if (!cancelled) setWeeklyRhythms([]); });
+    getFamilyClassroomLink(accessToken)
+      .then(data => { if (!cancelled) setFamilyLink(data); })
+      .catch(() => { if (!cancelled) setFamilyLink(null); });
     return () => { cancelled = true; };
   }, [accessToken]);
 
@@ -74,6 +79,18 @@ export function ParentDashboardView({
     }
   }
 
+  const classroomUrl = familyLink ? `${window.location.origin}${familyLink.classroom_path}` : '';
+
+  async function copyClassroomLink() {
+    if (!classroomUrl) return;
+    try {
+      await navigator.clipboard.writeText(classroomUrl);
+      setClassroomMessage('Family classroom link copied.');
+    } catch {
+      setClassroomMessage('Select and copy the family classroom link below.');
+    }
+  }
+
   return <div className="page-stack">
     <SectionHeader eyebrow="Parent Dashboard" title={`Welcome, ${parentName}`} desc={dashboardMessage} />
 
@@ -91,8 +108,8 @@ export function ParentDashboardView({
       <section className="report-card child-entry-card">
         <div>
           <span className="eyebrow">Child Classroom</span>
-          <h3>Who is learning today?</h3>
-          <p>Select one child, then open the separate student login screen. Students use their Username and PIN.</p>
+          <h3>Family classroom link</h3>
+          <p>Use this family classroom link for your children. Each child signs in with their own username and PIN.</p>
         </div>
         {children.length ? <>
           <label>Student
@@ -100,8 +117,15 @@ export function ParentDashboardView({
               {children.map(child => <option key={child.id} value={child.id}>{child.name}{child.status === 'inactive' ? ' (paused)' : ''}</option>)}
             </select>
           </label>
-          {selectedChildPaused && <p className="paused-access-note">This child&apos;s learning access is paused. Reactivate access before opening the student classroom.</p>}
-          <button className="primary-button" onClick={() => selectedChild && onOpenChildSession(selectedChild.id)} disabled={selectedChildPaused}>Go to Child Login</button>
+          {!hasActiveChild && <p className="paused-access-note">Learning access is paused for every child. Reactivate access before using the classroom link.</p>}
+          {classroomUrl ? <>
+            <input className="referral-link-input" readOnly value={classroomUrl} aria-label="Family classroom link" />
+            <div className="parent-action-row">
+              <button className="primary-button" onClick={() => window.location.assign(classroomUrl)} disabled={!hasActiveChild}>Open Classroom</button>
+              <button className="secondary-button" onClick={copyClassroomLink} type="button"><Copy /> Copy Link</button>
+            </div>
+            {classroomMessage && <p className="success-note">{classroomMessage}</p>}
+          </> : <p className="muted-copy">Family classroom link will appear when your account is ready.</p>}
         </> : <>
           <p className="muted-copy">Create a child profile before opening a student classroom.</p>
           <button className="primary-button" onClick={() => onViewChange('children')}>Create Child Profile</button>

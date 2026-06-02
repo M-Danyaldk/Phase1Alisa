@@ -16,11 +16,11 @@ export type StudentSession = {
   message: string;
 };
 
-export type ClassroomContext = {
-  classroom_context_token: string;
-  child_id: string;
-  parent_id: string;
-  expires_at: string;
+export type FamilyClassroomLink = {
+  family_code: string;
+  classroom_path: string;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type StudentMe = {
