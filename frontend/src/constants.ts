@@ -44,12 +44,10 @@ export const assessmentQuestions: Record<Subject, string[]> = {
 };
 
 export const futureModules = [
-  { title: 'Voice Learning', desc: 'Future voice conversation mode for Ms Alisia.' },
   { title: 'Mobile App', desc: 'Future iOS/Android experience.' },
   { title: 'Teacher Portal', desc: 'Classroom and educator workflows.' },
   { title: 'School/LMS Integrations', desc: 'School platform integrations in later phases.' },
   { title: 'Advanced Analytics', desc: 'Deeper learning trends and visual analytics.' },
-  { title: 'Post-launch Subject Expansion', desc: 'Science and Social Studies support after launch.' },
   { title: 'Advanced Handwriting AI', desc: 'Detailed handwriting scoring beyond lightweight feedback.' },
   { title: 'Science & Social Studies', desc: 'Additional subject support after MVP.' }
 ];
