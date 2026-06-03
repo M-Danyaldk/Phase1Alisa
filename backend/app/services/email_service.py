@@ -226,6 +226,19 @@ class EmailService:
         )
         return await self._send_resend_email(recipient_email.strip().lower(), content)
 
+    async def send_internal_admin_alert(self, *, subject: str, lines: list[str]) -> str | None:
+        recipient_email = (self.settings.owner_alert_email or self.settings.waitlist_notify_email).strip().lower()
+        if not recipient_email:
+            raise RuntimeError('OWNER_ALERT_EMAIL or WAITLIST_NOTIFY_EMAIL must be configured for admin alerts.')
+        if not self.settings.resend_api_key.strip():
+            raise RuntimeError('RESEND_API_KEY is not configured.')
+        clean_lines = [line for line in lines if line]
+        app_url = self._app_url().rstrip('/')
+        if app_url:
+            clean_lines.append(f'Admin dashboard: {app_url}/admin')
+        content = self._content(subject, clean_lines)
+        return await self._send_resend_email(recipient_email, content)
+
     async def process_due_events(self, limit: int = 25) -> dict:
         if not self.supabase.configured():
             return {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, 'message': 'Supabase is not configured.'}

@@ -201,6 +201,14 @@ class BillingService:
         if not records:
             raise HTTPException(status_code=500, detail='Could not start trial access.')
         child_access = self._merge(child, records[0])
+        await self._send_trial_started_alert(
+            parent_id=parent_id,
+            parent_email=normalized_email,
+            child=child,
+            plan=plan,
+            trial_started_at=now.isoformat(),
+            trial_ends_at=trial_ends_at.isoformat(),
+        )
         return {
             'child': child_access,
             'trial_started_at': now.isoformat(),
@@ -443,6 +451,10 @@ class BillingService:
         subscription_id = self._stripe_id(subscription.get('id'))
         if not subscription_id:
             return
+        metadata = subscription.get('metadata') or {}
+        billing_row = await self._billing_subscription_for_subscription(subscription_id)
+        parent_id = metadata.get('parent_id') or (billing_row or {}).get('parent_id')
+        child_id = metadata.get('child_id') or (billing_row or {}).get('child_id')
         now = datetime.now(UTC).isoformat()
         await self.supabase.update('billing_subscriptions', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
             'subscription_status': 'canceled',
@@ -454,6 +466,14 @@ class BillingService:
             'access_paused_reason': 'subscription_canceled',
             'updated_at': now,
         })
+        if parent_id:
+            await self._send_subscription_canceled_alert(
+                parent_id=parent_id,
+                child_id=child_id,
+                subscription_id=subscription_id,
+                status='canceled',
+                canceled_at=self._stripe_timestamp(subscription.get('canceled_at')) or now,
+            )
 
     async def _handle_invoice_paid(self, invoice: dict) -> None:
         subscription_id = self._stripe_id(invoice.get('subscription'))
@@ -1002,6 +1022,129 @@ class BillingService:
         email = records[0].get('email')
         return str(email).strip().lower() if email else None
 
+    async def _parent_contact(self, parent_id: str, fallback_email: str | None = None) -> dict:
+        try:
+            records = await self.supabase.select('profiles', f'id=eq.{quote(parent_id)}&select=full_name,email&limit=1')
+        except SupabaseClientError as exc:
+            logger.warning('Could not load parent contact for admin alert: %s', exc)
+            return {'full_name': None, 'email': fallback_email}
+        if not records:
+            return {'full_name': None, 'email': fallback_email}
+        row = records[0]
+        return {
+            'full_name': row.get('full_name'),
+            'email': row.get('email') or fallback_email,
+        }
+
+    async def _child_name_for_alert(self, child_id: str | None) -> str | None:
+        if not child_id:
+            return None
+        try:
+            records = await self.supabase.select('child_profiles', f'id=eq.{quote(child_id)}&select=name&limit=1')
+        except SupabaseClientError as exc:
+            logger.warning('Could not load child name for admin alert: %s', exc)
+            return None
+        if not records:
+            return None
+        child_name = records[0].get('name')
+        return str(child_name) if child_name else None
+
+    def _billing_plan_label(self, row: dict | None) -> str | None:
+        if not row:
+            return None
+        plan_type = row.get('plan_type')
+        billing_interval = row.get('billing_interval')
+        for plan in PLAN_CATALOG.values():
+            if plan.get('plan_type') == plan_type and plan.get('billing_interval') == billing_interval:
+                return str(plan.get('display_name') or '')
+        return None
+
+    async def _send_trial_started_alert(
+        self,
+        *,
+        parent_id: str,
+        parent_email: str,
+        child: dict,
+        plan: dict,
+        trial_started_at: str,
+        trial_ends_at: str,
+    ) -> None:
+        try:
+            parent = await self._parent_contact(parent_id, fallback_email=parent_email)
+            await EmailService().send_internal_admin_alert(
+                subject='MsAlisia Admin Alert: Trial started',
+                lines=[
+                    'Event type: Trial started',
+                    f'Parent name: {parent.get("full_name") or "Not provided"}',
+                    f'Parent email: {parent.get("email") or parent_email}',
+                    f'Child name: {child.get("name") or "Not provided"}',
+                    f'Plan: {plan.get("display_name") or "Not provided"}',
+                    f'Trial started at: {trial_started_at}',
+                    f'Trial ends at: {trial_ends_at}',
+                ],
+            )
+        except Exception as exc:
+            logger.warning('Internal trial started alert failed for parent %s: %s', parent_id, exc)
+
+    async def _send_paid_subscription_activated_alert(
+        self,
+        *,
+        parent_id: str,
+        parent_email: str,
+        child_id: str | None,
+        subscription_id: str | None,
+        invoice_id: str | None,
+        subscription: dict | None,
+    ) -> None:
+        try:
+            parent = await self._parent_contact(parent_id, fallback_email=parent_email)
+            child_name = await self._child_name_for_alert(child_id)
+            plan_key = self._plan_key_from_price(subscription or {}) if subscription else None
+            billing_row = await self._billing_subscription_for_subscription(subscription_id) if subscription_id else None
+            plan_label = self._plan(plan_key)['display_name'] if plan_key else self._billing_plan_label(billing_row)
+            status = (subscription or {}).get('status') or (billing_row or {}).get('subscription_status') or 'active'
+            await EmailService().send_internal_admin_alert(
+                subject='MsAlisia Admin Alert: Paid subscription activated',
+                lines=[
+                    'Event type: Paid subscription activated',
+                    f'Parent name: {parent.get("full_name") or "Not provided"}',
+                    f'Parent email: {parent.get("email") or parent_email}',
+                    f'Child name: {child_name or child_id or "Not provided"}',
+                    f'Plan/status: {plan_label or "Not provided"} / {status}',
+                    f'Time: {datetime.now(UTC).isoformat()}',
+                ],
+            )
+        except Exception as exc:
+            logger.warning('Internal paid subscription alert failed for parent %s invoice %s: %s', parent_id, invoice_id, exc)
+
+    async def _send_subscription_canceled_alert(
+        self,
+        *,
+        parent_id: str,
+        child_id: str | None,
+        subscription_id: str,
+        status: str,
+        canceled_at: str,
+    ) -> None:
+        try:
+            parent = await self._parent_contact(parent_id)
+            child_name = await self._child_name_for_alert(child_id)
+            billing_row = await self._billing_subscription_for_subscription(subscription_id)
+            plan_label = self._billing_plan_label(billing_row)
+            await EmailService().send_internal_admin_alert(
+                subject='MsAlisia Admin Alert: Subscription canceled',
+                lines=[
+                    'Event type: Subscription canceled',
+                    f'Parent name: {parent.get("full_name") or "Not provided"}',
+                    f'Parent email: {parent.get("email") or "Not provided"}',
+                    f'Child name: {child_name or child_id or "Not provided"}',
+                    f'Plan/status: {plan_label or "Not provided"} / {status}',
+                    f'Canceled at: {canceled_at}',
+                ],
+            )
+        except Exception as exc:
+            logger.warning('Internal subscription canceled alert failed for parent %s: %s', parent_id, exc)
+
     async def _queue_and_send_email_event(self, event: dict) -> None:
         if event.get('status') != 'pending' or not event.get('id'):
             return
@@ -1036,6 +1179,14 @@ class BillingService:
             },
         )
         await self._queue_and_send_email_event(event)
+        await self._send_paid_subscription_activated_alert(
+            parent_id=parent_id,
+            parent_email=recipient_email,
+            child_id=child_id,
+            subscription_id=subscription_id,
+            invoice_id=invoice_id,
+            subscription=subscription,
+        )
 
     async def _queue_payment_failed_email(self, invoice: dict) -> None:
         subscription_id = self._stripe_id(invoice.get('subscription'))

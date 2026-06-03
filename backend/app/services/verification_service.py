@@ -220,6 +220,7 @@ class VerificationService:
             await self._mark_code_used(record_id)
             session = await self.supabase.login_with_password(email, pending_data['password'])
             await self._queue_signup_welcome(user_id, email)
+            await self._send_parent_account_created_alert(user_id, email, pending_data)
             await self._record_referral_signup(user_id, email, pending_data.get('referral_code'))
         except SupabaseClientError as exc:
             if self._is_existing_account_error(exc):
@@ -544,6 +545,20 @@ class VerificationService:
             await EmailService().queue_signup_welcome(parent_id=user_id, recipient_email=email)
         except Exception as exc:
             logger.warning('Signup welcome email event failed for parent %s: %s', user_id, exc)
+
+    async def _send_parent_account_created_alert(self, user_id: str, email: str, pending_data: dict) -> None:
+        try:
+            await EmailService().send_internal_admin_alert(
+                subject='MsAlisia Admin Alert: New parent account created',
+                lines=[
+                    'Event type: New parent account created',
+                    f'Parent name: {pending_data.get("full_name") or "Not provided"}',
+                    f'Parent email: {email}',
+                    f'Time: {datetime.now(UTC).isoformat()}',
+                ],
+            )
+        except Exception as exc:
+            logger.warning('Internal parent signup alert failed for parent %s: %s', user_id, exc)
 
     async def _trial_eligibility_for_email(self, email: str) -> dict:
         normalized_email = email.strip().lower()
