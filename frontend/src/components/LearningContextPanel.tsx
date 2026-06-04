@@ -1,3 +1,4 @@
+import { launchSubjects, subjectLabel } from '../constants';
 import { StudentProfile, Subject } from '../types';
 
 type Props = {
@@ -14,9 +15,7 @@ export function LearningContextPanel({ student, subject, topic, onSubjectChange,
   return <aside className="learning-context-panel" aria-label="Learning context">
     <label>Subject
       <select value={subject} onChange={event => onSubjectChange(event.target.value as Subject)}>
-        <option>Math</option>
-        <option>ELA</option>
-        <option>Writing</option>
+        {launchSubjects.map(item => <option key={item} value={item}>{subjectLabel(item)}</option>)}
       </select>
     </label>
     <label>Topic
@@ -29,7 +28,7 @@ export function LearningContextPanel({ student, subject, topic, onSubjectChange,
     </div>
     <div className="context-subjects">
       <span>Math: {student.math_level}</span>
-      <span>ELA: {student.ela_level}</span>
+      <span>Reading: {student.ela_level}</span>
       <span>Writing: {student.writing_level}</span>
     </div>
   </aside>;

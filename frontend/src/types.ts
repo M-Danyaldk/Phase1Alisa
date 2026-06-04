@@ -64,6 +64,15 @@ export type ChildAssessmentResult = {
   recommended_progression: string[];
   recommended_next_topics?: string[];
   parent_summary: string;
+  celebration_title?: string;
+  celebration_message?: string;
+  performance_label?: string;
+  score_summary?: string;
+  strengths_for_child?: string[];
+  practice_next?: string;
+  next_step_message?: string;
+  badge_label?: string;
+  encouragement?: string;
 };
 
 export type StoredAssessmentResult = {

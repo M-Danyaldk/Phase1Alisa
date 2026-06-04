@@ -74,6 +74,11 @@ class ChildReportResponse(BaseModel):
     questions_practiced: int = 0
     assessment_status: str
     overall_summary: str
+    personalized_observation: str = ''
+    strength_recognition: str = ''
+    next_focus: str = ''
+    support_plan: str = ''
+    exceptional_performance: str | None = None
     weekly_progress: str
     time_spent_learning: str
     brain_break_summary: str

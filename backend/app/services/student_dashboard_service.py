@@ -92,17 +92,19 @@ class StudentDashboardService:
     def _recent_activity(self, report: ChildReportResponse) -> list[StudentActivityItem]:
         activity: list[StudentActivityItem] = []
         for assessment in report.recent_assessments[:2]:
+            subject_label = self._subject_label(assessment.subject)
             activity.append(StudentActivityItem(
                 id=f'assessment-{assessment.id or assessment.subject}',
-                title=f'{assessment.subject} assessment saved',
-                detail=assessment.parent_summary or f'Estimated level: {assessment.estimated_level}',
+                title=f'{subject_label} check-in saved',
+                detail=assessment.score_label or 'Great effort. Ms. Alisia saved your next learning step.',
                 when=self._display_date(assessment.created_at),
                 subject=assessment.subject if assessment.subject in ('Math', 'ELA', 'Writing') else None,
             ))
         for session in report.recent_tutor_sessions[:2]:
+            subject_label = self._subject_label(session.subject)
             activity.append(StudentActivityItem(
                 id=f'session-{session.thread_id}',
-                title=session.title or f'{session.subject} learning session',
+                title=session.title or f'{subject_label} learning session',
                 detail=session.next_step,
                 when=self._display_date(session.last_activity_at),
                 subject=session.subject if session.subject in ('Math', 'ELA', 'Writing') else None,
@@ -140,7 +142,7 @@ class StudentDashboardService:
         ]
 
     def _weekly_focus(self, report: ChildReportResponse) -> str:
-        if report.weak_areas and not report.weak_areas[0].startswith('No weak areas'):
+        if report.weak_areas and not report.weak_areas[0].startswith('No growth areas'):
             return report.weak_areas[0]
         if report.recommended_next_steps:
             return report.recommended_next_steps[0]
@@ -189,18 +191,21 @@ class StudentDashboardService:
 
     def _next_step_for_subject(self, item: SubjectProgress) -> str:
         if item.assessment_count == 0:
-            return f'Complete the {item.subject} quick assessment'
+            return f'Complete the {self._subject_label(item.subject)} quick assessment'
         if item.needs_review:
             return f'Review {item.needs_review}'
-        return f'Practice one guided {item.subject} lesson with MsAlisia'
+        return f'Practice one guided {self._subject_label(item.subject)} lesson with MsAlisia'
 
     def _default_next_actions(self, report: ChildReportResponse) -> list[str]:
         missing = [item.subject for item in report.subject_progress if item.assessment_count == 0]
         if missing:
-            return [f'Start the {missing[0]} assessment.', 'Try one short learning chat.', 'Upload homework when written work is ready.']
+            return [f'Start the {self._subject_label(missing[0])} assessment.', 'Try one short learning chat.', 'Upload homework when written work is ready.']
         return ['Continue the next guided lesson.', 'Review the latest report.', 'Upload homework when written work is ready.']
 
     def _display_date(self, value: str | None) -> str:
         if not value:
             return 'Recently'
         return value[:10]
+
+    def _subject_label(self, subject: str | None) -> str:
+        return 'Reading' if subject == 'ELA' else (subject or 'Learning')

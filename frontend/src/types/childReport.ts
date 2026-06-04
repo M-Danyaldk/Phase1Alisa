@@ -71,6 +71,11 @@ export type ChildReport = {
   questions_practiced: number;
   assessment_status: string;
   overall_summary: string;
+  personalized_observation?: string;
+  strength_recognition?: string;
+  next_focus?: string;
+  support_plan?: string;
+  exceptional_performance?: string | null;
   weekly_progress: string;
   time_spent_learning: string;
   brain_break_summary: string;

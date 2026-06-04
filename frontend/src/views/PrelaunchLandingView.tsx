@@ -79,7 +79,7 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
       <div className="prelaunch-copy">
         <span className="prelaunch-eyebrow">{accessOpen ? 'Access is open' : 'Now accepting waitlist sign-ups.'}</span>
         <h1 id="prelaunch-title">Best Teacher. Best Mentor. Best Future.</h1>
-        <p>MsAlisia is an AI tutor for Grades 3-6 that adapts to your child, supports Math, English Language Arts, and Writing, and keeps parents informed without adding more work to the day.</p>
+        <p>MsAlisia is an AI tutor for Grades 3-6 that adapts to your child, supports Math, Reading, and Writing, and keeps parents informed without adding more work to the day.</p>
         <div className="prelaunch-cta-row">
           <a className="primary-button" href={accessOpen ? '/signup' : '#waitlist'}>{accessOpen ? 'Create Parent Account' : 'Join Waitlist'}</a>
           <a className="secondary-button" href="#how-it-works">See How It Works</a>
@@ -274,7 +274,7 @@ function Step({ number, title, text }: { number: string; title: string; text: st
 const faqItems = [
   { question: 'What grades are supported?', answer: 'MsAlisia launches with Grades 3-6.' },
   { question: 'Is there a free trial?', answer: 'Yes. Every new family starts with a free 7-day trial. No payment is required to begin.' },
-  { question: 'What subjects are available?', answer: 'Launch subjects are Math, English Language Arts, and Writing.' },
+  { question: 'What subjects are available?', answer: 'Launch subjects are Math, Reading, and Writing.' },
   { question: 'How does the waitlist work?', answer: 'Join the waitlist and we will contact you when access is ready for your family.' },
   { question: 'Is MsAlisia an AI tutor?', answer: 'Yes. MsAlisia is an AI tutor, not a human tutor.' },
   { question: 'Can parents see progress?', answer: 'Yes. Parents can view reports, assessment summaries, and child profile progress.' },

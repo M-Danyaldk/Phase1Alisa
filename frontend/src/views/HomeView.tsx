@@ -60,6 +60,20 @@ export function HomeView({
       <StudentNextActions actions={dashboard.recommendedNextActions} setView={setView} />
     </div>
 
+    <section className="report-card">
+      <div className="section-row">
+        <h3>How to get started</h3>
+        <span className="muted-note">One step at a time</span>
+      </div>
+      <ul>
+        <li>Start with a quick check-in.</li>
+        <li>Practice Math, Reading, or Writing.</li>
+        <li>Upload homework when you need help.</li>
+        <li>Ms. Alisia will guide you one step at a time.</li>
+        <li>Take a break when Ms. Alisia reminds you.</li>
+      </ul>
+    </section>
+
     <StudentStatusCards assessmentStatus={dashboard.assessmentStatus} homeworkStatus={dashboard.homeworkStatus} weeklyFocus={dashboard.weeklyFocus} weeklyRhythm={dashboard.weeklyRhythm} />
     <StudentProgressCards progress={dashboard.subjectProgress} />
 
@@ -75,5 +89,5 @@ function childFriendlyMessage(message: string): string {
   if (message.toLowerCase().includes('payment') || message.toLowerCase().includes('billing') || message.toLowerCase().includes('subscription')) {
     return 'There is something your parent needs to take care of before learning can continue.';
   }
-  return message;
+  return 'That did not work. Please try again in a moment.';
 }

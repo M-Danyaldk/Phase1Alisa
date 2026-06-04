@@ -9,7 +9,7 @@ import { AssessmentSummary, ChildReport, LearningMemorySummary, SubjectProgress,
 import { StudentProfile, Subject, View } from '../types';
 import { HomeworkUpload } from '../types/homework';
 import { WorkingLevelOverrideItem, WorkingLevelOverridesResponse } from '../types/workingLevelOverrides';
-import { launchGrades } from '../constants';
+import { launchGrades, subjectLabel } from '../constants';
 
 type Period = 'week' | 'month' | 'all';
 type SubjectFilter = 'All' | Subject;
@@ -96,7 +96,7 @@ export function ReportsView({
       const records = await setWorkingLevelOverride(accessToken, childId, subject, nextLevel);
       setWorkingLevels(records);
       setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
-      setWorkingLevelMessage(`${subject} working level saved.`);
+      setWorkingLevelMessage(`${subjectLabel(subject)} working level saved.`);
       getFilteredChildReport(accessToken, childId, period, subjectFilter).then(setReport).catch(() => undefined);
     } catch (error) {
       const detail = error instanceof Error ? error.message : '';
@@ -114,7 +114,7 @@ export function ReportsView({
       const records = await resetWorkingLevelOverride(accessToken, childId, subject);
       setWorkingLevels(records);
       setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
-      setWorkingLevelMessage(`${subject} working level reset to the assessment or enrolled grade.`);
+      setWorkingLevelMessage(`${subjectLabel(subject)} working level reset to the assessment or enrolled grade.`);
       getFilteredChildReport(accessToken, childId, period, subjectFilter).then(setReport).catch(() => undefined);
     } catch (error) {
       const detail = error instanceof Error ? error.message : '';
@@ -140,7 +140,7 @@ export function ReportsView({
         <select value={subjectFilter} onChange={event => setSubjectFilter(event.target.value as SubjectFilter)}>
           <option value="All">All subjects</option>
           <option value="Math">Math</option>
-          <option value="ELA">ELA</option>
+          <option value="ELA">Reading</option>
           <option value="Writing">Writing</option>
         </select>
       </label>
@@ -166,6 +166,8 @@ export function ReportsView({
       <h3>Overall Summary</h3>
       <p>{report?.overall_summary || `${student.name} should begin with a short assessment-led practice session.`}</p>
     </div>
+
+    <ParentPersonalizationSection report={report} childName={childName} />
 
     <SubjectProgressSection progress={subjectProgress} />
 
@@ -198,7 +200,7 @@ export function ReportsView({
 
     <div className="report-grid">
       <ReportList title="Strengths" items={report?.strengths || ['Complete an assessment to identify strong areas.']} />
-      <ReportList title="Needs Review" items={report?.weak_areas || ['Start with a quick assessment to find learning gaps.']} />
+      <ReportList title="Growth Areas" items={report?.weak_areas || ['Start with a quick assessment to find helpful review topics.']} />
       <ReportList title="Recommended Next Steps" items={report?.recommended_next_steps || ['Run a quick assessment.', 'Practice one skill at a time with Ms Alisia.']} />
     </div>
 
@@ -289,11 +291,11 @@ function SubjectProgressSection({ progress }: { progress: SubjectProgress[] }) {
         <div className="subject-progress-title">
           {iconForSubject(item.subject)}
           <div>
-            <strong>{item.subject}</strong>
+            <strong>{subjectLabel(item.subject)}</strong>
             <span>{item.level}</span>
           </div>
         </div>
-        <div className="progress-track" aria-label={`${item.subject} progress ${item.progress_percentage}%`}>
+        <div className="progress-track" aria-label={`${subjectLabel(item.subject)} progress ${item.progress_percentage}%`}>
           <span style={{ width: `${item.progress_percentage}%` }} />
         </div>
         <p>{item.progress_percentage}% complete — {item.recent_improvement || 'more activity will make this clearer.'}</p>
@@ -306,6 +308,31 @@ function SubjectProgressSection({ progress }: { progress: SubjectProgress[] }) {
       </div>)}
     </div>
   </div>;
+}
+
+function ParentPersonalizationSection({ report, childName }: { report: ChildReport | null; childName: string }) {
+  return <section className="report-card parent-insight-card">
+    <div className="section-row">
+      <h3>What Ms. Alisia noticed</h3>
+      <span className="muted-note">Personalized for {childName}</span>
+    </div>
+    <p>{report?.personalized_observation || `${childName} is ready to start a check-in so Ms. Alisia can build a more personalized plan.`}</p>
+    {report?.exceptional_performance && <p className="success-note">{report.exceptional_performance}</p>}
+    <div className="report-grid">
+      <div className="report-mini-card">
+        <strong>Strengths to celebrate</strong>
+        <p>{report?.strength_recognition || `${childName} is ready to build confidence one skill at a time.`}</p>
+      </div>
+      <div className="report-mini-card">
+        <strong>Next focus</strong>
+        <p>{report?.next_focus || `${childName} can begin with one short check-in.`}</p>
+      </div>
+      <div className="report-mini-card">
+        <strong>How Ms. Alisia will support the next session</strong>
+        <p>{report?.support_plan || `Ms. Alisia will keep practice focused, encouraging, and paced for ${childName}.`}</p>
+      </div>
+    </div>
+  </section>;
 }
 
 function WorkingLevelOverrideSection({
@@ -342,7 +369,7 @@ function WorkingLevelOverrideSection({
     <div className="working-level-grid">
       {records.map(item => <div className="working-level-row" key={item.subject}>
         <div>
-          <strong>{item.subject}</strong>
+          <strong>{subjectLabel(item.subject)}</strong>
           <span>{item.display_text}</span>
           <small>{item.override_active ? 'Parent override active' : `Assessment level: ${item.assessed_level || 'not assessed yet'}`}</small>
         </div>
@@ -383,19 +410,25 @@ function gradeNumber(value: string): number {
 function AssessmentSection({ assessments }: { assessments: AssessmentSummary[] }) {
   return <div className="report-card">
     <div className="section-row">
-      <h3>Assessment Results</h3>
-      <span className="muted-note">Parent details</span>
+      <h3>Recent Assessment History</h3>
+      <span className="muted-note">{assessments.length} saved</span>
     </div>
-    {assessments.length ? assessments.map(item => <div className="report-mini-card" key={`${item.subject}-${item.created_at}`}>
-      <strong>{item.subject}: {item.estimated_level}</strong>
-      <p>{formatDate(item.created_at) || 'Assessment date not available'}</p>
-      {item.score_label && <p>Result summary: {item.score_label}</p>}
-      <p>{item.parent_summary || 'Assessment saved for this child.'}</p>
-      {!!(item.strengths || []).length && <p>Strengths: {(item.strengths || []).slice(0, 2).join(', ')}</p>}
-      {!!(item.learning_gaps || []).length && <p>Areas for growth: {(item.learning_gaps || []).slice(0, 2).join(', ')}</p>}
-      {!!(item.recommended_next_topics || []).length && <p>Recommended next topics: {(item.recommended_next_topics || []).slice(0, 3).join(', ')}</p>}
-      {!!(item.recommended_progression || []).length && <p>Suggested learning path: {(item.recommended_progression || []).slice(0, 2).join(', ')}</p>}
-    </div>) : <p className="muted-copy">No assessment completed yet. Start an assessment to create a personalized learning path.</p>}
+    {assessments.length ? assessments.map(item => {
+      const strengths = (item.strengths || []).slice(0, 2);
+      const growth = (item.learning_gaps || []).slice(0, 2);
+      const nextStep = item.recommended_next_topics?.[0] || item.recommended_progression?.[0] || 'Continue with one short guided practice session.';
+      return <div className="report-mini-card assessment-history-card" key={`${item.subject}-${item.created_at}`}>
+        <div className="section-row">
+          <strong>{subjectLabel(item.subject)} check-in</strong>
+          <span className="muted-note">{formatDate(item.created_at) || 'Date not available'}</span>
+        </div>
+        <p><strong>Performance:</strong> {item.score_label || item.estimated_level || 'Learning path saved'}</p>
+        <p>{item.parent_summary || 'Assessment saved for this child.'}</p>
+        {!!strengths.length && <p><strong>Strengths to celebrate:</strong> {strengths.join(', ')}</p>}
+        {!!growth.length && <p><strong>Growth areas:</strong> {growth.join(', ')}</p>}
+        <p><strong>Next step:</strong> {nextStep}</p>
+      </div>;
+    }) : <p className="muted-copy">No assessment completed yet. Start an assessment to create a personalized learning path.</p>}
   </div>;
 }
 
@@ -403,8 +436,8 @@ function SessionHistorySection({ sessions }: { sessions: TutorSessionSummary[] }
   return <div className="report-card">
     <h3>Tutor Session History</h3>
     {sessions.length ? sessions.map(item => <div className="report-mini-card" key={item.thread_id}>
-      <strong>{item.title || item.topic || `${item.subject} chat`}</strong>
-      <p>{item.subject} · {item.topic || 'General practice'} · {formatDate(item.last_activity_at) || 'No date'}</p>
+      <strong>{item.title || item.topic || `${subjectLabel(item.subject)} chat`}</strong>
+      <p>{subjectLabel(item.subject)} · {item.topic || 'General practice'} · {formatDate(item.last_activity_at) || 'No date'}</p>
       <div className="report-detail-list">
         <span>Time spent: {item.time_spent}</span>
         <span>Hints used: {item.hints_used}</span>
@@ -420,7 +453,7 @@ function LearningMemorySection({ memories }: { memories: LearningMemorySummary[]
   return <div className="report-card">
     <h3>Recent Learning Memory</h3>
     {memories.length ? memories.map(item => <div className="report-mini-card" key={item.id || `${item.subject}-${item.updated_at}`}>
-      <strong>{item.subject}{item.topic ? `: ${item.topic}` : ''}</strong>
+      <strong>{subjectLabel(item.subject)}{item.topic ? `: ${item.topic}` : ''}</strong>
       <p>{item.parent_facing_summary || item.child_facing_summary || 'Ms. Alisia saved a recent learning summary.'}</p>
       <div className="report-detail-list">
         <span>Worked on: {item.worked_on || 'Not recorded yet'}</span>
@@ -456,7 +489,7 @@ function formatDate(value?: string | null): string {
 function statusLabel(status: string): string {
   if (status === 'valid') return 'Validated';
   if (status === 'unclear') return 'Needs clearer upload';
-  if (status === 'failed') return 'Validation failed';
+  if (status === 'failed') return 'Needs another review';
   if (status === 'skipped') return 'Uploaded with limited review';
   return 'Pending validation';
 }

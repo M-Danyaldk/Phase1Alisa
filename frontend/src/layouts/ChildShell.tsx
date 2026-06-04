@@ -2,7 +2,6 @@ import { BookOpen, ClipboardCheck, Home, ImageUp, MessageCircle, PenTool } from 
 import { useState, type ReactNode } from 'react';
 import { NavigationDrawer } from '../components/navigation/NavigationDrawer';
 import { NavItem } from '../components/NavItem';
-import { classNames } from '../lib/classNames';
 import { ChildView } from '../types';
 import { ChildProfile } from '../types/childProfile';
 
@@ -16,7 +15,7 @@ type Props = {
   children: ReactNode;
 };
 
-export function ChildShell({ child, view, connected, onViewChange, onExit, exitLabel = 'Back to Parent Area', children }: Props) {
+export function ChildShell({ child, view, onViewChange, onExit, exitLabel = 'Back to Parent Area', children }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const brand = <div className="brand-block child-brand">
     <div className="student-avatar small" aria-hidden="true">{child.name.charAt(0).toUpperCase()}</div>
@@ -25,15 +24,12 @@ export function ChildShell({ child, view, connected, onViewChange, onExit, exitL
       <p>{child.name}&apos;s classroom</p>
     </div>
   </div>;
-  const status = <div className={classNames('status-pill', connected)}>
-    Backend: {connected === 'checking' ? 'Checking...' : connected === 'online' ? 'Online' : 'Offline'}
-  </div>;
   const navItems = (closeAfterClick = false) => <>
     <NavItem icon={<Home />} label="Student Dashboard" active={view === 'home'} onClick={() => { onViewChange('home'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<MessageCircle />} label="Learn" active={view === 'learn'} onClick={() => { onViewChange('learn'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<ClipboardCheck />} label="Assessment" active={view === 'assessments'} onClick={() => { onViewChange('assessments'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<BookOpen />} label="Practice Math" active={view === 'practice-math'} onClick={() => { onViewChange('practice-math'); if (closeAfterClick) setMenuOpen(false); }} />
-    <NavItem icon={<BookOpen />} label="Practice ELA" active={view === 'practice-ela'} onClick={() => { onViewChange('practice-ela'); if (closeAfterClick) setMenuOpen(false); }} />
+    <NavItem icon={<BookOpen />} label="Practice Reading" active={view === 'practice-ela'} onClick={() => { onViewChange('practice-ela'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<PenTool />} label="Practice Writing" active={view === 'practice-writing'} onClick={() => { onViewChange('practice-writing'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<ImageUp />} label="Homework Upload" active={view === 'homework'} onClick={() => { onViewChange('homework'); if (closeAfterClick) setMenuOpen(false); }} />
   </>;
@@ -47,7 +43,7 @@ export function ChildShell({ child, view, connected, onViewChange, onExit, exitL
       onOpen={() => setMenuOpen(true)}
       onClose={() => setMenuOpen(false)}
       brand={brand}
-      footer={<>{status}{exitButton}</>}
+      footer={exitButton}
     >
       {navItems(true)}
     </NavigationDrawer>
@@ -56,7 +52,6 @@ export function ChildShell({ child, view, connected, onViewChange, onExit, exitL
       <nav aria-label="Student navigation">
         {navItems()}
       </nav>
-      {status}
       {exitButton}
     </aside>
     <main>

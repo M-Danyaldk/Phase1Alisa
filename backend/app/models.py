@@ -102,8 +102,15 @@ class ChildAssessmentResult(BaseModel):
     recommended_progression: list[str] = Field(default_factory=list)
     recommended_next_topics: list[str] = Field(default_factory=list)
     parent_summary: str = ''
-    provider: str = 'local'
-    model: str = 'rules'
+    celebration_title: str = 'Great job!'
+    celebration_message: str = ''
+    performance_label: str = 'Great Effort'
+    score_summary: str = ''
+    strengths_for_child: list[str] = Field(default_factory=list)
+    practice_next: str = ''
+    next_step_message: str = ''
+    badge_label: str = 'Check-in Complete'
+    encouragement: str = ''
 
 class HomeworkFeedbackResponse(BaseModel):
     feedback: str

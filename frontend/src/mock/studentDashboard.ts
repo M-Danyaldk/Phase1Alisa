@@ -1,4 +1,5 @@
 import { StudentProfile } from '../types';
+import { subjectLabel } from '../constants';
 import { StudentDashboardData, StudentProgressItem } from '../types/studentDashboard';
 
 function progressForLevel(level: string): number {
@@ -11,12 +12,13 @@ function progressForLevel(level: string): number {
 
 function progressItem(subject: StudentProgressItem['subject'], level: string): StudentProgressItem {
   const hasAssessment = !level.toLowerCase().includes('not assessed');
+  const displaySubject = subjectLabel(subject);
   return {
     subject,
     level,
     progressPercentage: progressForLevel(level),
-    currentFocus: hasAssessment ? `${subject} practice path` : 'Start with a short placement check',
-    nextStep: hasAssessment ? 'Practice one guided lesson with MsAlisia' : `Complete the ${subject} quick assessment`,
+    currentFocus: hasAssessment ? `${displaySubject} practice path` : 'Start with a short placement check',
+    nextStep: hasAssessment ? 'Practice one guided lesson with MsAlisia' : `Complete the ${displaySubject} quick assessment`,
     status: hasAssessment ? 'Learning path started' : 'Assessment needed',
   };
 }
@@ -82,7 +84,7 @@ export function buildStudentDashboardMock(student: StudentProfile): StudentDashb
       {
         id: 'three-subjects',
         title: 'Three Subject Starter',
-        detail: 'Complete Math, ELA, and Writing checks.',
+        detail: 'Complete Math, Reading, and Writing checks.',
         status: assessedCount === 3 ? 'earned' : 'locked',
       },
     ],

@@ -2,11 +2,27 @@ import { useState } from 'react';
 import { ProblemReportButton } from '../components/ProblemReportButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { ResultPanel } from '../components/ResultPanel';
-import { assessmentQuestions } from '../constants';
+import { assessmentQuestions, launchSubjects, subjectLabel } from '../constants';
 import { apiPost } from '../lib/api';
 import { ChildAssessmentResult, StudentProfile, Subject } from '../types';
 
-export function AssessmentView({ student, setStudent, childId = '', accessToken = '', studentSession = false }: { student: StudentProfile; setStudent: (student: StudentProfile) => void; childId?: string; accessToken?: string; studentSession?: boolean }) {
+export function AssessmentView({
+  student,
+  setStudent,
+  childId = '',
+  accessToken = '',
+  studentSession = false,
+  onContinueLearning,
+  onBackToDashboard,
+}: {
+  student: StudentProfile;
+  setStudent: (student: StudentProfile) => void;
+  childId?: string;
+  accessToken?: string;
+  studentSession?: boolean;
+  onContinueLearning?: () => void;
+  onBackToDashboard?: () => void;
+}) {
   const [subject, setSubject] = useState<Subject>('Math');
   const [answers, setAnswers] = useState<string[]>(['', '', '']);
   const [loading, setLoading] = useState(false);
@@ -40,13 +56,13 @@ export function AssessmentView({ student, setStudent, childId = '', accessToken 
     <SectionHeader eyebrow="Assessment center" title="Learning check-in" desc="Complete a short check-in so MsAlisia can choose helpful next steps." />
     <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
     <div className="tabs">
-      {(['Math', 'ELA', 'Writing'] as Subject[]).map(s => <button key={s} className={subject === s ? 'selected' : ''} onClick={() => { setSubject(s); setAnswers(['', '', '']); setResult(null); setError(''); }}>{s}</button>)}
+      {launchSubjects.map(s => <button key={s} className={subject === s ? 'selected' : ''} onClick={() => { setSubject(s); setAnswers(['', '', '']); setResult(null); setError(''); }}>{subjectLabel(s)}</button>)}
     </div>
     {!studentSession && <p className="error-note">Assessments are only available from the student classroom.</p>}
     {error && <p className="error-note">{error}</p>}
     <div className="assessment-grid">
       <div className="form-card">
-        <h3>{subject} quick check</h3>
+        <h3>{subjectLabel(subject)} quick check</h3>
         {assessmentQuestions[subject].map((q, idx) => <label key={q}>{q}<textarea value={answers[idx]} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Student answer..." /></label>)}
         <button className="primary-button" onClick={submit} disabled={loading || !studentSession}>{loading ? 'Evaluating...' : studentSession ? 'Evaluate Assessment' : 'Login Required'}</button>
         <ProblemReportButton
@@ -59,7 +75,7 @@ export function AssessmentView({ student, setStudent, childId = '', accessToken 
           disabled={!studentSession || !accessToken || !childId}
         />
       </div>
-      <ResultPanel result={result} />
+      <ResultPanel result={result} onContinueLearning={onContinueLearning} onBackToDashboard={onBackToDashboard} />
     </div>
   </div>;
 }
@@ -74,7 +90,7 @@ function friendlyAssessmentError(error: unknown): string {
     return 'There is something your parent needs to take care of before this check-in can start.';
   }
   if (lower.includes('subject')) {
-    return 'This check-in is only for Math, ELA, or Writing.';
+    return 'This check-in is only for Math, Reading, or Writing.';
   }
-  return message || 'Ms. Alisia could not finish this check-in right now. Please try again soon.';
+  return 'Ms. Alisia could not finish this check-in right now. Please try again soon.';
 }

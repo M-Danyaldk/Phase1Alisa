@@ -366,17 +366,95 @@ def _grade_number(value: object) -> int | None:
 
 
 def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentResult:
-    message = 'Great job! Ms. Alisia found some fun things to practice with you. Let us get started!'
+    subject = _subject_label(result.subject)
+    performance_label = _child_safe_performance_label(result.score_label)
+    strengths = _child_safe_strengths(result.strengths, subject)
+    practice_next = _child_safe_next_step(result)
+    score_summary = f'Performance: {performance_label}'
+    celebration_title = 'Great job!'
+    celebration_message = f'You completed your {subject} check-in.'
+    next_step_message = f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.'
+    encouragement = 'You worked hard on this. Keep going one small step at a time.'
+    message = f'{celebration_message} {encouragement}'
     return ChildAssessmentResult(
         subject=result.subject,
         child_message=message,
         estimated_level='Learning path ready',
-        score_label='Great job',
-        strengths=[message],
+        score_label=performance_label,
+        strengths=strengths,
         learning_gaps=[],
-        recommended_progression=['Ms. Alisia has picked a helpful next step for you.'],
-        recommended_next_topics=[],
+        recommended_progression=[next_step_message],
+        recommended_next_topics=[practice_next] if practice_next else [],
         parent_summary=message,
-        provider=result.provider,
-        model=result.model,
+        celebration_title=celebration_title,
+        celebration_message=celebration_message,
+        performance_label=performance_label,
+        score_summary=score_summary,
+        strengths_for_child=strengths,
+        practice_next=practice_next,
+        next_step_message=next_step_message,
+        badge_label='Check-in Complete',
+        encouragement=encouragement,
     )
+
+
+def _subject_label(subject: str) -> str:
+    return 'Reading' if subject == 'ELA' else subject
+
+
+def _child_safe_performance_label(score_label: str | None) -> str:
+    text = _clean_child_safe_text(score_label or '')
+    lower = text.lower()
+    if not text:
+        return 'Great Effort'
+    if any(word in lower for word in ('excellent', 'advanced', 'strong', 'master', 'great')):
+        return 'Excellent Work'
+    if any(word in lower for word in ('ready', 'proficient', 'on track', 'solid')):
+        return 'Strong Understanding'
+    if any(word in lower for word in ('progress', 'develop', 'practice', 'review', 'emerging')):
+        return 'Great Progress'
+    return 'Great Effort'
+
+
+def _child_safe_strengths(strengths: list[str], subject: str) -> list[str]:
+    safe = [_clean_child_safe_text(item) for item in strengths]
+    safe = [item for item in safe if item]
+    if safe:
+        return safe[:2]
+    return [f'You showed effort in {subject}.', 'You are building this skill step by step.']
+
+
+def _child_safe_next_step(result: AssessmentResult) -> str:
+    candidates = [
+        *(result.recommended_next_topics or []),
+        *(result.recommended_progression or []),
+        *(result.learning_gaps or []),
+    ]
+    for item in candidates:
+        safe = _clean_child_safe_text(item)
+        if safe:
+            return safe
+    return f'{_subject_label(result.subject)} practice'
+
+
+def _clean_child_safe_text(value: object) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    replacements = {
+        'weaknesses': 'skills to practice',
+        'weakness': 'skill to practice',
+        'weak': 'ready to practice',
+        'failed': 'needs another try',
+        'failure': 'needs another try',
+        'deficient': 'still growing',
+        'diagnostic': 'learning',
+        'clinical': 'learning',
+        'below grade level': 'ready for guided practice',
+        'below level': 'ready for guided practice',
+        'learning gaps': 'practice topics',
+        'learning gap': 'practice topic',
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new).replace(old.title(), new)
+    return text[:160]

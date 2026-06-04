@@ -10,6 +10,10 @@ export const internalGradeLevelOptions = internalSupportedGrades.map(grade => `G
 export const launchSubjects: Subject[] = ['Math', 'ELA', 'Writing'];
 export const futureSubjects = ['Science', 'Social Studies'];
 
+export function subjectLabel(subject: Subject | string): string {
+  return subject === 'ELA' ? 'Reading' : subject;
+}
+
 export function isLaunchGradeLevel(gradeLevel: string): boolean {
   return gradeLevelOptions.includes(gradeLevel);
 }

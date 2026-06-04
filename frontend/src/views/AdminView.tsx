@@ -262,7 +262,7 @@ function Dashboard({ overview }: { overview: AdminOverview }) {
     <div className="card-grid three">
       <InfoCard icon={<Users />} title="Users" desc={`${overview.totals.users} total users, including ${overview.totals.admins} admins.`} />
       <InfoCard icon={<WalletCards />} title="Subscriptions" desc={`${overview.totals.active_subscriptions} active and ${overview.totals.past_due_subscriptions} past due.`} />
-      <InfoCard icon={<BarChart3 />} title="AI Usage" desc={`${overview.llm_events.length} recent LLM events available for review.`} />
+      <InfoCard icon={<BarChart3 />} title="AI Usage" desc={`${overview.llm_events.length} recent AI events available for review.`} />
     </div>
     <div className="admin-grid">
       <ListCard title="Recent Students" items={overview.students.map(student => `${student.name} - Grade ${student.grade}`)} empty="No student profiles yet." />

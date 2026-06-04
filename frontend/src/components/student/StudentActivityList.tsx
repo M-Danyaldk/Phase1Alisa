@@ -1,4 +1,5 @@
 import { Clock } from 'lucide-react';
+import { subjectLabel } from '../../constants';
 import { StudentActivityItem } from '../../types/studentDashboard';
 
 export function StudentActivityList({ activity }: { activity: StudentActivityItem[] }) {
@@ -10,7 +11,7 @@ export function StudentActivityList({ activity }: { activity: StudentActivityIte
         <div>
           <strong>{item.title}</strong>
           <p>{item.detail}</p>
-          <span>{item.subject ? `${item.subject} - ` : ''}{item.when}</span>
+          <span>{item.subject ? `${subjectLabel(item.subject)} - ` : ''}{item.when}</span>
         </div>
       </article>)}
     </div>

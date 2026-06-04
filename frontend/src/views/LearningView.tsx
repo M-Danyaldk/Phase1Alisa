@@ -29,7 +29,7 @@ const subjectDefaults: Record<Subject, string> = {
 function subjectGreeting(studentName: string, subject: Subject): string {
   const labels: Record<Subject, string> = {
     Math: 'math',
-    ELA: 'reading and ELA',
+    ELA: 'reading',
     Writing: 'writing'
   };
   return `Hi ${studentName}! I am Ms Alisia. We are working on ${labels[subject]} now, and I will help with one small step at a time.`;
@@ -38,7 +38,7 @@ function subjectGreeting(studentName: string, subject: Subject): string {
 function subjectSwitchMessage(subject: Subject): string {
   const labels: Record<Subject, string> = {
     Math: 'math',
-    ELA: 'reading and ELA',
+    ELA: 'reading',
     Writing: 'writing'
   };
   return `We are working on ${labels[subject]} now. Let us do one small step at a time.`;
@@ -504,7 +504,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }
 
   return <div className="page-stack">
-    <SectionHeader eyebrow="Learning with Ms Alisia" title="Short, guided tutoring by subject" desc="The LLM prompt keeps answers course-related, age-appropriate, brief, encouraging, and focused on one validation question." />
+    <SectionHeader eyebrow="Learning with Ms Alisia" title="Short, guided tutoring by subject" desc="Ms. Alisia gives step-by-step support that adapts to your learning needs and helps build confidence over time." />
     <div className="learning-layout">
       <ChatThreadList
         threads={threads}
@@ -607,7 +607,7 @@ function childFriendlySessionMessage(error: unknown): string {
   if (lower.includes('student session') || lower.includes('not allowed') || lower.includes('unauthorized')) {
     return 'Please log in again from your student account to keep learning.';
   }
-  return message || 'Something got stuck. Please try again in a moment.';
+  return 'Something got stuck. Please try again in a moment.';
 }
 
 function isChatSetupPending(error: unknown): boolean {

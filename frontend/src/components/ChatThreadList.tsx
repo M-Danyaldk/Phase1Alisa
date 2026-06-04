@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { subjectLabel } from '../constants';
 import { ChatThread } from '../lib/chatApi';
 import { classNames } from '../lib/classNames';
 import { Subject } from '../types';
@@ -20,8 +21,9 @@ export function ChatThreadList({ threads, activeThreadId, loading, error, notice
     const needle = search.trim().toLowerCase();
     if (!needle) return threads;
     return threads.filter(thread => {
-      const title = thread.title || thread.topic || `${thread.subject} chat`;
-      return `${title} ${thread.subject} ${thread.topic || ''}`.toLowerCase().includes(needle);
+      const displaySubject = subjectLabel(thread.subject);
+      const title = thread.title || thread.topic || `${displaySubject} chat`;
+      return `${title} ${displaySubject} ${thread.topic || ''}`.toLowerCase().includes(needle);
     });
   }, [search, threads]);
 
@@ -46,10 +48,10 @@ export function ChatThreadList({ threads, activeThreadId, loading, error, notice
         key={thread.id}
         className={classNames('thread-item', activeThreadId === thread.id ? 'active' : '')}
         onClick={() => onOpenThread(thread)}
-        aria-label={`Open ${thread.subject} chat ${thread.title || thread.topic || ''}`.trim()}
+        aria-label={`Open ${subjectLabel(thread.subject)} chat ${thread.title || thread.topic || ''}`.trim()}
       >
-        <span className={classNames('subject-badge', subjectBadgeClass(thread.subject))}>{thread.subject}</span>
-        <strong>{thread.title || thread.topic || `${thread.subject} chat`}</strong>
+        <span className={classNames('subject-badge', subjectBadgeClass(thread.subject))}>{subjectLabel(thread.subject)}</span>
+        <strong>{thread.title || thread.topic || `${subjectLabel(thread.subject)} chat`}</strong>
         <small>{thread.updated_at ? new Date(thread.updated_at).toLocaleString() : 'New chat'}</small>
       </button>)}
     </div>

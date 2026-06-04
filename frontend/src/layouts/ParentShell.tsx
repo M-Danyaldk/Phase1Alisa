@@ -3,7 +3,6 @@ import { useState, type ReactNode } from 'react';
 import { NavigationDrawer } from '../components/navigation/NavigationDrawer';
 import { NavItem } from '../components/NavItem';
 import { StudentProfileSelector } from '../components/student/StudentProfileSelector';
-import { classNames } from '../lib/classNames';
 import { ParentView } from '../types';
 import { ProfileResponse } from '../types/auth';
 import { ChildProfile } from '../types/childProfile';
@@ -25,7 +24,6 @@ type Props = {
 export function ParentShell({
   profile,
   view,
-  connected,
   childProfiles,
   selectedChildId,
   childrenError,
@@ -43,9 +41,6 @@ export function ParentShell({
       <h1>MsAlisia</h1>
       <p>{parentName}</p>
     </div>
-  </div>;
-  const status = <div className={classNames('status-pill', connected)}>
-    Backend: {connected === 'checking' ? 'Checking...' : connected === 'online' ? 'Online' : 'Offline'}
   </div>;
   const navItems = (closeAfterClick = false) => <>
     <NavItem icon={<Home />} label="Dashboard" active={view === 'home'} onClick={() => { onViewChange('home'); if (closeAfterClick) setMenuOpen(false); }} />
@@ -65,7 +60,7 @@ export function ParentShell({
       onOpen={() => setMenuOpen(true)}
       onClose={() => setMenuOpen(false)}
       brand={brand}
-      footer={<>{status}{logoutButton}</>}
+      footer={logoutButton}
     >
       {navItems(true)}
     </NavigationDrawer>
@@ -74,7 +69,6 @@ export function ParentShell({
       <nav aria-label="Parent navigation">
         {navItems()}
       </nav>
-      {status}
       {logoutButton}
     </aside>
     <main>

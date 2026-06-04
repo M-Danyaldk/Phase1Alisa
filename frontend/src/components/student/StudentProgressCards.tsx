@@ -1,4 +1,5 @@
 import { BookOpen, ClipboardCheck, PenTool } from 'lucide-react';
+import { subjectLabel } from '../../constants';
 import { StudentProgressItem } from '../../types/studentDashboard';
 
 export function StudentProgressCards({ progress }: { progress: StudentProgressItem[] }) {
@@ -9,11 +10,11 @@ export function StudentProgressCards({ progress }: { progress: StudentProgressIt
         <div className="subject-progress-title">
           {iconForSubject(item.subject)}
           <div>
-            <strong>{item.subject}</strong>
+            <strong>{subjectLabel(item.subject)}</strong>
             <span>{item.status}</span>
           </div>
         </div>
-        <div className="progress-track" aria-label={`${item.subject} progress ${item.progressPercentage}%`}>
+        <div className="progress-track" aria-label={`${subjectLabel(item.subject)} progress ${item.progressPercentage}%`}>
           <span style={{ width: `${item.progressPercentage}%` }} />
         </div>
         <p>{item.level}</p>

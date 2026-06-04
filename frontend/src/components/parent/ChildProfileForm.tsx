@@ -1,5 +1,5 @@
 import { ReactNode, useMemo, useState } from 'react';
-import { gradeLevelOptions, isLaunchGradeLevel, launchSubjects } from '../../constants';
+import { gradeLevelOptions, isLaunchGradeLevel, launchSubjects, subjectLabel } from '../../constants';
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../../types/childProfile';
 
 const subjects = launchSubjects as ChildSubject[];
@@ -101,7 +101,7 @@ export function ChildProfileForm({
       <div className="subject-checks">
         {subjects.map(subject => <label key={subject} className="check-row">
           <input type="checkbox" checked={values.subjects.includes(subject)} onChange={() => toggleSubject(subject)} />
-          <span>{subject}</span>
+          <span>{subjectLabel(subject)}</span>
         </label>)}
       </div>
     </div>

@@ -439,7 +439,15 @@ export function App() {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'assessments' && <AssessmentView student={sessionStudent} setStudent={setStudent} childId={studentMe.child_id} accessToken={studentSession.access_token} studentSession />}
+        {!childAccessBlocked && childView === 'assessments' && <AssessmentView
+          student={sessionStudent}
+          setStudent={setStudent}
+          childId={studentMe.child_id}
+          accessToken={studentSession.access_token}
+          studentSession
+          onContinueLearning={() => setChildView('learn')}
+          onBackToDashboard={() => setChildView('home')}
+        />}
         {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');

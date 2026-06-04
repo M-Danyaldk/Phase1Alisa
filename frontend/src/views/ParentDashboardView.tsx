@@ -2,6 +2,7 @@ import { BarChart3, Copy, FileText, Gift, ShieldCheck, UserRoundPlus, WalletCard
 import { useEffect, useState } from 'react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
+import { subjectLabel } from '../constants';
 import { getFilteredChildReport } from '../lib/api/reports';
 import { getMyReferrals } from '../lib/api/referrals';
 import { getFamilyClassroomLink } from '../lib/api/studentAuth';
@@ -125,16 +126,30 @@ export function ParentDashboardView({
               <button className="secondary-button" onClick={copyClassroomLink} type="button"><Copy /> Copy Link</button>
             </div>
             {classroomMessage && <p className="success-note">{classroomMessage}</p>}
-          </> : <p className="muted-copy">Family classroom link will appear when your account is ready.</p>}
-        </> : <>
-          <p className="muted-copy">Create a child profile before opening a student classroom.</p>
-          <button className="primary-button" onClick={() => onViewChange('children')}>Create Child Profile</button>
-        </>}
+        </> : <p className="muted-copy">Family classroom link will appear when your account is ready.</p>}
+      </> : <>
+        <p className="muted-copy">Create a child profile before opening a student classroom.</p>
+        <button className="primary-button" onClick={() => onViewChange('children')}>Create Child Profile</button>
+      </>}
       </section>
     </div>
 
+    <section className="report-card">
+      <div className="section-row">
+        <h3>How to use MsAlisia</h3>
+        <span className="muted-note">Quick start</span>
+      </div>
+      <ul>
+        <li>Create or review each child profile.</li>
+        <li>Set each child&apos;s username and PIN.</li>
+        <li>Share the family classroom link with your children.</li>
+        <li>Review reports and homework history from the parent dashboard.</li>
+        <li>Manage billing and access from the billing page.</li>
+      </ul>
+    </section>
+
     <div className="card-grid four">
-      <InfoCard icon={<FileText />} title="Reports" desc="Review completed assessment results, summaries, strengths, and learning gaps." />
+      <InfoCard icon={<FileText />} title="Reports" desc="Review completed assessment results, summaries, strengths, and areas to review." />
       <InfoCard icon={<BarChart3 />} title="Session History" desc="Monitor saved tutoring sessions and recent practice activity." />
       <InfoCard icon={<WalletCards />} title="Billing" desc="Manage child access and subscription readiness from the parent side." />
       <InfoCard icon={<ShieldCheck />} title="Brain Break Visibility" desc="See healthy learning safeguards without changing child-only tutoring behavior." />
@@ -185,7 +200,7 @@ export function ParentDashboardView({
       {selectedChild ? <div className="report-detail-list">
         <span>Viewing as parent: {selectedChild.name}</span>
         <span>Grade level: {selectedChild.grade_level}</span>
-        <span>Subjects: {selectedChild.subjects.join(', ')}</span>
+        <span>Subjects: {selectedChild.subjects.map(subjectLabel).join(', ')}</span>
         <span>Status: {statusLabel(selectedChild.status)}</span>
       </div> : <p className="muted-copy">No child profile selected yet.</p>}
     </section>

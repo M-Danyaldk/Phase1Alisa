@@ -144,6 +144,22 @@ textarea { min-height: 90px; resize: vertical; font-weight: 500; }
 .result-card.empty { display: grid; place-items: center; text-align: center; color: var(--muted); }
 .result-card svg { width: 48px; height: 48px; color: var(--purple); }
 .badge { display: inline-flex; padding: 6px 10px; border-radius: 999px; background: var(--gold-soft); color: #8a6310; font-weight: 800; margin-bottom: 10px; }
+.assessment-celebration-card { display: grid; gap: 14px; position: relative; overflow: hidden; }
+.assessment-celebration-card::before { content: ''; position: absolute; inset: 0 0 auto auto; width: 130px; height: 130px; background: radial-gradient(circle, rgba(225, 173, 47, .2), transparent 68%); pointer-events: none; }
+.celebration-icon { width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; background: var(--purple-soft); }
+.celebration-icon svg { width: 32px; height: 32px; color: var(--purple-dark); }
+.performance-pill { display: inline-flex; align-items: center; gap: 8px; width: fit-content; border-radius: 999px; padding: 9px 12px; background: #e8f8f0; color: var(--success); font-weight: 900; }
+.performance-pill svg { width: 18px; height: 18px; color: currentColor; }
+.assessment-result-section { display: grid; gap: 8px; }
+.assessment-result-section h4 { margin: 0; color: var(--purple-dark); }
+.assessment-result-section ul { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.assessment-result-section li { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); line-height: 1.5; }
+.assessment-result-section li svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--success); margin-top: 2px; }
+.assessment-result-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.parent-insight-card { display: grid; gap: 14px; }
+.parent-insight-card > p { max-width: 920px; }
+.assessment-history-card { display: grid; gap: 8px; }
+.assessment-history-card p { margin: 0; }
 ul { color: var(--muted); line-height: 1.65; padding-left: 20px; }
 h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .score-label { font-weight: 800; color: var(--gold) !important; }

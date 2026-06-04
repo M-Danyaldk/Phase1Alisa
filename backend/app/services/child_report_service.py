@@ -36,6 +36,11 @@ class ChildReportService:
         weak_areas = self._weak_areas(recent_assessments)
         recent_memory = [self._memory_summary(row) for row in memory_rows[:6]]
         next_steps = self._next_steps(child, subject_progress, weak_areas, recent_memory)
+        personalized_observation = self._personalized_observation(child, recent_assessments, recent_memory, threads, homework_rows)
+        strength_recognition = self._strength_recognition(child, recent_assessments, strengths, recent_memory)
+        next_focus = self._next_focus(child, recent_assessments, weak_areas, recent_memory)
+        support_plan = self._support_plan(child, next_focus, recent_memory, threads)
+        exceptional_performance = self._exceptional_performance(child, recent_assessments)
         last_updated = self._last_updated(assessments, threads, messages, homework_rows, memory_rows)
         questions_practiced = len([message for message in messages if message.get('role') == 'student'])
         lessons_completed = len([thread for thread in threads if (thread.get('updated_at') or thread.get('created_at'))])
@@ -51,7 +56,12 @@ class ChildReportService:
             lessons_completed=lessons_completed,
             questions_practiced=questions_practiced,
             assessment_status=self._assessment_status(recent_assessments),
-            overall_summary=self._overall_summary(child, assessments, threads, messages),
+            overall_summary=self._overall_summary(child, recent_assessments, recent_memory, threads, messages),
+            personalized_observation=personalized_observation,
+            strength_recognition=strength_recognition,
+            next_focus=next_focus,
+            support_plan=support_plan,
+            exceptional_performance=exceptional_performance,
             weekly_progress=self._weekly_progress(threads, messages),
             time_spent_learning=self._time_spent(messages),
             brain_break_summary='Ms. Alisia supports healthy learning. After 2 hours of continuous tutoring, students receive a 30-minute Brain Break so they can rest, stretch, and return ready to learn.',
@@ -287,38 +297,109 @@ class ChildReportService:
         strengths: list[str] = []
         for item in assessments:
             if item.strengths:
-                strengths.extend([f'{item.subject}: {strength}' for strength in item.strengths[:2]])
+                strengths.extend([f'{self._subject_label(item.subject)}: {self._safe_parent_text(strength)}' for strength in item.strengths[:2]])
             elif item.estimated_level and 'needs review' not in item.estimated_level.lower():
-                strengths.append(f'{item.subject}: working at {item.estimated_level}.')
+                strengths.append(f'{self._subject_label(item.subject)}: working at {self._safe_parent_text(item.estimated_level)}.')
         for item in progress:
             if item.message_count >= 4:
-                strengths.append(f'{item.subject}: active practice with Ms. Alisia.')
+                strengths.append(f'{self._subject_label(item.subject)}: active practice with Ms. Alisia.')
         return strengths[:5] or ['Complete an assessment to identify strong areas.']
 
     def _weak_areas(self, assessments: list[AssessmentSummary]) -> list[str]:
-        weak: list[str] = []
+        growth: list[str] = []
         for item in assessments:
-            weak.extend([f'{item.subject}: {gap}' for gap in item.learning_gaps[:2]])
-        return weak[:6] or ['No weak areas recorded yet. Start with a quick assessment.']
+            growth.extend([f'{self._subject_label(item.subject)}: {self._safe_parent_text(gap)}' for gap in item.learning_gaps[:2]])
+        return growth[:6] or ['No growth areas recorded yet. Start with a quick assessment.']
 
     def _next_steps(self, child: dict, progress: list[SubjectProgress], weak_areas: list[str], memory: list[LearningMemorySummary] | None = None) -> list[str]:
         steps: list[str] = []
         if memory:
             latest_next = memory[0].next_step
             if latest_next:
-                steps.append(latest_next)
-        if weak_areas and not weak_areas[0].startswith('No weak areas'):
-            steps.append('Review the first weak area with a short guided tutoring session.')
+                steps.append(self._safe_parent_text(latest_next))
+        if weak_areas and not weak_areas[0].startswith('No growth areas'):
+            steps.append('Use the first growth area as the next short guided tutoring focus.')
         missing = [item.subject for item in progress if item.assessment_count == 0]
         if missing:
-            steps.append(f'Run a quick {missing[0]} assessment for {child["name"]}.')
+            steps.append(f'Run a quick {self._subject_label(missing[0])} assessment for {child["name"]}.')
         steps.append('Practice one skill at a time and keep sessions short and consistent.')
         return steps[:4]
 
-    def _overall_summary(self, child: dict, assessments: list[dict], threads: list[dict], messages: list[dict]) -> str:
+    def _overall_summary(self, child: dict, assessments: list[AssessmentSummary], memory: list[LearningMemorySummary], threads: list[dict], messages: list[dict]) -> str:
         if not assessments and not threads:
             return f'{child["name"]} has a profile ready. Start an assessment or learning session to build the first report.'
-        return f'{child["name"]} has {len(assessments)} assessment record(s), {len(threads)} saved chat thread(s), and {len(messages)} recent tutor message(s).'
+        latest = assessments[0] if assessments else None
+        if latest:
+            strength = self._first_safe(latest.strengths) or 'steady effort'
+            next_focus = self._first_safe(latest.recommended_next_topics) or self._first_safe(latest.learning_gaps) or self._first_safe(latest.recommended_progression) or 'one focused practice skill'
+            return f'{child["name"]} showed {strength} in {self._subject_label(latest.subject)}. The next helpful step is practicing {next_focus} with steady, guided support.'
+        if memory:
+            latest_memory = memory[0]
+            return f'{child["name"]} recently worked on {latest_memory.worked_on or latest_memory.topic or "a learning session"}. Ms. Alisia will use this history to keep the next session focused and encouraging.'
+        return f'{child["name"]} has started tutoring with Ms. Alisia. More assessment and practice activity will make the report more personalized.'
+
+    def _personalized_observation(self, child: dict, assessments: list[AssessmentSummary], memory: list[LearningMemorySummary], threads: list[dict], homework_rows: list[dict]) -> str:
+        name = child['name']
+        latest = assessments[0] if assessments else None
+        if latest:
+            subject = self._subject_label(latest.subject)
+            strength = self._first_safe(latest.strengths) or 'steady focus'
+            next_focus = self._first_safe(latest.recommended_next_topics) or self._first_safe(latest.learning_gaps) or self._first_safe(latest.recommended_progression)
+            if next_focus:
+                return f'Ms. Alisia noticed that {name} showed {strength} in {subject}. The next helpful step is practicing {next_focus} with clear, guided support.'
+            return f'Ms. Alisia noticed that {name} showed {strength} in {subject}. The next session can build on that progress with a short guided practice path.'
+        if memory:
+            latest_memory = memory[0]
+            focus = latest_memory.worked_on or latest_memory.topic or 'a recent learning session'
+            next_step = latest_memory.next_step or 'the next small practice step'
+            return f'Ms. Alisia remembers that {name} worked on {focus}. The next session can continue with {next_step}.'
+        if homework_rows:
+            return f'Ms. Alisia has homework activity saved for {name}. Reports will become more specific as tutoring and check-ins continue.'
+        if threads:
+            return f'{name} has started learning with Ms. Alisia. A quick check-in will help turn this activity into a more personalized plan.'
+        return f'{name} has a profile ready. Start a check-in or learning session so Ms. Alisia can learn how to support them.'
+
+    def _strength_recognition(self, child: dict, assessments: list[AssessmentSummary], strengths: list[str], memory: list[LearningMemorySummary]) -> str:
+        name = child['name']
+        exceptional = self._exceptional_performance(child, assessments)
+        if exceptional:
+            return exceptional
+        latest_strength = self._first_safe(strengths)
+        if latest_strength:
+            return f'A clear strength to celebrate: {name} is building confidence with {latest_strength}.'
+        if memory and memory[0].mastered:
+            return f'A clear strength to celebrate: {name} is getting stronger with {self._safe_parent_text(memory[0].mastered)}.'
+        return f'A clear strength to celebrate: {name} is ready to begin building a personalized learning path.'
+
+    def _next_focus(self, child: dict, assessments: list[AssessmentSummary], weak_areas: list[str], memory: list[LearningMemorySummary]) -> str:
+        name = child['name']
+        if memory and memory[0].next_step:
+            return f'Next focus: {name} will benefit from {self._safe_parent_text(memory[0].next_step)}.'
+        latest = assessments[0] if assessments else None
+        if latest:
+            focus = self._first_safe(latest.recommended_next_topics) or self._first_safe(latest.learning_gaps) or self._first_safe(latest.recommended_progression)
+            if focus:
+                return f'Next focus: {name} will benefit from more guided practice with {focus}.'
+        if weak_areas and not weak_areas[0].startswith('No growth areas'):
+            return f'Next focus: {name} will benefit from more guided practice with {self._safe_parent_text(weak_areas[0])}.'
+        return f'Next focus: {name} can start with one short check-in so Ms. Alisia can choose the right first skill.'
+
+    def _support_plan(self, child: dict, next_focus: str, memory: list[LearningMemorySummary], threads: list[dict]) -> str:
+        name = child['name']
+        if memory:
+            return f'Ms. Alisia will use {name}\'s saved learning memory to keep the next session connected to prior work and paced one step at a time.'
+        if threads:
+            return f'Ms. Alisia will use {name}\'s saved tutoring history to keep practice focused, encouraging, and easy to continue.'
+        return f'Ms. Alisia will use this information to guide {name}\'s next session with the right level of support.'
+
+    def _exceptional_performance(self, child: dict, assessments: list[AssessmentSummary]) -> str | None:
+        if not assessments:
+            return None
+        latest = assessments[0]
+        label = f'{latest.score_label or ""} {latest.estimated_level or ""}'.lower()
+        if any(marker in label for marker in ('excellent', 'advanced', 'strong', 'master', 'above', 'exceptional')):
+            return f'Excellent work - {child["name"]} showed strong understanding in {self._subject_label(latest.subject)} and may be ready for a more challenging next step.'
+        return None
 
     def _weekly_progress(self, threads: list[dict], messages: list[dict]) -> str:
         if not threads and not messages:
@@ -387,7 +468,7 @@ class ChildReportService:
         if not assessments:
             return 'No assessment completed yet. Start an assessment to create a personalized learning path.'
         latest = assessments[0]
-        return f'Latest assessment: {latest.subject} at {latest.estimated_level}.'
+        return f'Latest assessment: {self._subject_label(latest.subject)} - {self._safe_parent_text(latest.score_label or latest.estimated_level)}.'
 
     def _progress_percent(self, assessment_count: int, chat_count: int, message_count: int) -> int:
         score = assessment_count * 20 + chat_count * 12 + message_count * 2
@@ -423,3 +504,36 @@ class ChildReportService:
         except Exception:
             return [str(value)]
         return []
+
+    def _subject_label(self, subject: str | None) -> str:
+        return 'Reading' if subject == 'ELA' else (subject or 'Learning')
+
+    def _first_safe(self, values: list[str] | None) -> str:
+        for value in values or []:
+            safe = self._safe_parent_text(value)
+            if safe:
+                return safe
+        return ''
+
+    def _safe_parent_text(self, value: object) -> str:
+        text = str(value or '').strip()
+        if not text:
+            return ''
+        replacements = {
+            'weaknesses': 'growth areas',
+            'weakness': 'growth area',
+            'weak': 'needs more practice',
+            'failed': 'needs another try',
+            'failure': 'needs another try',
+            'poor': 'still building',
+            'deficient': 'still building',
+            'diagnostic': 'learning',
+            'clinical': 'learning',
+            'below grade level': 'ready for guided practice',
+            'below level': 'ready for guided practice',
+            'learning gaps': 'growth areas',
+            'learning gap': 'growth area',
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new).replace(old.title(), new)
+        return text
