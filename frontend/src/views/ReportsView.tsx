@@ -317,7 +317,7 @@ export function ReportsView({
           <strong>{emailPreview.subject_line}</strong>
           <p>{emailPreview.greeting}</p>
           <p>{emailPreview.summary}</p>
-          <p>Generated {formatDate(emailPreview.generated_at)} · Email connected: {emailPreview.email_connected ? 'Yes' : 'No'}</p>
+          <p>Generated {formatDate(emailPreview.generated_at)}</p>
         </div>}
       </div>
       <div className="report-card">
