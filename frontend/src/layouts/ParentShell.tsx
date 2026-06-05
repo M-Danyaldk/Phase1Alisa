@@ -73,7 +73,7 @@ export function ParentShell({
     </aside>
     <main>
       {childrenError && <p className="error-note app-error">{childrenError}</p>}
-      <StudentProfileSelector children={childProfiles} selectedChildId={selectedChildId} onSelect={onSelectChild} onAddChild={onOpenChildren} />
+      <StudentProfileSelector children={childProfiles} selectedChildId={selectedChildId} onSelect={onSelectChild} onManageChildren={onOpenChildren} />
       {children}
     </main>
   </div>;

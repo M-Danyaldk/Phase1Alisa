@@ -107,4 +107,4 @@ class WeeklyReportEmailPreview(BaseModel):
     brain_break_summary: str
     generated_at: str
     email_connected: bool = False
-    email_note: str = 'Weekly email sending is prepared, but no email provider is connected yet.'
+    email_note: str = ''

@@ -429,7 +429,7 @@ function OwnerFinancialsSection({
         `${labelValue(item.plan_type)} / ${labelValue(item.billing_interval)}`,
         <span className={`admin-badge ${ownerStatusBadge(item.status || item.payment_failure_status || '')}`}>{labelValue(item.status)}</span>,
         formatDateTime(item.current_period_ends_at),
-        money(item.amount_cents_estimate),
+        item.amount_display || money(item.amount_cents_estimate),
         item.family_discount_status || item.discount_status || 'None',
       ])}
       empty="No subscription records found."

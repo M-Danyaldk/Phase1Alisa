@@ -1,9 +1,20 @@
 import { useEffect, useState } from 'react';
 import { ProblemReportButton } from '../components/ProblemReportButton';
 import { SectionHeader } from '../components/SectionHeader';
+import { apiPost } from '../lib/api';
 import { getStudentHomeworkHistory, homeworkAcceptTypes, uploadStudentHomework } from '../lib/api/homework';
-import { ChildView, StudentProfile } from '../types';
+import { ChatMessage, ChildView, StudentProfile, Subject, TopicSource, TutoringState } from '../types';
 import { HomeworkUpload } from '../types/homework';
+
+const initialTutoringState: TutoringState = {
+  active_problem: '',
+  current_step: '',
+  attempt_count: 0,
+  answer_revealed: false,
+  mode: 'homework',
+  status: 'idle',
+  memory_note: '',
+};
 
 export function HomeworkView({
   student,
@@ -25,9 +36,21 @@ export function HomeworkView({
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [followUpInput, setFollowUpInput] = useState('');
+  const [followUpMessages, setFollowUpMessages] = useState<ChatMessage[]>([]);
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpError, setFollowUpError] = useState('');
+  const [tutoringState, setTutoringState] = useState<TutoringState>(initialTutoringState);
 
   useEffect(() => {
     if (!accessToken || !childId) return;
+    setUploadResult(null);
+    setSelectedFile(null);
+    setFileName('');
+    setFollowUpInput('');
+    setFollowUpMessages([]);
+    setFollowUpError('');
+    setTutoringState(initialTutoringState);
     setHistoryLoading(true);
     getStudentHomeworkHistory(accessToken, childId, studentSession)
       .then(data => setHistory(data.uploads || []))
@@ -48,9 +71,51 @@ export function HomeworkView({
       setHistory(items => [data, ...items.filter(item => item.id !== data.id)]);
       setSelectedFile(null);
       setFileName('');
+      setFollowUpMessages(homeworkContextMessages(data));
+      setFollowUpInput('');
+      setFollowUpError('');
+      setTutoringState(initialTutoringState);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The file could not be uploaded right now. Please try again.');
     } finally { setLoading(false); }
+  }
+
+  async function sendFollowUp() {
+    const text = followUpInput.trim();
+    if (!text || !uploadResult) return;
+    const subject = subjectFromUpload(uploadResult);
+    const topic = topicFromUpload(uploadResult);
+    const userMessage: ChatMessage = { role: 'student', content: text, subject };
+    const nextMessages = [...followUpMessages, userMessage];
+    setFollowUpMessages(nextMessages);
+    setFollowUpInput('');
+    setFollowUpError('');
+    setFollowUpLoading(true);
+    try {
+      const headers = accessToken ? { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) } : undefined;
+      const data = await apiPost<{
+        reply: string;
+        provider: string;
+        tutoring_state: TutoringState;
+        resolved_topic?: string | null;
+        topic_source?: TopicSource | null;
+      }>('/api/chat', {
+        student,
+        child_id: childId || undefined,
+        subject,
+        topic,
+        topic_source: 'manual',
+        message: text,
+        history: nextMessages.slice(-5),
+        tutoring_state: tutoringState,
+      }, headers);
+      setTutoringState(data.tutoring_state);
+      setFollowUpMessages(current => [...current, { role: 'msalisia', content: data.reply, provider: data.provider, subject }]);
+    } catch (error) {
+      setFollowUpError(childFriendlyFollowUpError(error));
+    } finally {
+      setFollowUpLoading(false);
+    }
   }
 
   return <div className="page-stack narrow">
@@ -74,6 +139,15 @@ export function HomeworkView({
       <button className="primary-button" onClick={analyze} disabled={loading || !childId || !accessToken}>{loading ? 'Uploading...' : 'Take a Photo or Upload'}</button>
       {message && <p className="error-note">{message}</p>}
       {uploadResult && <HomeworkResult upload={uploadResult} onStart={() => setView?.('learn')} />}
+      {uploadResult && <HomeworkFollowUp
+        messages={followUpMessages}
+        input={followUpInput}
+        loading={followUpLoading}
+        error={followUpError}
+        disabled={!accessToken || !childId || followUpLoading}
+        onInput={setFollowUpInput}
+        onSend={sendFollowUp}
+      />}
       <ProblemReportButton
         accessToken={accessToken}
         childId={childId}
@@ -95,6 +169,79 @@ function HomeworkResult({ upload, onStart }: { upload: HomeworkUpload; onStart: 
     {upload.suggested_next_step && <p>Next step: {upload.suggested_next_step}</p>}
     {!upload.is_unclear && <button className="secondary-button compact" onClick={onStart}>Start Homework Tutoring</button>}
   </div>;
+}
+
+function HomeworkFollowUp({
+  messages,
+  input,
+  loading,
+  error,
+  disabled,
+  onInput,
+  onSend,
+}: {
+  messages: ChatMessage[];
+  input: string;
+  loading: boolean;
+  error: string;
+  disabled: boolean;
+  onInput: (value: string) => void;
+  onSend: () => void;
+}) {
+  return <section className="homework-follow-up">
+    <div>
+      <strong>Let&apos;s work through it together.</strong>
+      <p>Ask Ms. Alisia a question about this homework, or type your answer below.</p>
+    </div>
+    {!!messages.length && <div className="homework-follow-up-messages">
+      {messages.map((item, index) => <div key={`${item.role}-${index}`} className={`homework-follow-up-message ${item.role === 'student' ? 'student' : 'assistant'}`}>
+        <span>{item.role === 'student' ? 'You' : 'Ms. Alisia'}</span>
+        <p>{item.content}</p>
+      </div>)}
+    </div>}
+    <label>Type your answer or question here.
+      <textarea
+        value={input}
+        disabled={disabled}
+        onChange={event => onInput(event.target.value)}
+        onKeyDown={event => {
+          if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') onSend();
+        }}
+        placeholder="Example: I think the answer is 12, but I am not sure."
+      />
+    </label>
+    <button className="secondary-button compact" type="button" onClick={onSend} disabled={disabled || !input.trim()}>
+      {loading ? 'Sending...' : 'Send'}
+    </button>
+    {error && <p className="error-note">{error}</p>}
+  </section>;
+}
+
+function homeworkContextMessages(upload: HomeworkUpload): ChatMessage[] {
+  const subject = subjectFromUpload(upload);
+  const lines = [
+    'Ms. Alisia looked at your homework.',
+    upload.ai_validation_summary || 'Your homework was uploaded. We can work through it one step at a time.',
+    upload.suggested_next_step ? `Next step: ${upload.suggested_next_step}` : '',
+  ].filter(Boolean);
+  return [{ role: 'msalisia', content: lines.join('\n'), subject }];
+}
+
+function subjectFromUpload(upload: HomeworkUpload): Subject {
+  if (upload.detected_subject === 'Math' || upload.detected_subject === 'ELA' || upload.detected_subject === 'Writing') return upload.detected_subject;
+  return 'Math';
+}
+
+function topicFromUpload(upload: HomeworkUpload): string {
+  if (upload.detected_subject === 'ELA') return 'homework reading help';
+  if (upload.detected_subject === 'Writing') return 'homework writing help';
+  return 'homework help';
+}
+
+function childFriendlyFollowUpError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (message.toLowerCase().includes('parent needs to take care of')) return message;
+  return 'That did not send yet. Please try again in a moment.';
 }
 
 function HomeworkHistory({ uploads, loading }: { uploads: HomeworkUpload[]; loading: boolean }) {

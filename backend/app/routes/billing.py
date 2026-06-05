@@ -98,3 +98,10 @@ async def update_child_access(child_id: str, payload: ChildAccessUpdateRequest, 
     user = await require_parent_access(authorization, x_access_mode)
     record = await BillingService().update_child_access(user['id'], child_id, payload, email=user.get('email') or '')
     return ChildAccessResponse(**record)
+
+
+@router.post('/children/{child_id}/resume', response_model=ChildAccessResponse)
+async def resume_child_access(child_id: str, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChildAccessResponse:
+    user = await require_parent_access(authorization, x_access_mode)
+    record = await BillingService().resume_child_access(user['id'], child_id)
+    return ChildAccessResponse(**record)

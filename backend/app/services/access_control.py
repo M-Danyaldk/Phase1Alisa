@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -6,6 +7,8 @@ from fastapi import HTTPException
 from .auth_user import authenticated_user, bearer_token
 from .student_auth_service import StudentAuthService
 from .supabase_client import SupabaseClient, SupabaseClientError
+
+logger = logging.getLogger(__name__)
 
 CHILD_ACCESS_MODE = 'child'
 CHILD_BILLING_BLOCKED_MESSAGE = 'Hi {name}! There is something your parent needs to take care of. Go find them and let them know — they will have you back learning in no time!'
@@ -74,10 +77,11 @@ async def ensure_child_billing_access(child_id: str, child_name: str | None = No
 async def child_billing_access_state(child_id: str, child_name: str | None = None) -> dict:
     try:
         records = await SupabaseClient().select('child_access', f'child_id=eq.{quote(child_id)}&limit=1')
-    except SupabaseClientError:
-        return _billing_state(access_allowed=True, child_name=child_name)
+    except SupabaseClientError as exc:
+        logger.warning('Could not verify child billing access for child %s: %s', child_id, exc)
+        return _billing_state(access_allowed=False, child_name=child_name, blocked_reason='billing_access_unverified')
     if not records:
-        return _billing_state(access_allowed=True, child_name=child_name)
+        return _billing_state(access_allowed=False, child_name=child_name, blocked_reason='no_billing_access')
     access = records[0]
     status = access.get('access_status')
     plan_type = access.get('plan_type')

@@ -198,6 +198,7 @@ export type OwnerFinancialSubscription = {
   status?: string | null;
   current_period_ends_at?: string | null;
   amount_cents_estimate?: number;
+  amount_display?: string | null;
   discount_status?: string | null;
   family_discount_status?: string | null;
   payment_failure_status?: string | null;

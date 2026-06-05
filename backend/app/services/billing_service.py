@@ -130,8 +130,7 @@ class BillingService:
             update['trial_ends_at'] = None
             update['current_period_ends_at'] = (now + timedelta(days=30)).isoformat()
         else:
-            update['trial_ends_at'] = None
-            update['current_period_ends_at'] = None
+            update['access_paused_reason'] = 'manual_pause'
 
         try:
             records = await self.supabase.update('child_access', {
@@ -146,6 +145,61 @@ class BillingService:
         if not records:
             records = [await self._create_default_access(parent_id, child, update)]
         return self._merge(child, records[0])
+
+    async def resume_child_access(self, parent_id: str, child_id: str) -> dict:
+        child = await self._child(parent_id, child_id)
+        access_rows = await self._access_rows(parent_id)
+        access = next((row for row in access_rows if row.get('child_id') == child_id), None)
+        if not access:
+            raise HTTPException(status_code=409, detail='Please choose a plan to resume classroom access.')
+
+        now = datetime.now(UTC)
+        current_period_end = self._parse_iso_datetime(access.get('current_period_ends_at'))
+        trial_end = self._parse_iso_datetime(access.get('trial_ends_at'))
+        if current_period_end and current_period_end > now:
+            next_status = 'active'
+        elif trial_end and trial_end > now:
+            next_status = 'trial'
+        else:
+            raise HTTPException(status_code=409, detail='Please choose a plan to resume classroom access.')
+
+        update = {
+            'access_status': next_status,
+            'access_paused_reason': None,
+            'updated_at': now.isoformat(),
+        }
+        try:
+            records = await self.supabase.update('child_access', {
+                'parent_id': f'eq.{parent_id}',
+                'child_id': f'eq.{child_id}',
+            }, update)
+        except SupabaseClientError as exc:
+            if self._missing_access_table(exc):
+                raise HTTPException(status_code=503, detail='Child access billing table is not set up yet. Please run the Supabase migration first.') from exc
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not records:
+            raise HTTPException(status_code=500, detail='Could not resume classroom access.')
+        return self._merge(child, records[0])
+
+    async def prepare_classroom_access(self, parent_id: str, child_id: str) -> dict | None:
+        child = await self._child(parent_id, child_id)
+        access = await self._access_for_child(parent_id, child_id)
+        if self._has_current_access(access):
+            return self._merge(child, access)
+
+        parent_email = await self._parent_email(parent_id)
+        if not parent_email:
+            return None
+        if await self._trial_history_for_email(parent_email):
+            return self._merge(child, access) if access else None
+
+        try:
+            return (await self.start_trial(parent_id, parent_email, child_id))['child']
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                access = await self._access_for_child(parent_id, child_id)
+                return self._merge(child, access) if access else None
+            raise
 
     async def start_trial(self, parent_id: str, email: str, child_id: str, plan_key: PlanKey = 'text_monthly') -> dict:
         child = await self._child(parent_id, child_id)
@@ -625,6 +679,18 @@ class BillingService:
                 raise HTTPException(status_code=503, detail='Child access billing table is not set up yet. Please run the Supabase migration first.') from exc
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    async def _access_for_child(self, parent_id: str, child_id: str) -> dict | None:
+        try:
+            records = await self.supabase.select(
+                'child_access',
+                f'parent_id=eq.{quote(parent_id)}&child_id=eq.{quote(child_id)}&limit=1',
+            )
+        except SupabaseClientError as exc:
+            if self._missing_access_table(exc):
+                raise HTTPException(status_code=503, detail='Child access billing table is not set up yet. Please run the Supabase migration first.') from exc
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return records[0] if records else None
+
     async def _create_default_access(self, parent_id: str, child: dict, override: dict | None = None, email: str | None = None) -> dict:
         now = datetime.now(UTC)
         access_status = 'inactive'
@@ -665,6 +731,19 @@ class BillingService:
             'voice_allowed': voice_enabled,
             'feature_mode': 'chat_and_voice' if voice_enabled else 'chat_only',
         }
+
+    def _has_current_access(self, access: dict | None) -> bool:
+        if not access:
+            return False
+        now = datetime.now(UTC)
+        status = access.get('access_status')
+        if status == 'active':
+            period_end = self._parse_iso_datetime(access.get('current_period_ends_at'))
+            return period_end is None or period_end > now
+        if status == 'trial':
+            trial_end = self._parse_iso_datetime(access.get('trial_ends_at'))
+            return trial_end is not None and trial_end > now
+        return False
 
     def _missing_access_table(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
@@ -855,6 +934,11 @@ class BillingService:
             'removal_timing': 'next_renewal',
         }
         should_insert = not latest or latest.get('eligibility_status') != status
+        remove_at_period_end = bool(
+            active_count < 2
+            and latest
+            and latest.get('eligibility_status') in {'eligible', 'applied'}
+        )
         if should_insert:
             try:
                 await self.supabase.insert('billing_discounts', {
@@ -863,15 +947,14 @@ class BillingService:
                     'discount_percent': 5,
                     'stripe_coupon_id': self.settings.stripe_family_discount_coupon_id or None,
                     'eligibility_status': status,
-                    'removes_at_period_end': active_count < 2 and latest and latest.get('eligibility_status') in {'eligible', 'applied'},
+                    'removes_at_period_end': remove_at_period_end,
                     'metadata': metadata,
                 })
             except SupabaseClientError as exc:
                 if not self._missing_milestone2_table(exc):
                     logger.warning('Could not save family discount state for parent %s: %s', parent_id, exc)
 
-        remove_at_period_end = active_count < 2 and latest and latest.get('eligibility_status') in {'eligible', 'applied'}
-        await self._mark_family_discount_subscription_flags(parent_id, current_eligible, bool(remove_at_period_end))
+        await self._mark_family_discount_subscription_flags(parent_id, current_eligible, remove_at_period_end)
 
     async def _mark_family_discount_subscription_flags(self, parent_id: str, eligible: bool, remove_at_period_end: bool) -> None:
         try:

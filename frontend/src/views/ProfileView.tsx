@@ -3,13 +3,6 @@ import { SectionHeader } from '../components/SectionHeader';
 import { updateCurrentProfile, uploadProfileAvatar } from '../lib/api/auth';
 import { ProfileResponse, ProfileUpdateValues } from '../types/auth';
 
-function formatDateTime(value?: string | null): string {
-  if (!value) return 'Not available';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
 function initialValues(profile: ProfileResponse): ProfileUpdateValues {
   return {
     full_name: profile.full_name,
@@ -87,10 +80,6 @@ export function ProfileView({
       <label>Full Name<input value={values.full_name} onChange={e => setValues({ ...values, full_name: e.target.value })} /></label>
       <label>Email Address<input value={profile.email} disabled /></label>
       {isAdminProfile && <label>Admin Role<input value={profile.role || 'admin'} disabled /></label>}
-      <div className="readonly-grid">
-        <div><span>Created At</span><strong>{formatDateTime(profile.created_at)}</strong></div>
-        <div><span>Updated At</span><strong>{formatDateTime(profile.updated_at)}</strong></div>
-      </div>
       {error && <p className="error-note">{error}</p>}
       {success && <p className="success-note">{success}</p>}
       <button className="primary-button" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save Profile'}</button>

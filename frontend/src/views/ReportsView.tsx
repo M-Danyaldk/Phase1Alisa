@@ -2,17 +2,28 @@ import { useEffect, useState } from 'react';
 import { BarChart3, BookOpen, CheckCircle2, ClipboardCheck, Clock, FileUp, PenTool, Target, TrendingUp } from 'lucide-react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
+import { apiPost } from '../lib/api';
 import { homeworkAcceptTypes, uploadParentHomework } from '../lib/api/homework';
 import { getFilteredChildReport, getWeeklyEmailPreview } from '../lib/api/reports';
 import { getWorkingLevelOverrides, resetWorkingLevelOverride, setWorkingLevelOverride } from '../lib/api/workingLevelOverrides';
 import { AssessmentSummary, ChildReport, LearningMemorySummary, SubjectProgress, TutorSessionSummary, WeeklyReportEmailPreview } from '../types/childReport';
-import { StudentProfile, Subject, View } from '../types';
+import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState, View } from '../types';
 import { HomeworkUpload } from '../types/homework';
 import { WorkingLevelOverrideItem, WorkingLevelOverridesResponse } from '../types/workingLevelOverrides';
 import { launchGrades, subjectLabel } from '../constants';
 
 type Period = 'week' | 'month' | 'all';
 type SubjectFilter = 'All' | Subject;
+
+const initialHomeworkTutoringState: TutoringState = {
+  active_problem: '',
+  current_step: '',
+  attempt_count: 0,
+  answer_revealed: false,
+  mode: 'homework',
+  status: 'idle',
+  memory_note: '',
+};
 
 export function ReportsView({
   student,
@@ -39,28 +50,54 @@ export function ReportsView({
   const [workingLevelSelections, setWorkingLevelSelections] = useState<Record<string, string>>({});
   const [workingLevelMessage, setWorkingLevelMessage] = useState('');
   const [workingLevelSaving, setWorkingLevelSaving] = useState('');
+  const [parentHomeworkUpload, setParentHomeworkUpload] = useState<HomeworkUpload | null>(null);
+  const [parentFollowUpInput, setParentFollowUpInput] = useState('');
+  const [parentFollowUpMessages, setParentFollowUpMessages] = useState<ChatMessage[]>([]);
+  const [parentFollowUpLoading, setParentFollowUpLoading] = useState(false);
+  const [parentFollowUpError, setParentFollowUpError] = useState('');
+  const [parentTutoringState, setParentTutoringState] = useState<TutoringState>(initialHomeworkTutoringState);
 
   useEffect(() => {
     if (!accessToken || !childId) {
       setReport(null);
+      setEmailPreview(null);
       setWorkingLevels(null);
+      setWorkingLevelSelections({});
+      setParentFile(null);
+      setParentFileName('');
+      setUploadMessage('');
+      setWorkingLevelMessage('');
+      resetParentHomeworkFollowUp();
       return;
     }
+    let cancelled = false;
+    setReport(null);
+    setEmailPreview(null);
+    setWorkingLevels(null);
+    setWorkingLevelSelections({});
+    setParentFile(null);
+    setParentFileName('');
+    setUploadMessage('');
+    setWorkingLevelMessage('');
+    resetParentHomeworkFollowUp();
     setLoading(true);
     setError('');
     getFilteredChildReport(accessToken, childId, period, subjectFilter)
-      .then(setReport)
-      .catch(err => setError(err instanceof Error ? err.message : 'Could not load this child report.'))
-      .finally(() => setLoading(false));
+      .then(data => { if (!cancelled) setReport(data); })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load this child report.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     getWeeklyEmailPreview(accessToken, childId)
-      .then(setEmailPreview)
-      .catch(() => setEmailPreview(null));
+      .then(data => { if (!cancelled) setEmailPreview(data); })
+      .catch(() => { if (!cancelled) setEmailPreview(null); });
     getWorkingLevelOverrides(accessToken, childId)
       .then(records => {
-        setWorkingLevels(records);
-        setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
+        if (!cancelled) {
+          setWorkingLevels(records);
+          setWorkingLevelSelections(Object.fromEntries(records.subjects.map(item => [item.subject, item.effective_working_level])));
+        }
       })
-      .catch(() => setWorkingLevels(null));
+      .catch(() => { if (!cancelled) setWorkingLevels(null); });
+    return () => { cancelled = true; };
   }, [accessToken, childId, period, subjectFilter]);
 
   const subjectProgress = report?.subject_progress || fallbackSubjectProgress(student);
@@ -79,6 +116,11 @@ export function ReportsView({
       setParentFile(null);
       setParentFileName('');
       setUploadMessage(upload.is_unclear ? 'Uploaded. Ms. Alisia needs a clearer file before tutoring from it.' : 'Uploaded. Ms. Alisia added a validation summary.');
+      setParentHomeworkUpload(upload);
+      setParentFollowUpMessages(homeworkContextMessages(upload));
+      setParentFollowUpInput('');
+      setParentFollowUpError('');
+      setParentTutoringState(initialHomeworkTutoringState);
     } catch (error) {
       setUploadMessage(error instanceof Error ? error.message : 'Could not upload homework right now.');
     } finally {
@@ -103,6 +145,51 @@ export function ReportsView({
       setWorkingLevelMessage(detail ? `Could not save the working level right now. ${detail}` : 'Could not save the working level right now.');
     } finally {
       setWorkingLevelSaving('');
+    }
+  }
+
+  function resetParentHomeworkFollowUp() {
+    setParentHomeworkUpload(null);
+    setParentFollowUpInput('');
+    setParentFollowUpMessages([]);
+    setParentFollowUpError('');
+    setParentTutoringState(initialHomeworkTutoringState);
+  }
+
+  async function sendParentFollowUp() {
+    const text = parentFollowUpInput.trim();
+    if (!text || !parentHomeworkUpload) return;
+    const subject = subjectFromUpload(parentHomeworkUpload);
+    const topic = topicFromUpload(parentHomeworkUpload);
+    const userMessage: ChatMessage = { role: 'student', content: text, subject };
+    const nextMessages = [...parentFollowUpMessages, userMessage];
+    setParentFollowUpMessages(nextMessages);
+    setParentFollowUpInput('');
+    setParentFollowUpError('');
+    setParentFollowUpLoading(true);
+    try {
+      const data = await apiPost<{
+        reply: string;
+        provider: string;
+        tutoring_state: TutoringState;
+        resolved_topic?: string | null;
+        topic_source?: TopicSource | null;
+      }>('/api/chat', {
+        student,
+        child_id: childId || undefined,
+        subject,
+        topic,
+        topic_source: 'manual',
+        message: text,
+        history: nextMessages.slice(-5),
+        tutoring_state: parentTutoringState,
+      }, { Authorization: `Bearer ${accessToken}`, 'x-access-mode': 'child' });
+      setParentTutoringState(data.tutoring_state);
+      setParentFollowUpMessages(current => [...current, { role: 'msalisia', content: data.reply, provider: data.provider, subject }]);
+    } catch (error) {
+      setParentFollowUpError(parentFriendlyFollowUpError(error));
+    } finally {
+      setParentFollowUpLoading(false);
     }
   }
 
@@ -146,10 +233,10 @@ export function ReportsView({
       </label>
     </div>
 
-    {loading && <p className="muted-note">Loading report...</p>}
     {error && <p className="error-note">{error}</p>}
     {!childId && <p className="error-note">Select or create a child profile to view reports.</p>}
 
+    {loading ? <ReportLoadingState childName={childName} /> : <>
     <div className="card-grid three">
       <InfoCard icon={<Target />} title="Current Level" desc={report?.current_learning_level || 'No assessment completed yet.'} />
       <InfoCard icon={<TrendingUp />} title="Weekly Progress" desc={report?.weekly_progress || 'No learning activity recorded yet.'} />
@@ -196,10 +283,20 @@ export function ReportsView({
       onUpload={uploadForChild}
     />
 
+    {parentHomeworkUpload && <ParentHomeworkFollowUp
+      messages={parentFollowUpMessages}
+      input={parentFollowUpInput}
+      loading={parentFollowUpLoading}
+      error={parentFollowUpError}
+      disabled={!accessToken || !childId || parentFollowUpLoading}
+      onInput={setParentFollowUpInput}
+      onSend={sendParentFollowUp}
+    />}
+
     <HomeworkReportSection uploads={report?.homework_uploads || []} />
 
     <div className="report-grid">
-      <ReportList title="Strengths" items={report?.strengths || ['Complete an assessment to identify strong areas.']} />
+      <ReportList title="Strengths" items={report?.strengths || ["Complete an assessment to identify this child's strong areas."]} />
       <ReportList title="Growth Areas" items={report?.weak_areas || ['Start with a quick assessment to find helpful review topics.']} />
       <ReportList title="Recommended Next Steps" items={report?.recommended_next_steps || ['Run a quick assessment.', 'Practice one skill at a time with Ms Alisia.']} />
     </div>
@@ -215,7 +312,7 @@ export function ReportsView({
       </div>
       <div className="report-card">
         <h3>Weekly Email Report</h3>
-        <p>{emailPreview?.email_note || 'Weekly email reports are not connected yet. This report structure is prepared so a future email service can send one separate summary per child.'}</p>
+        {emailPreview?.email_note && <p>{emailPreview.email_note}</p>}
         {emailPreview && <div className="report-mini-card">
           <strong>{emailPreview.subject_line}</strong>
           <p>{emailPreview.greeting}</p>
@@ -228,7 +325,27 @@ export function ReportsView({
         <p>Children can later see their own progress and achievements, but billing, sibling reports, grade changes, and parent controls should remain parent-only.</p>
       </div>
     </div>
+    </>}
   </div>;
+}
+
+function ReportLoadingState({ childName }: { childName: string }) {
+  return <section className="report-loading-card" aria-live="polite">
+    <div className="report-loading-copy">
+      <span className="report-loading-spinner" aria-hidden="true" />
+      <div>
+        <h3>Loading {childName}&apos;s report...</h3>
+        <p>Preparing this child&apos;s progress, homework, and assessment details.</p>
+      </div>
+    </div>
+    <div className="report-loading-grid">
+      {['Current Level', 'Weekly Progress', 'Study Time'].map(label => <div className="report-skeleton-card" key={label}>
+        <span />
+        <strong>{label}</strong>
+        <p />
+      </div>)}
+    </div>
+  </section>;
 }
 
 function ParentHomeworkUpload({
@@ -263,6 +380,79 @@ function ParentHomeworkUpload({
     <p className="muted-copy">JPG, PNG, HEIC, HEIF, and PDF uploads are saved to this child&apos;s homework history.</p>
     {message && <p className={message.startsWith('Could') || message.startsWith('Select') ? 'error-note' : 'success-note'}>{message}</p>}
   </section>;
+}
+
+function ParentHomeworkFollowUp({
+  messages,
+  input,
+  loading,
+  error,
+  disabled,
+  onInput,
+  onSend,
+}: {
+  messages: ChatMessage[];
+  input: string;
+  loading: boolean;
+  error: string;
+  disabled: boolean;
+  onInput: (value: string) => void;
+  onSend: () => void;
+}) {
+  return <section className="report-card homework-follow-up">
+    <div>
+      <strong>Continue with Ms. Alisia</strong>
+      <p>Type a question, a parent note, or the child&apos;s answer so Ms. Alisia can help with the next step.</p>
+    </div>
+    {!!messages.length && <div className="homework-follow-up-messages">
+      {messages.map((item, index) => <div key={`${item.role}-${index}`} className={`homework-follow-up-message ${item.role === 'student' ? 'student' : 'assistant'}`}>
+        <span>{item.role === 'student' ? 'You' : 'Ms. Alisia'}</span>
+        <p>{item.content}</p>
+      </div>)}
+    </div>}
+    <label>Response or question
+      <textarea
+        value={input}
+        disabled={disabled}
+        onChange={event => onInput(event.target.value)}
+        onKeyDown={event => {
+          if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') onSend();
+        }}
+        placeholder="Example: My child thinks the answer is 12, but they are not sure why."
+      />
+    </label>
+    <button className="secondary-button compact" type="button" onClick={onSend} disabled={disabled || !input.trim()}>
+      {loading ? 'Sending...' : 'Send to Ms. Alisia'}
+    </button>
+    {error && <p className="error-note">{error}</p>}
+  </section>;
+}
+
+function homeworkContextMessages(upload: HomeworkUpload): ChatMessage[] {
+  const subject = subjectFromUpload(upload);
+  const lines = [
+    'Ms. Alisia looked at this homework.',
+    upload.ai_validation_summary || 'The homework was uploaded. We can work through it one step at a time.',
+    upload.suggested_next_step ? `Next step: ${upload.suggested_next_step}` : '',
+  ].filter(Boolean);
+  return [{ role: 'msalisia', content: lines.join('\n'), subject }];
+}
+
+function subjectFromUpload(upload: HomeworkUpload): Subject {
+  if (upload.detected_subject === 'Math' || upload.detected_subject === 'ELA' || upload.detected_subject === 'Writing') return upload.detected_subject;
+  return 'Math';
+}
+
+function topicFromUpload(upload: HomeworkUpload): string {
+  if (upload.detected_subject === 'ELA') return 'homework reading help';
+  if (upload.detected_subject === 'Writing') return 'homework writing help';
+  return 'homework help';
+}
+
+function parentFriendlyFollowUpError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (message.toLowerCase().includes('parent needs to take care of')) return message;
+  return 'That response did not send yet. Please try again in a moment.';
 }
 
 function HomeworkReportSection({ uploads }: { uploads: HomeworkUpload[] }) {

@@ -35,7 +35,8 @@ class OwnerFinancialService:
             for event in paid_events
             if self._date_prefix(event.get('occurred_at') or event.get('created_at')) == current_month
         )
-        active_rows = [row for row in self._subscription_basis(subscriptions, access_rows) if self._status(row) in {'active', 'trialing'}]
+        subscription_basis = self._subscription_basis(subscriptions, access_rows)
+        active_rows = [row for row in subscription_basis if self._status(row) in {'active', 'trialing'}]
         mrr_cents = sum(self._mrr_cents(row) for row in active_rows)
         now = datetime.now(UTC)
 
@@ -46,7 +47,7 @@ class OwnerFinancialService:
             'mrr_cents_estimate': mrr_cents,
             'arr_cents_estimate': mrr_cents * 12,
             'active_subscriptions_count': len([row for row in active_rows if self._status(row) == 'active']),
-            'paused_unpaid_subscriptions_count': len([row for row in self._subscription_basis(subscriptions, access_rows) if self._status(row) in {'past_due', 'paused', 'unpaid'}]),
+            'paused_unpaid_subscriptions_count': len([row for row in subscription_basis if self._status(row) in {'past_due', 'paused', 'unpaid'}]),
             'canceled_subscriptions_count': len([row for row in subscriptions if self._status(row) in {'canceled', 'incomplete_expired'}]),
             'active_trials_count': len([row for row in access_rows if row.get('access_status') == 'trial' and not self._is_past(row.get('trial_ends_at'))]),
             'expired_trials_count': len([row for row in trials if self._is_past(row.get('trial_ends_at'))]),
@@ -76,7 +77,8 @@ class OwnerFinancialService:
 
         rows = []
         seen_children = set()
-        for sub in subscriptions:
+        current_subscriptions = self._current_subscription_rows(subscriptions)
+        for sub in current_subscriptions:
             parent = profile_by_id.get(sub.get('parent_id')) or {}
             child = child_by_id.get(sub.get('child_id')) or {}
             customer = customer_by_parent.get(sub.get('parent_id')) or {}
@@ -93,6 +95,8 @@ class OwnerFinancialService:
 
         for access in access_rows:
             if access.get('child_id') in seen_children:
+                continue
+            if self._is_placeholder_access_row(access):
                 continue
             parent = profile_by_id.get(access.get('parent_id')) or {}
             child = child_by_id.get(access.get('child_id')) or {}
@@ -274,7 +278,55 @@ class OwnerFinancialService:
             return []
 
     def _subscription_basis(self, subscriptions: list[dict], access_rows: list[dict]) -> list[dict]:
-        return subscriptions if subscriptions else access_rows
+        return self._current_subscription_rows(subscriptions) if subscriptions else self._current_subscription_rows(access_rows)
+
+    def _current_subscription_rows(self, rows: list[dict]) -> list[dict]:
+        current_by_child: dict[str, dict] = {}
+        unlinked_rows: list[dict] = []
+        for row in rows:
+            child_id = row.get('child_id')
+            if not child_id:
+                unlinked_rows.append(row)
+                continue
+            existing = current_by_child.get(child_id)
+            if not existing or self._current_row_sort_key(row) > self._current_row_sort_key(existing):
+                current_by_child[child_id] = row
+        return sorted([*current_by_child.values(), *unlinked_rows], key=self._current_row_sort_key, reverse=True)
+
+    def _current_row_sort_key(self, row: dict) -> tuple[int, float]:
+        status_priority = {
+            'active': 5,
+            'trialing': 4,
+            'trial': 4,
+            'past_due': 3,
+            'paused': 3,
+            'unpaid': 3,
+            'incomplete': 2,
+            'inactive': 1,
+            'canceled': 0,
+            'incomplete_expired': 0,
+        }.get(self._status(row) or '', 1)
+        date_value = (
+            row.get('current_period_ends_at')
+            or row.get('updated_at')
+            or row.get('created_at')
+            or row.get('trial_ends_at')
+        )
+        parsed = self._parse_date(date_value)
+        timestamp = parsed.timestamp() if parsed else 0.0
+        return status_priority, timestamp
+
+    def _is_placeholder_access_row(self, row: dict) -> bool:
+        return (
+            self._status(row) == 'inactive'
+            and not row.get('plan_type')
+            and not row.get('billing_interval')
+            and not row.get('stripe_subscription_id')
+            and not row.get('trial_started_at')
+            and not row.get('trial_ends_at')
+            and not row.get('current_period_ends_at')
+            and self._plan_amount_cents(row) == 0
+        )
 
     def _subscription_row(self, source: str, record: dict, parent: dict, child: dict, customer: dict, discounts: list[dict], coupons: list[dict]) -> dict:
         status = self._status(record)
@@ -297,8 +349,9 @@ class OwnerFinancialService:
             'next_renewal_date': record.get('current_period_ends_at'),
             'trial_ends_at': record.get('trial_ends_at'),
             'amount_cents_estimate': self._plan_amount_cents(record),
+            'amount_display': self._amount_display(record),
             'discount_status': self._discount_status(discounts, coupons),
-            'family_discount_status': self._family_discount_status(discounts),
+            'family_discount_status': self._family_discount_status(record, discounts),
             'payment_failure_status': record.get('access_paused_reason') or ('payment_required' if status in {'past_due', 'unpaid'} else None),
             'grace_period_ends_at': record.get('grace_period_ends_at'),
             'stripe_customer_id': record.get('stripe_customer_id'),
@@ -422,17 +475,48 @@ class OwnerFinancialService:
     def _plan_amount_cents(self, row: dict) -> int:
         return PLAN_MONTHLY_CENTS.get((row.get('plan_type'), row.get('billing_interval')), 0)
 
+    def _amount_display(self, row: dict) -> str | None:
+        amount = self._plan_amount_cents(row)
+        status = self._status(row)
+        if status in {'trial', 'trialing'}:
+            return f'$0 trial now / {self._money(amount)} after trial'
+        if not amount:
+            return '$0.00'
+        return self._money(amount)
+
+    def _money(self, cents: int) -> str:
+        return f'${Decimal(cents) / Decimal(100):,.2f}'
+
     def _discount_status(self, discounts: list[dict], coupons: list[dict]) -> str | None:
         if coupons:
             return coupons[0].get('validation_status') or 'coupon_recorded'
-        if discounts:
-            return discounts[0].get('eligibility_status') or 'discount_recorded'
+        non_family_discounts = [discount for discount in discounts if discount.get('discount_type') != 'family']
+        if non_family_discounts:
+            return non_family_discounts[0].get('eligibility_status') or 'discount_recorded'
         return None
 
-    def _family_discount_status(self, discounts: list[dict]) -> str | None:
+    def _family_discount_status(self, record: dict, discounts: list[dict]) -> str | None:
+        metadata = record.get('metadata') or {}
+        if isinstance(metadata, str):
+            metadata = {}
+        if record.get('family_discount_remove_at_period_end'):
+            return 'Removal at renewal'
+        if record.get('family_discount_applied') or metadata.get('family_discount_applied') == 'true':
+            return 'Applied'
+        if record.get('family_discount_eligible'):
+            return 'Family eligible'
         for discount in discounts:
             if discount.get('discount_type') == 'family':
-                return discount.get('eligibility_status') or 'recorded'
+                status = discount.get('eligibility_status') or 'recorded'
+                if status == 'eligible':
+                    return 'Family eligible (account)'
+                if status == 'pending':
+                    return 'Eligible next checkout'
+                if status == 'applied':
+                    return 'Applied'
+                if status == 'remove_at_period_end':
+                    return 'Removal at renewal'
+                return status.replace('_', ' ').title()
         return None
 
     def _is_past(self, value: str | None) -> bool:

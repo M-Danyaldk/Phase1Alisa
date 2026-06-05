@@ -1,24 +1,32 @@
 import { useEffect, useState } from 'react';
-import { Clock, CreditCard, Users } from 'lucide-react';
+import { CreditCard, Users } from 'lucide-react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
-import { createCheckoutSession, createCustomerPortalSession, getBillingStatus, updateChildAccess } from '../lib/api/billing';
+import { createCheckoutSession, createCustomerPortalSession, getBillingStatus, resumeChildAccess, updateChildAccess } from '../lib/api/billing';
 import { BillingPlan, BillingPlanKey, ChildAccess, ChildAccessStatus, CouponRedemption, FamilyDiscountStatus } from '../types/billing';
+
+const PENDING_CHECKOUT_KEY = 'msalisia_pending_checkout_child';
+
+type PendingCheckout = {
+  childId: string;
+  childName: string;
+};
 
 export function BillingView({ accessToken = '' }: { accessToken?: string }) {
   const [records, setRecords] = useState<ChildAccess[]>([]);
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [familyDiscount, setFamilyDiscount] = useState<FamilyDiscountStatus | null>(null);
   const [couponRedemptions, setCouponRedemptions] = useState<CouponRedemption[]>([]);
-  const [trialAvailable, setTrialAvailable] = useState(true);
   const [paidCheckoutRequired, setPaidCheckoutRequired] = useState(false);
   const [couponCode, setCouponCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [savingChildId, setSavingChildId] = useState('');
+  const [savingAccessAction, setSavingAccessAction] = useState<'pause' | 'resume' | ''>('');
   const [checkoutKey, setCheckoutKey] = useState('');
   const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [completedCheckout, setCompletedCheckout] = useState<PendingCheckout | null>(null);
 
   async function load() {
     if (!accessToken) return;
@@ -30,7 +38,6 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
       setPlans(status.plans);
       setFamilyDiscount(status.family_discount || null);
       setCouponRedemptions(status.coupon_redemptions || []);
-      setTrialAvailable(status.trial_available);
       setPaidCheckoutRequired(status.paid_checkout_required);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Could not load child billing access.');
@@ -43,12 +50,22 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
     load();
   }, [accessToken]);
 
-  async function changeStatus(childId: string, status: ChildAccessStatus) {
+  useEffect(() => {
+    if (!window.location.pathname.includes('/billing/success')) return;
+    const pending = readPendingCheckout();
+    if (pending) {
+      setCompletedCheckout(pending);
+      sessionStorage.removeItem(PENDING_CHECKOUT_KEY);
+    }
+  }, []);
+
+  async function pauseAccess(childId: string) {
     setSavingChildId(childId);
+    setSavingAccessAction('pause');
     setError('');
     setMessage('');
     try {
-      const updated = await updateChildAccess(accessToken, childId, status);
+      const updated = await updateChildAccess(accessToken, childId, 'inactive');
       setRecords(records.map(record => record.child_id === childId ? updated : record));
       setMessage(`${updated.child_name} is now marked ${labelForStatus(updated.access_status)}.`);
       await load();
@@ -56,6 +73,25 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
       setError(submitError instanceof Error ? submitError.message : 'Could not update child access.');
     } finally {
       setSavingChildId('');
+      setSavingAccessAction('');
+    }
+  }
+
+  async function resumeAccess(childId: string) {
+    setSavingChildId(childId);
+    setSavingAccessAction('resume');
+    setError('');
+    setMessage('');
+    try {
+      const updated = await resumeChildAccess(accessToken, childId);
+      setRecords(records.map(record => record.child_id === childId ? updated : record));
+      setMessage(`${updated.child_name}'s classroom access has resumed.`);
+      await load();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Could not resume child access.');
+    } finally {
+      setSavingChildId('');
+      setSavingAccessAction('');
     }
   }
 
@@ -64,6 +100,11 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
     setError('');
     setMessage('');
     try {
+      const child = records.find(record => record.child_id === childId);
+      sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
+        childId,
+        childName: child?.child_name || 'this child',
+      }));
       window.location.href = await createCheckoutSession(accessToken, childId, planKey, couponCode);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Could not start Stripe checkout.');
@@ -84,6 +125,8 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
   }
 
   const activeCount = records.filter(record => record.access_status === 'active' || record.access_status === 'trial').length;
+  const nextCheckoutChild = completedCheckout ? nextChildForCheckout(records, completedCheckout.childId) : null;
+  const checkoutProcessing = completedCheckout && !records.find(record => record.child_id === completedCheckout.childId && record.access_status === 'active');
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Billing and access" title="Subscription access by child" desc="Each child has a separate access record, so one parent account can manage multiple children without mixing subscriptions or learning data." />
@@ -93,13 +136,18 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
 
     <div className="card-grid three">
       <InfoCard icon={<Users />} title="Children Covered" desc={`${activeCount} of ${records.length} child profile(s) currently have trial or active access.`} />
-      <InfoCard icon={<CreditCard />} title="Stripe Status" desc="Checkout is securely connected through Stripe. Billing updates sync after payment events are received." />
-      <InfoCard icon={<Clock />} title="Trial Rule" desc={paidCheckoutRequired ? 'This email has already used a free trial. Please choose a plan to continue.' : 'Each parent email can use one 7-day free trial.'} />
+      <InfoCard icon={<CreditCard />} title="Secure Payment" desc="Your payment is processed securely through Stripe. Subscription changes take effect immediately after payment is confirmed." />
     </div>
 
     <div className="pricing-card">
       <h3>MsAlisia Plans</h3>
       <p>Chat starts at $129/month. Chat + Audio starts at $159/month. Annual plans include 1 month free.</p>
+      <div className="annual-pricing-context-grid">
+        {plans.filter(plan => plan.billing_interval === 'annual').map(plan => <div className="annual-pricing-context" key={plan.plan_key}>
+          <strong>{plan.display_name}</strong>
+          <span>{annualPlanContext(plan)}</span>
+        </div>)}
+      </div>
       {familyDiscount && <div className="billing-discount-panel">
         <strong>Family Discount</strong>
         <p>{familyDiscount.message}</p>
@@ -107,12 +155,44 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
         {!familyDiscount.stripe_coupon_configured && familyDiscount.checkout_eligible && <span>Family coupon is not configured in Stripe yet, so checkout will allow a promotion code instead.</span>}
       </div>}
       {paidCheckoutRequired && <p className="billing-checkout-note">This email has already used a free trial. Please choose a plan to continue.</p>}
+      {!paidCheckoutRequired && <p className="billing-checkout-note">Every new family receives a 7-day trial automatically when the first child enters the classroom.</p>}
       <label className="coupon-field">
         <span>Coupon code</span>
         <input value={couponCode} onChange={(event) => setCouponCode(event.target.value)} placeholder="Optional" />
       </label>
       <button className="secondary-button compact" onClick={openPortal} disabled={portalLoading || !records.length}>{portalLoading ? 'Opening...' : 'Manage Payment Method'}</button>
     </div>
+
+    {completedCheckout && <section className="report-card">
+      {checkoutProcessing
+        ? <>
+          <h3>We&apos;re confirming the payment now.</h3>
+          <p className="muted-copy">This usually takes a moment. If the child still shows as paused, refresh the page after Stripe finishes syncing.</p>
+        </>
+        : nextCheckoutChild
+          ? <>
+            <h3>Payment confirmed for {completedCheckout.childName}.</h3>
+            <p className="muted-copy">You can now subscribe {nextCheckoutChild.child_name} without starting over.</p>
+            <div className="billing-actions">
+              {plans.map(plan => {
+                const key = `${nextCheckoutChild.child_id}:${plan.plan_key}`;
+                return <button
+                  key={plan.plan_key}
+                  className="secondary-button compact"
+                  onClick={() => beginCheckout(nextCheckoutChild.child_id, plan.plan_key)}
+                  disabled={!plan.stripe_price_configured || checkoutKey === key}
+                  title={plan.stripe_price_configured ? plan.display_name : `${plan.stripe_price_env} is not configured`}
+                >
+                  {checkoutKey === key ? 'Opening...' : planButtonText(plan)}
+                </button>;
+              })}
+            </div>
+          </>
+          : <>
+            <h3>All children are covered.</h3>
+            <p className="muted-copy">You&apos;re ready to continue.</p>
+          </>}
+    </section>}
 
     <div className="billing-list">
       {loading && <p className="muted-copy">Loading child access...</p>}
@@ -125,35 +205,30 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
           <p>{periodText(record)}</p>
         </div>
         <div className="billing-actions">
-          {trialAvailable && <button className="secondary-button compact" onClick={() => changeStatus(record.child_id, 'trial')} disabled={savingChildId === record.child_id}>Start Trial</button>}
-          <button className="secondary-button compact danger" onClick={() => changeStatus(record.child_id, 'inactive')} disabled={savingChildId === record.child_id}>Pause Access</button>
+          {record.access_status === 'inactive'
+            ? <button className="secondary-button compact" onClick={() => resumeAccess(record.child_id)} disabled={savingChildId === record.child_id}>
+              {savingChildId === record.child_id && savingAccessAction === 'resume' ? 'Resuming access...' : 'Resume Access'}
+            </button>
+            : <button className="secondary-button compact danger" onClick={() => pauseAccess(record.child_id)} disabled={savingChildId === record.child_id}>
+              {savingChildId === record.child_id && savingAccessAction === 'pause' ? 'Pausing access...' : 'Pause Access'}
+            </button>}
         </div>
-        <div className="billing-actions">
+        <div className="billing-actions billing-plan-actions">
           {plans.map(plan => {
             const key = `${record.child_id}:${plan.plan_key}`;
-            return <button
-              className="secondary-button compact"
-              key={plan.plan_key}
-              onClick={() => beginCheckout(record.child_id, plan.plan_key)}
-              disabled={!plan.stripe_price_configured || checkoutKey === key}
-              title={plan.stripe_price_configured ? plan.display_name : `${plan.stripe_price_env} is not configured`}
-            >
-              {checkoutKey === key ? 'Opening...' : planButtonText(plan)}
-            </button>;
+            return <div className="billing-plan-action" key={plan.plan_key}>
+              <button
+                className="secondary-button compact"
+                onClick={() => beginCheckout(record.child_id, plan.plan_key)}
+                disabled={!plan.stripe_price_configured || checkoutKey === key}
+                title={plan.stripe_price_configured ? plan.display_name : `${plan.stripe_price_env} is not configured`}
+              >
+                {checkoutKey === key ? 'Opening...' : planButtonText(plan)}
+              </button>
+            </div>;
           })}
         </div>
       </div>)}
-    </div>
-
-    <div className="report-card">
-      <h3>How this connects subscriptions to children</h3>
-      <p>Each checkout is connected to the selected child profile. After payment succeeds, that child's learning access updates automatically.</p>
-      <ul>
-        <li>Parent owns the payment account.</li>
-        <li>Child access decides which child can use paid learning features.</li>
-        <li>Reports, assessments, and chats still stay separated by child profile.</li>
-        <li>Family discount changes are applied through checkout or at the next renewal where supported by Stripe.</li>
-      </ul>
     </div>
 
     {!!couponRedemptions.length && <div className="report-card">
@@ -183,4 +258,33 @@ function periodText(record: ChildAccess): string {
 function planButtonText(plan: BillingPlan): string {
   const discount = plan.annual_discount_label ? ` - ${plan.annual_discount_label}` : '';
   return `${plan.display_name} ${plan.price_label}${discount}`;
+}
+
+function annualPlanContext(plan: BillingPlan): string {
+  if (plan.plan_key === 'voice_annual') {
+    return 'Chat + Audio Annual — $1,749/year. That’s 1 month free — equivalent to $145.75/month.';
+  }
+  if (plan.plan_key === 'text_annual') {
+    return 'Chat Annual — $1,419/year. That’s 1 month free — equivalent to $118.25/month.';
+  }
+  return `${plan.display_name} ${plan.price_label}. Annual plans include 1 month free.`;
+}
+
+function readPendingCheckout(): PendingCheckout | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_CHECKOUT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingCheckout;
+    if (!parsed.childId) return null;
+    return {
+      childId: parsed.childId,
+      childName: parsed.childName || 'this child',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function nextChildForCheckout(records: ChildAccess[], completedChildId: string): ChildAccess | null {
+  return records.find(record => record.child_id !== completedChildId && record.access_status !== 'active') || null;
 }

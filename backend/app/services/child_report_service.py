@@ -303,7 +303,7 @@ class ChildReportService:
         for item in progress:
             if item.message_count >= 4:
                 strengths.append(f'{self._subject_label(item.subject)}: active practice with Ms. Alisia.')
-        return strengths[:5] or ['Complete an assessment to identify strong areas.']
+        return strengths[:5] or ["Complete an assessment to identify this child's strong areas."]
 
     def _weak_areas(self, assessments: list[AssessmentSummary]) -> list[str]:
         growth: list[str] = []
@@ -366,6 +366,8 @@ class ChildReportService:
             return exceptional
         latest_strength = self._first_safe(strengths)
         if latest_strength:
+            if latest_strength == "Complete an assessment to identify this child's strong areas.":
+                return latest_strength
             return f'A clear strength to celebrate: {name} is building confidence with {latest_strength}.'
         if memory and memory[0].mastered:
             return f'A clear strength to celebrate: {name} is getting stronger with {self._safe_parent_text(memory[0].mastered)}.'

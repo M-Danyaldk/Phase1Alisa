@@ -305,6 +305,12 @@ export function App() {
     setSelectedChildId(selected && nextChildren.some(child => child.id === selected) ? selected : preferredChildId(nextChildren));
   }
 
+  function handleSelectChild(childId: string) {
+    setSelectedChildId(childId);
+    const selectedChild = children.find(child => child.id === childId);
+    if (selectedChild) setStudent(childToStudent(selectedChild));
+  }
+
   function handleOnboardingChildCreated(child: ChildProfile) {
     setChildren(prev => [...prev, child]);
     setSelectedChildId(child.id);
@@ -528,7 +534,7 @@ export function App() {
       selectedChildId={selectedChildId}
       childrenError={childrenError}
       onViewChange={changeParentView}
-      onSelectChild={setSelectedChildId}
+      onSelectChild={handleSelectChild}
       onOpenChildren={() => changeParentView('children')}
       onLogout={logout}
     >
@@ -538,7 +544,7 @@ export function App() {
           parentName={currentProfile?.full_name || 'Parent'}
           children={children}
           selectedChildId={selectedChildId}
-          onSelectChild={setSelectedChildId}
+          onSelectChild={handleSelectChild}
           onViewChange={changeParentView}
         />}
         {parentView === 'profile' && currentProfile && session.access_token && <ProfileView accessToken={session.access_token} profile={currentProfile} onProfileUpdated={applyProfile} />}

@@ -218,7 +218,7 @@ function latestRewardStatus(summary: ReferralSummary): string {
 }
 
 function statusLabel(status: ChildProfile['status']): string {
-  if (status === 'pending_consent') return 'Pending consent';
+  if (status === 'pending_consent') return 'Parent consent needed - please confirm consent in the child profile settings.';
   if (status === 'inactive') return 'Paused';
   return 'Active';
 }

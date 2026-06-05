@@ -26,6 +26,10 @@ export async function updateChildAccess(accessToken: string, childId: string, ac
   }, authHeaders(accessToken));
 }
 
+export async function resumeChildAccess(accessToken: string, childId: string): Promise<ChildAccess> {
+  return apiPost<ChildAccess>(`/billing/children/${childId}/resume`, {}, authHeaders(accessToken));
+}
+
 export async function createCheckoutSession(accessToken: string, childId: string, planKey: BillingPlanKey, couponCode?: string): Promise<string> {
   const data = await apiPost<{ checkout_url: string; session_id: string }>('/billing/checkout/session', {
     child_id: childId,

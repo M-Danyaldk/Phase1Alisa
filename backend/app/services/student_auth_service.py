@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
@@ -12,6 +13,7 @@ from .supabase_client import SupabaseClient, SupabaseClientError
 USERNAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9._-]{2,31}$')
 SESSION_HOURS = 12
 FAMILY_CODE_ATTEMPTS = 5
+logger = logging.getLogger(__name__)
 
 
 class StudentAuthService:
@@ -93,6 +95,7 @@ class StudentAuthService:
         if not access or not access.get('is_active') or not verify_pin(payload.pin, access.get('pin_hash') or ''):
             raise HTTPException(status_code=401, detail='That username or PIN didn’t work. Please check it and try again.')
         child = await self._child(access['parent_id'], access['child_id'], require_active=True)
+        await self._prepare_classroom_access(child)
         access_state = await self._billing_state(child)
         token = generate_session_token()
         expires_at = datetime.now(UTC) + timedelta(hours=SESSION_HOURS)
@@ -111,6 +114,7 @@ class StudentAuthService:
             if self._missing_student_access(exc):
                 raise HTTPException(status_code=503, detail='Student access tables are not set up yet. Please run the Supabase migration first.') from exc
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        message = 'Your classroom is ready. Let\'s start learning.' if access_state.get('access_allowed') else 'Please ask your parent to choose a plan so your classroom can continue.'
         return {
             'access_token': token,
             'token_type': 'student',
@@ -122,7 +126,7 @@ class StudentAuthService:
             'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
             **access_state,
             'expires_at': expires_at.isoformat(),
-            'message': 'Student login successful.',
+            'message': message,
         }
 
     async def current_student(self, token: str) -> dict:
@@ -267,3 +271,11 @@ class StudentAuthService:
         from .access_control import child_billing_access_state
 
         return await child_billing_access_state(child['id'], child_name=child.get('name'))
+
+    async def _prepare_classroom_access(self, child: dict) -> None:
+        try:
+            from .billing_service import BillingService
+
+            await BillingService().prepare_classroom_access(child['parent_id'], child['id'])
+        except Exception as exc:
+            logger.warning('Could not prepare classroom billing access for child %s: %s', child.get('id'), exc)

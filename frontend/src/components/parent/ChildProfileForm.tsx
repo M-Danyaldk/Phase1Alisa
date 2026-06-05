@@ -3,6 +3,7 @@ import { gradeLevelOptions, isLaunchGradeLevel, launchSubjects, subjectLabel } f
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../../types/childProfile';
 
 const subjects = launchSubjects as ChildSubject[];
+const difficultyOptions = ['Below Grade Level', 'At Grade Level', 'Above Grade Level'];
 
 const defaultValues: ChildProfileFormValues = {
   name: '',
@@ -10,7 +11,7 @@ const defaultValues: ChildProfileFormValues = {
   date_of_birth: '',
   subjects: ['Math', 'ELA', 'Writing'],
   learning_goals: '',
-  difficulty_level: '',
+  difficulty_level: 'At Grade Level',
   parent_notes: '',
   parental_consent_accepted: false,
 };
@@ -28,13 +29,14 @@ function getAge(dateOfBirth: string): number | null {
 
 function valuesFromChild(child?: ChildProfile | null): ChildProfileFormValues {
   if (!child) return defaultValues;
+  const difficultyLevel = difficultyOptions.includes(child.difficulty_level || '') ? child.difficulty_level || '' : defaultValues.difficulty_level;
   return {
     name: child.name,
     grade_level: isLaunchGradeLevel(child.grade_level) ? child.grade_level : defaultValues.grade_level,
     date_of_birth: child.date_of_birth || '',
     subjects: child.subjects,
     learning_goals: child.learning_goals || '',
-    difficulty_level: child.difficulty_level || '',
+    difficulty_level: difficultyLevel,
     parent_notes: child.parent_notes || '',
     parental_consent_accepted: child.parental_consent_accepted,
   };
@@ -109,7 +111,9 @@ export function ChildProfileForm({
       <textarea value={values.learning_goals} onChange={event => setValues(prev => ({ ...prev, learning_goals: event.target.value }))} placeholder="Example: Build confidence with fractions." />
     </label>
     <label>Current difficulty level
-      <input value={values.difficulty_level} onChange={event => setValues(prev => ({ ...prev, difficulty_level: event.target.value }))} placeholder="Optional" />
+      <select value={values.difficulty_level} onChange={event => setValues(prev => ({ ...prev, difficulty_level: event.target.value }))}>
+        {difficultyOptions.map(option => <option key={option} value={option}>{option}</option>)}
+      </select>
     </label>
     <label>Parent notes
       <textarea value={values.parent_notes} onChange={event => setValues(prev => ({ ...prev, parent_notes: event.target.value }))} placeholder="Anything Ms Alisia should know later." />
