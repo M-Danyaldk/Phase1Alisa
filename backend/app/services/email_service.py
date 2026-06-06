@@ -970,10 +970,6 @@ class EmailService:
             </tr>
             <tr>
               <td style="padding:0 30px 10px;">
-                <div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:18px;padding:18px 20px;margin:20px 0;">
-                  <div style="font-size:14px;color:#7c6b9e;font-weight:700;">Student</div>
-                  <div style="font-size:26px;color:#20173d;font-weight:900;margin-top:4px;">{safe_first_name}</div>
-                </div>
                 {body_html}
               </td>
             </tr>
