@@ -15,8 +15,7 @@ const INACTIVITY_PAUSE_MS = 3 * 60 * 1000;
 const SESSION_ACTIVITY_PING_MS = 10 * 1000;
 const SESSION_STATUS_POLL_MS = 30 * 1000;
 const INACTIVE_PAUSE_SECONDS = 180;
-const INACTIVE_PAUSE_MESSAGE = 'Looks like you stepped away — your session is saved. Come back whenever you are ready!';
-const INACTIVE_RELOGIN_MESSAGE = 'Looks like you stepped away - your session is saved. Please log in again when you are ready to continue.';
+const INACTIVE_PAUSE_MESSAGE = 'Looks like you stepped away - your session is saved. Come back whenever you are ready!';
 const BRAIN_BREAK_RELOGIN_MESSAGE = 'Your Brain Break is complete. Please log in again when you are ready to continue learning.';
 const DEFAULT_BRAIN_BREAK_MESSAGE = 'Great work today! Your brain needs a short rest to absorb everything you have learned. Take a 30-minute break and come back ready to learn even more!';
 
@@ -209,9 +208,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         .then(status => {
           applySessionStatus(status);
           setNudgeVisible(false);
-          setSessionNotice(INACTIVE_RELOGIN_MESSAGE);
-          if (onRequireRelogin) onRequireRelogin(INACTIVE_RELOGIN_MESSAGE);
-          else onInactivePause?.(INACTIVE_RELOGIN_MESSAGE);
+          setSessionNotice(INACTIVE_PAUSE_MESSAGE);
+          onInactivePause?.(INACTIVE_PAUSE_MESSAGE);
         })
         .catch(error => setSessionNotice(childFriendlySessionMessage(error)));
     }, pauseDelay);
@@ -220,7 +218,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       window.clearTimeout(nudgeTimer);
       window.clearTimeout(pauseTimer);
     };
-  }, [accessToken, brainBreakActive, childId, lastActivityAt, loading, onInactivePause, onRequireRelogin, sessionId, sessionStatus?.session_status, trackingEnabled]);
+  }, [accessToken, brainBreakActive, childId, lastActivityAt, loading, onInactivePause, sessionId, sessionStatus?.session_status, trackingEnabled]);
 
   useEffect(() => {
     if (!nudgeVisible || !voiceAvailable || !voiceModeActive || tutorDisabled || brainBreakActive || nudgeAudioPlayedRef.current) return;
@@ -505,8 +503,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Learning with Ms Alisia" title="Short, guided tutoring by subject" desc="Ms. Alisia gives step-by-step support that adapts to your learning needs and helps build confidence over time." />
-    <div className="learning-layout">
-      <ChatThreadList
+    <div className={`learning-layout${studentSession ? ' student-learning-layout' : ''}`}>
+      {!studentSession && <ChatThreadList
         threads={threads}
         activeThreadId={activeThread?.id}
         loading={threadLoading}
@@ -514,7 +512,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         notice={historySetupPending ? chatSetupNotice : ''}
         onNewChat={() => startNewChat()}
         onOpenThread={openThread}
-      />
+      />}
       <ChatWorkspace
         messages={messages}
         input={input}

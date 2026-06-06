@@ -8,10 +8,12 @@ from fastapi import HTTPException
 from ..core.security import generate_session_token, hash_pin, hash_session_token, verify_pin
 from ..schemas.student_auth import StudentAccessUpsertRequest, StudentLoginRequest
 from .learning_profile_service import LearningProfileService
+from .email_service import EmailService
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 USERNAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9._-]{2,31}$')
 SESSION_HOURS = 12
+SESSION_REFRESH_WINDOW_HOURS = 1
 FAMILY_CODE_ATTEMPTS = 5
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ class StudentAuthService:
         try:
             records = await self.supabase.select(
                 'student_access',
-                f'parent_id=eq.{quote(parent_id)}&child_id=eq.{quote(child_id)}&limit=1',
+                f'parent_id=eq.{quote(parent_id)}&child_id=eq.{quote(child_id)}&order=updated_at.desc&limit=1',
             )
         except SupabaseClientError as exc:
             if self._missing_student_access(exc):
@@ -34,7 +36,7 @@ class StudentAuthService:
         return records[0] if records else None
 
     async def upsert_student_access(self, parent_id: str, child_id: str, payload: StudentAccessUpsertRequest) -> dict:
-        await self._child(parent_id, child_id)
+        child = await self._child(parent_id, child_id)
         username = self.normalize_username(payload.username)
         now = datetime.now(UTC).isoformat()
         record = {
@@ -60,6 +62,7 @@ class StudentAuthService:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         if not records:
             raise HTTPException(status_code=500, detail='Could not save student access.')
+        await self._send_student_credentials_notice(parent_id, child, action='updated' if existing else 'created')
         return self._public_access(records[0])
 
     async def get_or_create_family_classroom_link(self, parent_id: str) -> dict:
@@ -93,7 +96,7 @@ class StudentAuthService:
         family_link = await self._family_link(payload.family_code)
         access = await self._access_for_family(family_link, username)
         if not access or not access.get('is_active') or not verify_pin(payload.pin, access.get('pin_hash') or ''):
-            raise HTTPException(status_code=401, detail='That username or PIN didn’t work. Please check it and try again.')
+            raise HTTPException(status_code=401, detail="That username or PIN didn't work. Talk to your parent if you have trouble logging in.")
         child = await self._child(access['parent_id'], access['child_id'], require_active=True)
         await self._prepare_classroom_access(child)
         access_state = await self._billing_state(child)
@@ -171,7 +174,27 @@ class StudentAuthService:
         expires_at = self._parse_datetime(session['expires_at'])
         if expires_at <= datetime.now(UTC):
             raise HTTPException(status_code=401, detail='Invalid or expired student session.')
+        session = await self._refresh_session_if_needed(session, expires_at, token_hash)
         return session
+
+    async def _refresh_session_if_needed(self, session: dict, expires_at: datetime, token_hash: str) -> dict:
+        now = datetime.now(UTC)
+        refresh_window = timedelta(hours=SESSION_REFRESH_WINDOW_HOURS)
+        if expires_at - now > refresh_window:
+            return session
+        next_expires_at = now + timedelta(hours=SESSION_HOURS)
+        try:
+            records = await self.supabase.update(
+                'student_sessions',
+                {'token_hash': f'eq.{token_hash}', 'revoked_at': 'is.null'},
+                {'expires_at': next_expires_at.isoformat()},
+            )
+        except SupabaseClientError as exc:
+            logger.warning('Could not refresh active student session %s: %s', session.get('id'), exc)
+            return session
+        if records:
+            return records[0]
+        return {**session, 'expires_at': next_expires_at.isoformat()}
 
     def normalize_username(self, username: str) -> str:
         value = username.strip().lower()
@@ -279,3 +302,20 @@ class StudentAuthService:
             await BillingService().prepare_classroom_access(child['parent_id'], child['id'])
         except Exception as exc:
             logger.warning('Could not prepare classroom billing access for child %s: %s', child.get('id'), exc)
+
+    async def _send_student_credentials_notice(self, parent_id: str, child: dict, action: str) -> None:
+        try:
+            email_service = EmailService()
+            parent_email = await email_service._parent_email(parent_id)
+            if not parent_email:
+                logger.warning('Could not send student credentials %s notice because parent email was not found for %s.', action, parent_id)
+                return
+            await email_service.queue_and_send_student_credentials_notice(
+                parent_id=parent_id,
+                child_id=child['id'],
+                recipient_email=parent_email,
+                child_name=child.get('name') or 'your child',
+                action=action,
+            )
+        except Exception as exc:
+            logger.warning('Could not send student credentials %s notice for child %s: %s', action, child.get('id'), exc)

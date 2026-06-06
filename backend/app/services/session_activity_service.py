@@ -82,7 +82,6 @@ class SessionActivityService:
         await self._insert_activity_event(parent_id, child_id, session.get('id'), 'auto_pause', inactive_seconds_delta=inactive_delta)
         await self._insert_pause_event(parent_id, child_id, session, 'inactivity', inactive_total)
         await self._update_counter_inactive(parent_id, child_id, inactive_delta)
-        await self._revoke_student_sessions(parent_id, child_id)
         counter = await self._counter(parent_id, child_id)
         return self._status_response(child_id, {**session, 'session_status': 'paused', 'inactive_time_seconds': inactive_total}, counter)
 

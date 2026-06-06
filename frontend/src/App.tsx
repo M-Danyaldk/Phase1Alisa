@@ -10,7 +10,6 @@ import { AssessmentView } from './views/AssessmentView';
 import { AdminView } from './views/AdminView';
 import type { AdminSection } from './views/AdminView';
 import { BillingView } from './views/BillingView';
-import { FutureView } from './views/FutureView';
 import { HomeView } from './views/HomeView';
 import { HomeworkView } from './views/HomeworkView';
 import { LearningView } from './views/LearningView';
@@ -28,14 +27,25 @@ import { VerifyEmail } from './pages/VerifyEmail';
 import { AuthSessionResponse, PendingVerification, ProfileResponse } from './types/auth';
 import { StudentMe, StudentSession } from './types/studentSession';
 import { getCurrentProfile } from './lib/api/auth';
+import { getBillingStatus } from './lib/api/billing';
 import { listChildren } from './lib/api/children';
 import { ChildProfile } from './types/childProfile';
+import { BillingStatus, ChildAccess } from './types/billing';
 
 type AuthView = 'login' | 'signup' | 'verify';
 
 const AUTH_SESSION_KEY = 'msalisia-auth-session';
 const STUDENT_SESSION_KEY = 'msalisia-student-session';
 const REFERRAL_CODE_KEY = 'msalisia-referral-code';
+const PARENT_VIEW_PATHS: Record<ParentView, string> = {
+  home: '/dashboard',
+  profile: '/settings',
+  children: '/children',
+  reports: '/reports',
+  homework: '/homework',
+  billing: '/billing',
+  future: '/future',
+};
 
 function readStoredJson<T>(key: string): T | null {
   const stored = localStorage.getItem(key);
@@ -64,6 +74,8 @@ export function App() {
   const [selectedChildId, setSelectedChildId] = useState('');
   const [childrenLoading, setChildrenLoading] = useState(() => Boolean(localStorage.getItem(AUTH_SESSION_KEY)));
   const [childrenError, setChildrenError] = useState('');
+  const [billingStatus, setBillingStatus] = useState<BillingStatus | null>(null);
+  const [billingStatusLoading, setBillingStatusLoading] = useState(false);
   const [showParentOnboarding, setShowParentOnboarding] = useState(false);
   const [paidCheckoutRequiredAfterSignup, setPaidCheckoutRequiredAfterSignup] = useState(false);
   const [studentSession, setStudentSession] = useState<StudentSession | null>(() => readStoredJson<StudentSession>(STUDENT_SESSION_KEY));
@@ -105,9 +117,17 @@ export function App() {
     if (pathname === '/dashboard') setParentView('home');
     if (pathname === '/children') setParentView('children');
     if (pathname === '/reports') setParentView('reports');
+    if (pathname === '/homework') setParentView('homework');
     if (pathname === '/billing' || pathname === '/billing/success' || pathname === '/billing/cancel') setParentView('billing');
     if (pathname === '/settings') setParentView('profile');
-    if (pathname === '/future') setParentView('future');
+  }, [pathname, session]);
+
+  useEffect(() => {
+    if (!session || pathname !== '/login') return;
+    const redirectView = parentRedirectViewFromLocation();
+    if (!redirectView) return;
+    setParentView(redirectView);
+    navigate(parentPathForView(redirectView));
   }, [pathname, session]);
 
   function navigate(path: string) {
@@ -118,6 +138,19 @@ export function App() {
   function changeParentView(view: ParentView) {
     setParentView(view);
     navigate(parentPathForView(view));
+  }
+
+  function parentRedirectViewFromLocation(): ParentView | null {
+    const redirect = new URLSearchParams(window.location.search).get('redirect');
+    if (!redirect) return null;
+    try {
+      const decoded = decodeURIComponent(redirect);
+      if (/^https?:\/\//i.test(decoded) || decoded.startsWith('//')) return null;
+      const normalized = decoded.split('?')[0].replace(/\/+$/, '') || '/';
+      return parentViewFromPath(normalized);
+    } catch {
+      return null;
+    }
   }
 
   async function loadProfile(nextSession: AuthSessionResponse) {
@@ -139,6 +172,21 @@ export function App() {
       setShowParentOnboarding(true);
     }
     return records;
+  }
+
+  async function loadBillingStatus(nextSession: AuthSessionResponse) {
+    if (!nextSession.access_token) return null;
+    setBillingStatusLoading(true);
+    try {
+      const status = await getBillingStatus(nextSession.access_token);
+      setBillingStatus(status);
+      return status;
+    } catch {
+      setBillingStatus(null);
+      return null;
+    } finally {
+      setBillingStatusLoading(false);
+    }
   }
 
   function applyProfile(profile: ProfileResponse) {
@@ -177,6 +225,7 @@ export function App() {
     let loadedChildren: ChildProfile[] = [];
     try {
       loadedChildren = await loadChildren(nextSession);
+      if (loadedChildren.length) await loadBillingStatus(nextSession);
     } catch (error) {
       setChildren([]);
       setSelectedChildId('');
@@ -184,15 +233,17 @@ export function App() {
       setChildrenError(error instanceof Error ? error.message : 'Could not load child profiles.');
     }
     const paidCheckoutRequired = nextSession.paid_checkout_required === true;
+    const redirectView = parentRedirectViewFromLocation();
+    const nextParentView = paidCheckoutRequired && loadedChildren.length ? 'billing' : redirectView || 'home';
     setPaidCheckoutRequiredAfterSignup(paidCheckoutRequired);
     setSession(nextSession);
     setPendingVerification(null);
     setAuthView('login');
-    setParentView(paidCheckoutRequired && loadedChildren.length ? 'billing' : 'home');
+    setParentView(nextParentView);
     setChildView('home');
     setProfileLoading(false);
     setChildrenLoading(false);
-    navigate(paidCheckoutRequired && loadedChildren.length ? '/billing' : '/dashboard');
+    navigate(parentPathForView(nextParentView));
   }
 
   function logout() {
@@ -205,6 +256,7 @@ export function App() {
     setChildrenError('');
     setShowParentOnboarding(false);
     setPaidCheckoutRequiredAfterSignup(false);
+    setBillingStatus(null);
     setProfileError('');
     setParentView('home');
     setChildView('home');
@@ -268,6 +320,7 @@ export function App() {
         setChildrenError(error instanceof Error ? error.message : 'Could not load child profiles.');
       })
       .finally(() => setChildrenLoading(false));
+    loadBillingStatus(session);
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -300,9 +353,15 @@ export function App() {
   }, [children, currentProfile, selectedChildId]);
 
   function handleChildrenChanged(nextChildren: ChildProfile[], nextSelectedChildId?: string) {
+    const addedChild = nextChildren.length > children.length;
     setChildren(nextChildren);
     const selected = nextSelectedChildId || selectedChildId;
     setSelectedChildId(selected && nextChildren.some(child => child.id === selected) ? selected : preferredChildId(nextChildren));
+    if (session) void loadBillingStatus(session);
+    if (addedChild) {
+      setParentView('billing');
+      navigate('/billing');
+    }
   }
 
   function handleSelectChild(childId: string) {
@@ -314,6 +373,7 @@ export function App() {
   function handleOnboardingChildCreated(child: ChildProfile) {
     setChildren(prev => [...prev, child]);
     setSelectedChildId(child.id);
+    if (session) void loadBillingStatus(session);
   }
 
   const landingPath = pathname === '/';
@@ -513,17 +573,25 @@ export function App() {
           onChildCreated={handleOnboardingChildCreated}
           onContinue={() => {
             setShowParentOnboarding(false);
-            if (paidCheckoutRequiredAfterSignup) {
-              setParentView('billing');
-              navigate('/billing');
-            } else {
-              setParentView('home');
-            }
+            setParentView('billing');
+            navigate('/billing');
           }}
         />
       </main>
     </div>;
   }
+
+  const selectedChild = children.find(child => child.id === selectedChildId);
+  const selectedChildAccess = billingStatus?.children.find(record => record.child_id === selectedChildId) || null;
+  const selectedChildHasAccess = childAccessAllowsLearning(selectedChildAccess);
+  const selectedChildCanStartTrial = Boolean(selectedChild && billingStatus?.trial_available && !selectedChildHasAccess);
+  const selectedChildBillingLocked = Boolean(
+    selectedChild
+    && billingStatus
+    && !billingStatusLoading
+    && !selectedChildHasAccess
+    && !selectedChildCanStartTrial
+  );
 
   return (
     <ParentShell
@@ -546,14 +614,33 @@ export function App() {
           selectedChildId={selectedChildId}
           onSelectChild={handleSelectChild}
           onViewChange={changeParentView}
+          selectedChildAccess={selectedChildAccess}
+          trialAvailable={billingStatus?.trial_available === true}
+          billingLocked={selectedChildBillingLocked}
         />}
         {parentView === 'profile' && currentProfile && session.access_token && <ProfileView accessToken={session.access_token} profile={currentProfile} onProfileUpdated={applyProfile} />}
-        {parentView === 'children' && session.access_token && <ManageChildrenView accessToken={session.access_token} children={children} selectedChildId={selectedChildId} onChildrenChanged={handleChildrenChanged} />}
-        {parentView === 'reports' && <ReportsView student={student} accessToken={session.access_token || ''} childId={selectedChildId} setView={(view) => {
+        {parentView === 'children' && session.access_token && <ManageChildrenView
+          accessToken={session.access_token}
+          children={children}
+          selectedChildId={selectedChildId}
+          billingStatus={billingStatus}
+          onSelectChild={handleSelectChild}
+          onOpenBilling={() => changeParentView('billing')}
+          onChildrenChanged={handleChildrenChanged}
+        />}
+        {parentView === 'reports' && selectedChildBillingLocked && <BillingRequiredNotice childName={selectedChild?.name || 'This child'} onBilling={() => changeParentView('billing')} />}
+        {parentView === 'reports' && !selectedChildBillingLocked && <ReportsView student={student} accessToken={session.access_token || ''} childId={selectedChildId} setView={(view) => {
           if (view === 'reports') setParentView('reports');
         }} />}
+        {parentView === 'homework' && !selectedChild && <NoChildSelectedNotice onChildren={() => changeParentView('children')} />}
+        {parentView === 'homework' && selectedChild && selectedChildBillingLocked && <BillingRequiredNotice childName={selectedChild.name} onBilling={() => changeParentView('billing')} />}
+        {parentView === 'homework' && selectedChild && !selectedChildBillingLocked && <HomeworkView
+          student={student}
+          accessToken={session.access_token || ''}
+          childId={selectedChildId}
+          studentSession={false}
+        />}
         {parentView === 'billing' && <BillingView accessToken={session.access_token || ''} />}
-        {parentView === 'future' && <FutureView />}
       </ParentOnly>
     </ParentShell>
   );
@@ -564,9 +651,13 @@ function preferredChildId(children: ChildProfile[]): string {
 }
 
 function parentPathForView(view: ParentView): string {
-  if (view === 'home') return '/dashboard';
-  if (view === 'profile') return '/settings';
-  return `/${view}`;
+  return PARENT_VIEW_PATHS[view];
+}
+
+function parentViewFromPath(pathname: string): ParentView | null {
+  const match = (Object.entries(PARENT_VIEW_PATHS) as [ParentView, string][])
+    .find(([, path]) => path === pathname);
+  return match?.[0] || null;
 }
 
 function adminSectionFromPath(pathname: string): AdminSection {
@@ -575,4 +666,36 @@ function adminSectionFromPath(pathname: string): AdminSection {
     return section;
   }
   return 'dashboard';
+}
+
+function childAccessAllowsLearning(record: ChildAccess | null): boolean {
+  if (!record) return false;
+  const now = Date.now();
+  if (record.access_status === 'trial') {
+    return Boolean(record.trial_ends_at && Date.parse(record.trial_ends_at) > now);
+  }
+  if (record.access_status === 'active') {
+    return !record.current_period_ends_at || Date.parse(record.current_period_ends_at) > now;
+  }
+  return false;
+}
+
+function BillingRequiredNotice({ childName, onBilling }: { childName: string; onBilling: () => void }) {
+  return <div className="page-stack narrow">
+    <section className="report-card access-message">
+      <h3>Choose a plan for {childName}</h3>
+      <p>This child needs an active trial or paid subscription before learning reports and classroom features can open.</p>
+      <button className="primary-button" onClick={onBilling}>Go to Billing</button>
+    </section>
+  </div>;
+}
+
+function NoChildSelectedNotice({ onChildren }: { onChildren: () => void }) {
+  return <div className="page-stack narrow">
+    <section className="report-card access-message">
+      <h3>Add a child first</h3>
+      <p>Create a child profile before uploading homework.</p>
+      <button className="primary-button" onClick={onChildren}>Manage Child Profiles</button>
+    </section>
+  </div>;
 }

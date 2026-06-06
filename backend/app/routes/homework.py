@@ -1,7 +1,7 @@
 from fastapi import APIRouter, File, Form, Header, Query, UploadFile
 
 from ..schemas.homework import HomeworkHistoryResponse, HomeworkUploadResponse
-from ..services.access_control import require_child_access, require_parent_access
+from ..services.access_control import ensure_child_billing_access, ensure_child_for_parent, require_child_access, require_parent_access
 from ..services.homework_service import HomeworkService
 
 router = APIRouter(prefix='/api/homework', tags=['homework'])
@@ -31,6 +31,8 @@ async def homework_history_for_parent(
     x_access_mode: str = Header(default=''),
 ) -> HomeworkHistoryResponse:
     user = await require_parent_access(authorization, x_access_mode)
+    child = await ensure_child_for_parent(user['id'], child_id)
+    await ensure_child_billing_access(child_id, child_name=child.get('name'))
     return await HomeworkService().history_for_parent(user['id'], child_id, limit=limit)
 
 
@@ -53,4 +55,6 @@ async def parent_upload_homework(
     x_access_mode: str = Header(default=''),
 ) -> HomeworkUploadResponse:
     user = await require_parent_access(authorization, x_access_mode)
+    child = await ensure_child_for_parent(user['id'], child_id)
+    await ensure_child_billing_access(child_id, child_name=child.get('name'))
     return await HomeworkService().upload_for_parent(user['id'], child_id, file)

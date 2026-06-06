@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     deepgram_api_url: str = 'https://api.deepgram.com/v1/listen'
     openai_api_key: str = ''
     openai_tts_model: str = 'gpt-4o-mini-tts'
-    openai_tts_voice: str = 'alloy'
+    openai_tts_voice: str = 'nova'
     openai_tts_api_url: str = 'https://api.openai.com/v1/audio/speech'
     openai_embedding_model: str = 'text-embedding-3-small'
     openai_embeddings_api_url: str = 'https://api.openai.com/v1/embeddings'
@@ -54,6 +54,8 @@ class Settings(BaseSettings):
 
     resend_api_key: str = ''
     resend_from_email: str = 'enrol@msalisia.com'
+    weekly_progress_from_email: str = 'Francesca@msalisia.com'
+    email_logo_url: str = ''
     waitlist_notify_email: str = 'enrol@msalisia.com'
     waitlist_open_date: str = '2026-06-14'
     internal_cron_secret: str = ''

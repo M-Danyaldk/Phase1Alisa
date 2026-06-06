@@ -19,6 +19,7 @@ export type ChildAccess = {
   trial_started_at?: string | null;
   current_period_ends_at?: string | null;
   current_period_started_at?: string | null;
+  cancel_at_period_end?: boolean;
   grace_period_ends_at?: string | null;
   access_paused_reason?: string | null;
   created_at?: string | null;
@@ -68,4 +69,9 @@ export type BillingPlan = {
   stripe_price_env: string;
   stripe_price_configured: boolean;
   voice_enabled: boolean;
+};
+
+export type CheckoutChildPlan = {
+  child_id: string;
+  plan_key: BillingPlanKey;
 };

@@ -1,4 +1,4 @@
-export type ParentView = 'home' | 'profile' | 'children' | 'reports' | 'billing' | 'future';
+export type ParentView = 'home' | 'profile' | 'children' | 'reports' | 'homework' | 'billing' | 'future';
 export type ChildView = 'home' | 'learn' | 'assessments' | 'practice-math' | 'practice-ela' | 'practice-writing' | 'homework';
 export type View = ParentView | ChildView | 'onboarding' | 'admin';
 export type Subject = 'Math' | 'ELA' | 'Writing';

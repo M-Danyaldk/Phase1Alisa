@@ -73,7 +73,7 @@ export function ParentOnboardingView({
       {error && <p className="error-note">{error}</p>}
       {createdCount > 0 && <div className="onboarding-actions">
         <button className="secondary-button" onClick={() => setCreatedCount(count => count)}>Add another child</button>
-        <button className="primary-button" onClick={onContinue}>Continue to dashboard</button>
+        <button className="primary-button" onClick={onContinue}>Continue to subscription options</button>
       </div>}
     </div>
   </div>;

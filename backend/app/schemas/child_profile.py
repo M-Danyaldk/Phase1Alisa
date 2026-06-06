@@ -3,7 +3,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..core.security import calculate_age
 from ..curriculum import LAUNCH_GRADE_ERROR, is_launch_grade_label
 
 ChildStatus = Literal['active', 'inactive', 'pending_consent']
@@ -18,7 +17,7 @@ class ChildProfileCreateRequest(BaseModel):
     learning_goals: str = ''
     difficulty_level: str = ''
     parent_notes: str = ''
-    parental_consent_accepted: bool = False
+    parental_consent_accepted: bool = True
 
     @model_validator(mode='after')
     def validate_child_profile(self):
@@ -26,8 +25,6 @@ class ChildProfileCreateRequest(BaseModel):
             raise ValueError(LAUNCH_GRADE_ERROR)
         if not self.subjects:
             raise ValueError('Select at least one subject.')
-        if self.date_of_birth and calculate_age(self.date_of_birth) < 13 and not self.parental_consent_accepted:
-            raise ValueError('Parental consent is required for children under 13.')
         return self
 
 
@@ -39,7 +36,7 @@ class ChildProfileUpdateRequest(BaseModel):
     learning_goals: str = ''
     difficulty_level: str = ''
     parent_notes: str = ''
-    parental_consent_accepted: bool = False
+    parental_consent_accepted: bool = True
     status: ChildStatus = 'active'
 
     @model_validator(mode='after')
@@ -48,8 +45,6 @@ class ChildProfileUpdateRequest(BaseModel):
             raise ValueError(LAUNCH_GRADE_ERROR)
         if not self.subjects:
             raise ValueError('Select at least one subject.')
-        if self.date_of_birth and calculate_age(self.date_of_birth) < 13 and not self.parental_consent_accepted:
-            raise ValueError('Parental consent is required for children under 13.')
         return self
 
 

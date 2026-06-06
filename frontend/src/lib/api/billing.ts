@@ -1,5 +1,5 @@
 import { apiGet, apiPatch, apiPost } from '../api';
-import { BillingPlan, BillingPlanKey, BillingStatus, ChildAccess, ChildAccessStatus } from '../../types/billing';
+import { BillingPlan, BillingPlanKey, BillingStatus, ChildAccess, ChildAccessStatus, CheckoutChildPlan } from '../../types/billing';
 
 function authHeaders(accessToken: string): Record<string, string> {
   return { Authorization: `Bearer ${accessToken}` };
@@ -34,6 +34,14 @@ export async function createCheckoutSession(accessToken: string, childId: string
   const data = await apiPost<{ checkout_url: string; session_id: string }>('/billing/checkout/session', {
     child_id: childId,
     plan_key: planKey,
+    coupon_code: couponCode?.trim() || null,
+  }, authHeaders(accessToken));
+  return data.checkout_url;
+}
+
+export async function createBulkCheckoutSession(accessToken: string, children: CheckoutChildPlan[], couponCode?: string): Promise<string> {
+  const data = await apiPost<{ checkout_url: string; session_id: string }>('/billing/checkout/bulk-session', {
+    children,
     coupon_code: couponCode?.trim() || null,
   }, authHeaders(accessToken));
   return data.checkout_url;

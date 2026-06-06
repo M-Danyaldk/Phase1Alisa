@@ -29,8 +29,6 @@ class ChildProfileService:
 
     async def create_child(self, parent_id: str, payload: ChildProfileCreateRequest) -> dict:
         status = 'active'
-        if payload.date_of_birth and not payload.parental_consent_accepted:
-            status = 'pending_consent'
         now = datetime.now(UTC).isoformat()
         try:
             records = await self.supabase.insert('child_profiles', {
@@ -43,7 +41,7 @@ class ChildProfileService:
                 'difficulty_level': payload.difficulty_level.strip(),
                 'parent_notes': payload.parent_notes.strip(),
                 'status': status,
-                'parental_consent_accepted': payload.parental_consent_accepted,
+                'parental_consent_accepted': True,
                 'created_at': now,
                 'updated_at': now,
             })
@@ -64,15 +62,8 @@ class ChildProfileService:
                 'id': f'eq.{child_id}',
                 'parent_id': f'eq.{parent_id}',
             }, {
-                'name': payload.name.strip(),
                 'grade_level': payload.grade_level,
-                'date_of_birth': payload.date_of_birth.isoformat() if payload.date_of_birth else None,
                 'subjects': payload.subjects,
-                'learning_goals': payload.learning_goals.strip(),
-                'difficulty_level': payload.difficulty_level.strip(),
-                'parent_notes': payload.parent_notes.strip(),
-                'status': payload.status,
-                'parental_consent_accepted': payload.parental_consent_accepted,
                 'updated_at': datetime.now(UTC).isoformat(),
             })
         except SupabaseClientError as exc:

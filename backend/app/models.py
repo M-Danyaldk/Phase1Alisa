@@ -96,15 +96,15 @@ class ChildAssessmentResult(BaseModel):
     subject: Subject
     child_message: str
     estimated_level: str = 'Learning path ready'
-    score_label: str = 'Great job'
+    score_label: str = 'Learning path ready'
     strengths: list[str] = Field(default_factory=list)
     learning_gaps: list[str] = Field(default_factory=list)
     recommended_progression: list[str] = Field(default_factory=list)
     recommended_next_topics: list[str] = Field(default_factory=list)
     parent_summary: str = ''
-    celebration_title: str = 'Great job!'
+    celebration_title: str = 'Check-in complete'
     celebration_message: str = ''
-    performance_label: str = 'Great Effort'
+    performance_label: str = 'Learning Path Ready'
     score_summary: str = ''
     strengths_for_child: list[str] = Field(default_factory=list)
     practice_next: str = ''

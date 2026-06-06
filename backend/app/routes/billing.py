@@ -5,6 +5,7 @@ from ..schemas.billing import (
     BillingPlansResponse,
     BillingPlanResponse,
     BillingStatusResponse,
+    BulkCheckoutSessionRequest,
     CheckoutSessionRequest,
     CheckoutSessionResponse,
     ChildAccessListResponse,
@@ -60,6 +61,14 @@ async def start_trial(payload: StartTrialRequest, authorization: str = Header(de
 async def create_checkout_session(payload: CheckoutSessionRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> CheckoutSessionResponse:
     user = await require_parent_access(authorization, x_access_mode)
     result = await BillingService().create_checkout_session(user['id'], user.get('email') or '', payload.child_id, payload.plan_key, payload.coupon_code)
+    return CheckoutSessionResponse(**result)
+
+
+@router.post('/checkout/bulk-session', response_model=CheckoutSessionResponse)
+async def create_bulk_checkout_session(payload: BulkCheckoutSessionRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> CheckoutSessionResponse:
+    user = await require_parent_access(authorization, x_access_mode)
+    selections = [{'child_id': item.child_id, 'plan_key': item.plan_key} for item in payload.children]
+    result = await BillingService().create_bulk_checkout_session(user['id'], user.get('email') or '', selections, payload.coupon_code)
     return CheckoutSessionResponse(**result)
 
 

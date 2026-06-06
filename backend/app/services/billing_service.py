@@ -117,6 +117,9 @@ class BillingService:
                 raise HTTPException(status_code=400, detail='Parent email is required to start a trial.')
             return (await self.start_trial(parent_id, email, child_id, payload.plan_key))['child']
         child = await self._child(parent_id, child_id)
+        access = await self._access_for_child(parent_id, child_id)
+        if payload.access_status == 'inactive' and self._has_current_paid_access(access):
+            return await self._schedule_paid_access_pause(parent_id, child_id, child, access)
         now = datetime.now(UTC)
         update = {
             'access_status': payload.access_status,
@@ -166,8 +169,12 @@ class BillingService:
         update = {
             'access_status': next_status,
             'access_paused_reason': None,
+            'cancel_at_period_end': False,
             'updated_at': now.isoformat(),
         }
+        subscription_id = access.get('stripe_subscription_id')
+        if subscription_id and access.get('cancel_at_period_end'):
+            await self._resume_paid_subscription(parent_id, subscription_id)
         try:
             records = await self.supabase.update('child_access', {
                 'parent_id': f'eq.{parent_id}',
@@ -180,6 +187,63 @@ class BillingService:
         if not records:
             raise HTTPException(status_code=500, detail='Could not resume classroom access.')
         return self._merge(child, records[0])
+
+    async def _schedule_paid_access_pause(self, parent_id: str, child_id: str, child: dict, access: dict) -> dict:
+        subscription_id = access.get('stripe_subscription_id')
+        if not subscription_id:
+            raise HTTPException(status_code=409, detail='Please use billing checkout or the payment portal to manage this access.')
+        shared_count = await self._subscription_child_access_count(subscription_id)
+        if shared_count > 1:
+            raise HTTPException(
+                status_code=409,
+                detail='This subscription covers multiple children. Please use Manage Payment Method to adjust the shared subscription.',
+            )
+        stripe = self._stripe_module()
+        try:
+            await anyio.to_thread.run_sync(lambda: stripe.Subscription.modify(subscription_id, cancel_at_period_end=True))
+        except Exception as exc:
+            logger.warning('Could not schedule Stripe subscription pause for child %s: %s', child_id, exc)
+            raise HTTPException(status_code=503, detail='Could not schedule this subscription change right now. Please try again.') from exc
+
+        now = datetime.now(UTC).isoformat()
+        update = {
+            'access_status': 'active',
+            'access_paused_reason': 'pause_at_period_end',
+            'cancel_at_period_end': True,
+            'updated_at': now,
+        }
+        try:
+            records = await self.supabase.update('child_access', {
+                'parent_id': f'eq.{parent_id}',
+                'child_id': f'eq.{child_id}',
+            }, update)
+            await self.supabase.update('billing_subscriptions', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
+                'cancel_at_period_end': True,
+                'updated_at': now,
+            })
+        except SupabaseClientError as exc:
+            if self._missing_cancel_at_period_end_column(exc):
+                raise HTTPException(status_code=503, detail='Subscription pause support is not set up yet. Please run the Supabase migration first.') from exc
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        if not records:
+            raise HTTPException(status_code=500, detail='Could not schedule access pause.')
+        return self._merge(child, records[0])
+
+    async def _resume_paid_subscription(self, parent_id: str, subscription_id: str) -> None:
+        stripe = self._stripe_module()
+        try:
+            await anyio.to_thread.run_sync(lambda: stripe.Subscription.modify(subscription_id, cancel_at_period_end=False))
+        except Exception as exc:
+            logger.warning('Could not resume Stripe subscription %s for parent %s: %s', subscription_id, parent_id, exc)
+            raise HTTPException(status_code=503, detail='Could not resume this subscription right now. Please try again.') from exc
+        try:
+            await self.supabase.update('billing_subscriptions', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
+                'cancel_at_period_end': False,
+                'updated_at': datetime.now(UTC).isoformat(),
+            })
+        except SupabaseClientError as exc:
+            if not self._missing_milestone2_table(exc):
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     async def prepare_classroom_access(self, parent_id: str, child_id: str) -> dict | None:
         child = await self._child(parent_id, child_id)
@@ -255,6 +319,13 @@ class BillingService:
         if not records:
             raise HTTPException(status_code=500, detail='Could not start trial access.')
         child_access = self._merge(child, records[0])
+        await self._send_trial_started_parent_email(
+            parent_id=parent_id,
+            parent_email=normalized_email,
+            child_id=child_id,
+            trial_started_at=now.isoformat(),
+            trial_ends_at=trial_ends_at.isoformat(),
+        )
         await self._send_trial_started_alert(
             parent_id=parent_id,
             parent_email=normalized_email,
@@ -274,6 +345,7 @@ class BillingService:
     async def create_checkout_session(self, parent_id: str, email: str, child_id: str, plan_key: PlanKey, coupon_code: str | None = None) -> dict:
         stripe = self._stripe_module()
         child = await self._child(parent_id, child_id)
+        await self._ensure_child_can_checkout(parent_id, child_id)
         plan = self._plan(plan_key)
         stripe_price_id = self._stripe_price_id(plan)
         customer_id = await self._get_or_create_stripe_customer(parent_id, email)
@@ -326,6 +398,91 @@ class BillingService:
                 'plan_key': plan_key,
                 'checkout_session_id': session.id,
             })
+        return {
+            'checkout_url': session.url,
+            'session_id': session.id,
+        }
+
+    async def create_bulk_checkout_session(self, parent_id: str, email: str, selections: list[dict], coupon_code: str | None = None) -> dict:
+        stripe = self._stripe_module()
+        if not selections:
+            raise HTTPException(status_code=422, detail='Choose at least one child to subscribe.')
+        if len(selections) > 10:
+            raise HTTPException(status_code=422, detail='Please choose 10 or fewer children for one checkout.')
+
+        normalized: list[dict] = []
+        seen_children: set[str] = set()
+        for item in selections:
+            child_id = str(item.get('child_id') or '').strip()
+            plan_key = str(item.get('plan_key') or '').strip()
+            if not child_id or child_id in seen_children:
+                continue
+            child = await self._child(parent_id, child_id)
+            await self._ensure_child_can_checkout(parent_id, child_id)
+            plan = self._plan(plan_key)
+            normalized.append({'child': child, 'child_id': child_id, 'plan_key': plan_key, 'plan': plan})
+            seen_children.add(child_id)
+
+        if not normalized:
+            raise HTTPException(status_code=422, detail='Choose at least one child to subscribe.')
+
+        customer_id = await self._get_or_create_stripe_customer(parent_id, email)
+        family_discount = await self._family_discount_state(parent_id, pending_checkout_count=len(normalized))
+        coupon = await self._validate_coupon_code(stripe, coupon_code)
+        child_plan_map = self._encode_child_plan_map(normalized)
+        child_names = ', '.join(item['child'].get('name', 'Child') for item in normalized[:5])
+        if len(normalized) > 5:
+            child_names = f'{child_names}, and {len(normalized) - 5} more'
+
+        checkout_payload = {
+            'mode': 'subscription',
+            'customer': customer_id,
+            'line_items': [
+                {'price': self._stripe_price_id(item['plan']), 'quantity': 1}
+                for item in normalized
+            ],
+            'success_url': self.settings.stripe_success_url or 'http://localhost:5173/billing/success',
+            'cancel_url': self.settings.stripe_cancel_url or 'http://localhost:5173/billing/cancel',
+            'client_reference_id': f'bulk:{normalized[0]["child_id"]}',
+            'subscription_data': {
+                'metadata': {
+                    'parent_id': parent_id,
+                    'checkout_mode': 'multi_child',
+                    'child_plan_map': child_plan_map,
+                    'child_count': str(len(normalized)),
+                },
+            },
+            'metadata': {
+                'parent_id': parent_id,
+                'checkout_mode': 'multi_child',
+                'child_plan_map': child_plan_map,
+                'child_count': str(len(normalized)),
+                'child_names': child_names,
+                'family_discount_checkout_eligible': str(bool(family_discount['checkout_eligible'])).lower(),
+            },
+        }
+        if coupon:
+            checkout_payload['discounts'] = [{'promotion_code': coupon['promotion_code_id']}]
+            checkout_payload['metadata']['coupon_code'] = coupon['coupon_code']
+            checkout_payload['subscription_data']['metadata']['coupon_code'] = coupon['coupon_code']
+        elif family_discount['checkout_eligible'] and self.settings.stripe_family_discount_coupon_id:
+            checkout_payload['discounts'] = [{'coupon': self.settings.stripe_family_discount_coupon_id}]
+            checkout_payload['metadata']['family_discount_applied'] = 'true'
+            checkout_payload['subscription_data']['metadata']['family_discount_applied'] = 'true'
+        elif family_discount['checkout_eligible']:
+            logger.warning('Family discount eligible for parent %s but STRIPE_FAMILY_DISCOUNT_COUPON_ID is not configured.', parent_id)
+            checkout_payload['allow_promotion_codes'] = True
+        else:
+            checkout_payload['allow_promotion_codes'] = True
+
+        session = await anyio.to_thread.run_sync(lambda: stripe.checkout.Session.create(**checkout_payload))
+        if coupon:
+            for item in normalized:
+                await self._record_coupon_redemption(parent_id, item['child_id'], coupon, 'valid', payment_reference=session.id, metadata={
+                    'plan_key': item['plan_key'],
+                    'checkout_session_id': session.id,
+                    'checkout_mode': 'multi_child',
+                })
         return {
             'checkout_url': session.url,
             'session_id': session.id,
@@ -433,6 +590,9 @@ class BillingService:
         subscription_id = self._stripe_id(subscription.get('id'))
         customer_id = self._stripe_id(subscription.get('customer')) or self._stripe_id((checkout_session or {}).get('customer'))
         metadata = {**(subscription.get('metadata') or {}), **((checkout_session or {}).get('metadata') or {})}
+        if metadata.get('checkout_mode') == 'multi_child' or metadata.get('child_plan_map'):
+            await self._handle_multi_child_subscription_upsert(subscription, checkout_session=checkout_session, metadata=metadata)
+            return
         parent_id = metadata.get('parent_id')
         child_id = metadata.get('child_id') or (checkout_session or {}).get('client_reference_id')
         plan_key = self._plan_key_from_price(subscription) or metadata.get('plan_key')
@@ -492,14 +652,93 @@ class BillingService:
             'current_period_started_at': current_period_start,
             'current_period_ends_at': current_period_end,
             'original_billing_due_at': original_due,
+            'cancel_at_period_end': bool(subscription.get('cancel_at_period_end')),
             'grace_period_started_at': None if access_status == 'active' else (existing_access or {}).get('grace_period_started_at'),
             'grace_period_ends_at': None if access_status == 'active' else (existing_access or {}).get('grace_period_ends_at'),
-            'access_paused_reason': None if access_status == 'active' else self._pause_reason_for_status(status),
+            'access_paused_reason': 'pause_at_period_end' if subscription.get('cancel_at_period_end') and access_status == 'active' else (None if access_status == 'active' else self._pause_reason_for_status(status)),
             'latest_invoice_id': latest_invoice_id,
             'updated_at': now,
         }
         await self.supabase.upsert('child_access', {**access_payload, 'created_at': now}, 'child_id')
         await self._queue_annual_renewal_email(parent_id, child_id, customer_id, billing_payload)
+
+    async def _handle_multi_child_subscription_upsert(self, subscription: dict, checkout_session: dict | None, metadata: dict) -> None:
+        subscription_id = self._stripe_id(subscription.get('id'))
+        customer_id = self._stripe_id(subscription.get('customer')) or self._stripe_id((checkout_session or {}).get('customer'))
+        parent_id = metadata.get('parent_id')
+        selections = self._decode_child_plan_map(metadata.get('child_plan_map') or '')
+        if not subscription_id or not customer_id or not parent_id or not selections:
+            logger.warning('Stripe multi-child subscription sync skipped due to missing metadata: subscription=%s parent=%s children=%s', subscription_id, parent_id, len(selections))
+            return
+
+        status = subscription.get('status') or 'incomplete'
+        now = datetime.now(UTC).isoformat()
+        current_period_start = self._subscription_period_timestamp(subscription, 'current_period_start')
+        current_period_end = self._subscription_period_timestamp(subscription, 'current_period_end')
+        trial_start = self._stripe_timestamp(subscription.get('trial_start'))
+        trial_end = self._stripe_timestamp(subscription.get('trial_end'))
+        access_status = self._access_status_from_subscription(status)
+        latest_invoice_id = self._stripe_id(subscription.get('latest_invoice'))
+        first_selection = selections[0]
+        first_plan = self._plan(first_selection['plan_key'])
+        billing_payload = {
+            'parent_id': parent_id,
+            'child_id': first_selection['child_id'],
+            'stripe_customer_id': customer_id,
+            'stripe_subscription_id': subscription_id,
+            'stripe_price_id': self._subscription_price_id(subscription),
+            'stripe_latest_invoice_id': latest_invoice_id,
+            'plan_type': first_plan['plan_type'],
+            'billing_interval': first_plan['billing_interval'],
+            'subscription_status': status if status in self._subscription_statuses() else 'incomplete',
+            'trial_started_at': trial_start,
+            'trial_ends_at': trial_end,
+            'original_billing_due_at': current_period_end,
+            'current_period_started_at': current_period_start,
+            'current_period_ends_at': current_period_end,
+            'cancel_at_period_end': bool(subscription.get('cancel_at_period_end')),
+            'canceled_at': self._stripe_timestamp(subscription.get('canceled_at')),
+            'metadata': {**metadata, 'multi_child_subscription': True},
+            'updated_at': now,
+        }
+        await self._upsert_billing_subscription(billing_payload)
+
+        for selection in selections:
+            child_id = selection['child_id']
+            plan = self._plan(selection['plan_key'])
+            child = await self._child(parent_id, child_id)
+            existing_access = await self._child_access_for_child(child_id)
+            original_due = (existing_access or {}).get('original_billing_due_at') or current_period_end
+            access_payload = {
+                'parent_id': parent_id,
+                'child_id': child_id,
+                'access_status': access_status,
+                'plan_name': plan['display_name'],
+                'plan_type': plan['plan_type'],
+                'billing_interval': plan['billing_interval'],
+                'stripe_customer_id': customer_id,
+                'stripe_subscription_id': subscription_id,
+                'stripe_price_id': self._stripe_price_id(plan),
+                'trial_started_at': trial_start,
+                'trial_ends_at': trial_end,
+                'current_period_started_at': current_period_start,
+                'current_period_ends_at': current_period_end,
+                'original_billing_due_at': original_due,
+                'cancel_at_period_end': bool(subscription.get('cancel_at_period_end')),
+                'grace_period_started_at': None if access_status == 'active' else (existing_access or {}).get('grace_period_started_at'),
+                'grace_period_ends_at': None if access_status == 'active' else (existing_access or {}).get('grace_period_ends_at'),
+                'access_paused_reason': 'pause_at_period_end' if subscription.get('cancel_at_period_end') and access_status == 'active' else (None if access_status == 'active' else self._pause_reason_for_status(status)),
+                'latest_invoice_id': latest_invoice_id,
+                'updated_at': now,
+            }
+            await self.supabase.upsert('child_access', {**access_payload, 'created_at': now}, 'child_id')
+            await self._queue_annual_renewal_email(parent_id, child_id, customer_id, {
+                **billing_payload,
+                'child_id': child_id,
+                'plan_type': plan['plan_type'],
+                'billing_interval': plan['billing_interval'],
+            })
+            logger.info('Synced multi-child subscription %s for child %s (%s).', subscription_id, child_id, child.get('name'))
 
     async def _handle_subscription_deleted(self, subscription: dict) -> None:
         subscription_id = self._stripe_id(subscription.get('id'))
@@ -518,6 +757,7 @@ class BillingService:
         await self.supabase.update('child_access', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
             'access_status': 'inactive',
             'access_paused_reason': 'subscription_canceled',
+            'cancel_at_period_end': False,
             'updated_at': now,
         })
         if parent_id:
@@ -557,6 +797,7 @@ class BillingService:
                 'latest_payment_intent_id': self._stripe_id(invoice.get('payment_intent')),
                 'grace_period_started_at': now.isoformat(),
                 'grace_period_ends_at': grace_ends.isoformat(),
+                'cancel_at_period_end': False,
                 'access_paused_reason': None,
                 'updated_at': now.isoformat(),
             })
@@ -727,6 +968,7 @@ class BillingService:
             'plan_name': access.get('plan_name') or 'Phase 1 MVP',
             'plan_type': plan_type,
             'billing_interval': access.get('billing_interval'),
+            'cancel_at_period_end': bool(access.get('cancel_at_period_end')),
             'voice_enabled': voice_enabled,
             'voice_allowed': voice_enabled,
             'feature_mode': 'chat_and_voice' if voice_enabled else 'chat_only',
@@ -744,6 +986,38 @@ class BillingService:
             trial_end = self._parse_iso_datetime(access.get('trial_ends_at'))
             return trial_end is not None and trial_end > now
         return False
+
+    async def _ensure_child_can_checkout(self, parent_id: str, child_id: str) -> None:
+        access = await self._access_for_child(parent_id, child_id)
+        if not self._has_current_paid_access(access):
+            return
+        raise HTTPException(
+            status_code=409,
+            detail='This child already has an active paid subscription for the current billing period.',
+        )
+
+    def _has_current_paid_access(self, access: dict | None) -> bool:
+        if not access or access.get('access_status') != 'active':
+            return False
+        if not access.get('stripe_subscription_id'):
+            return False
+        period_end = self._parse_iso_datetime(access.get('current_period_ends_at'))
+        return period_end is None or period_end > datetime.now(UTC)
+
+    def _encode_child_plan_map(self, selections: list[dict]) -> str:
+        return '|'.join(f'{item["child_id"]}:{item["plan_key"]}' for item in selections)
+
+    def _decode_child_plan_map(self, value: str) -> list[dict]:
+        selections: list[dict] = []
+        for raw_item in str(value or '').split('|'):
+            if ':' not in raw_item:
+                continue
+            child_id, plan_key = raw_item.split(':', 1)
+            child_id = child_id.strip()
+            plan_key = plan_key.strip()
+            if child_id and plan_key in PLAN_CATALOG:
+                selections.append({'child_id': child_id, 'plan_key': plan_key})
+        return selections
 
     def _missing_access_table(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
@@ -878,11 +1152,11 @@ class BillingService:
             return customers[0].get('stripe_customer_id')
         return None
 
-    async def _family_discount_state(self, parent_id: str) -> dict:
+    async def _family_discount_state(self, parent_id: str, pending_checkout_count: int = 1) -> dict:
         access_rows = await self._access_rows(parent_id)
         active_count = len([row for row in access_rows if row.get('access_status') == 'active'])
         current_eligible = active_count >= 2
-        checkout_eligible = active_count >= 1
+        checkout_eligible = active_count + max(1, pending_checkout_count) >= 2
         await self._record_family_discount_state(parent_id, active_count, current_eligible, checkout_eligible)
         return {
             'eligible': current_eligible,
@@ -1090,6 +1364,15 @@ class BillingService:
         rows = await self.supabase.select('child_access', f'stripe_subscription_id=eq.{quote(subscription_id)}&limit=1')
         return rows[0] if rows else None
 
+    async def _subscription_child_access_count(self, subscription_id: str) -> int:
+        try:
+            rows = await self.supabase.select('child_access', f'stripe_subscription_id=eq.{quote(subscription_id)}&select=child_id&limit=100')
+        except SupabaseClientError as exc:
+            if self._missing_access_table(exc):
+                return 0
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return len(rows)
+
     async def _billing_subscription_for_subscription(self, subscription_id: str) -> dict | None:
         rows = await self.supabase.select('billing_subscriptions', f'stripe_subscription_id=eq.{quote(subscription_id)}&limit=1')
         return rows[0] if rows else None
@@ -1168,6 +1451,26 @@ class BillingService:
             )
         except Exception as exc:
             logger.warning('Internal trial started alert failed for parent %s: %s', parent_id, exc)
+
+    async def _send_trial_started_parent_email(
+        self,
+        *,
+        parent_id: str,
+        parent_email: str,
+        child_id: str,
+        trial_started_at: str,
+        trial_ends_at: str,
+    ) -> None:
+        try:
+            await EmailService().queue_and_send_trial_started_welcome(
+                parent_id=parent_id,
+                child_id=child_id,
+                recipient_email=parent_email,
+                trial_started_at=trial_started_at,
+                trial_ends_at=trial_ends_at,
+            )
+        except Exception as exc:
+            logger.warning('Trial started parent email failed for parent %s: %s', parent_id, exc)
 
     async def _send_paid_subscription_activated_alert(
         self,
@@ -1464,3 +1767,7 @@ class BillingService:
             'family_discount_remove_at_period_end',
             'stripe_coupon_id',
         ])
+
+    def _missing_cancel_at_period_end_column(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'schema cache' in message and 'cancel_at_period_end' in message

@@ -1,4 +1,4 @@
-import { FileText, Home, Sparkles, UserCircle, UserRoundPlus, WalletCards } from 'lucide-react';
+import { FileText, Home, ImageUp, UserCircle, UserRoundPlus, WalletCards } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { NavigationDrawer } from '../components/navigation/NavigationDrawer';
 import { NavItem } from '../components/NavItem';
@@ -46,9 +46,9 @@ export function ParentShell({
     <NavItem icon={<Home />} label="Dashboard" active={view === 'home'} onClick={() => { onViewChange('home'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<UserRoundPlus />} label="Child Profiles" active={view === 'children'} onClick={() => { onViewChange('children'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<FileText />} label="Reports" active={view === 'reports'} onClick={() => { onViewChange('reports'); if (closeAfterClick) setMenuOpen(false); }} />
+    <NavItem icon={<ImageUp />} label="Homework" active={view === 'homework'} onClick={() => { onViewChange('homework'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<WalletCards />} label="Billing" active={view === 'billing'} onClick={() => { onViewChange('billing'); if (closeAfterClick) setMenuOpen(false); }} />
     <NavItem icon={<UserCircle />} label="Settings" active={view === 'profile'} onClick={() => { onViewChange('profile'); if (closeAfterClick) setMenuOpen(false); }} />
-    <NavItem icon={<Sparkles />} label="Future Modules" active={view === 'future'} onClick={() => { onViewChange('future'); if (closeAfterClick) setMenuOpen(false); }} />
   </>;
   const logoutButton = <button className="logout-button" onClick={onLogout}>Logout</button>;
 

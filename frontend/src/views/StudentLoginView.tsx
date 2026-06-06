@@ -8,6 +8,7 @@ const loginMessages = [
   'Ready when you are!',
   'Time to shine today!',
 ];
+const studentLoginErrorCopy = "That username or PIN didn't work. Talk to your parent if you have trouble logging in.";
 
 export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (session: StudentSession) => void; notice?: string }) {
   const [username, setUsername] = useState('');
@@ -34,7 +35,7 @@ export function StudentLoginView({ onLoggedIn, notice = '' }: { onLoggedIn: (ses
     } catch (loginError) {
       const message = loginError instanceof Error ? loginError.message : '';
       if (message.includes('family classroom link')) setError(message);
-      else setError(message.includes('There is something your parent needs to take care of') ? message : 'That username or PIN didn’t work. Please check it and try again.');
+      else setError(message.includes('There is something your parent needs to take care of') ? message : studentLoginErrorCopy);
     } finally {
       setLoading(false);
     }

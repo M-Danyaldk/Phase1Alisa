@@ -542,9 +542,9 @@ class VerificationService:
 
     async def _queue_signup_welcome(self, user_id: str, email: str) -> None:
         try:
-            await EmailService().queue_signup_welcome(parent_id=user_id, recipient_email=email)
+            await EmailService().queue_and_send_signup_welcome(parent_id=user_id, recipient_email=email)
         except Exception as exc:
-            logger.warning('Signup welcome email event failed for parent %s: %s', user_id, exc)
+            logger.warning('Signup welcome email send failed for parent %s: %s', user_id, exc)
 
     async def _send_parent_account_created_alert(self, user_id: str, email: str, pending_data: dict) -> None:
         try:

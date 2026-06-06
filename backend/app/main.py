@@ -198,8 +198,13 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
         if answer_check.feedback_note:
             directives.append(f'Answer-check note: {answer_check.feedback_note}')
+    homework_context_available = _homework_context_available(payload.message, payload.topic, payload.history)
     directives = [
         f'The currently selected subject is {payload.subject}. Stay in this subject unless the student clearly asks to switch to another subject.',
+        'Lead the activity with one clear next step. Do not ask broad questions like "What would you like to work on?" when assessment, homework, or current task context is available.',
+        'Ask only one question at a time. Do not include multiple open-ended questions in one reply.',
+        'Use assessment results when available: start from the assessed working level, recommended topic, or recommended next step before starting unrelated practice.',
+        *(['Homework context is present. Start from the uploaded homework summary, typed problem, or suggested next step. Do not ask the student to re-explain an already uploaded assignment.'] if homework_context_available else []),
         'After the current problem is finished, you may end with one short same-subject practice question or mini-check when helpful. Do not add a new practice question before the current step is settled.',
         'Use compact tutor chat: 5-7 short lines maximum for normal help.',
         'For direct math questions, include the main step, calculation, and **Final answer:**.',
@@ -348,6 +353,23 @@ def _student_with_assessed_level(student: StudentProfile, subject: str, assessme
     return student.model_copy(update=updates) if updates else student
 
 
+def _homework_context_available(message: str, topic: str, history: list) -> bool:
+    searchable = ' '.join([
+        message or '',
+        topic or '',
+        ' '.join(str(getattr(item, 'content', '')) for item in (history or [])[-6:]),
+    ]).lower()
+    return any(marker in searchable for marker in (
+        'homework',
+        'worksheet',
+        'uploaded',
+        'upload',
+        'photo',
+        'assignment',
+        'ms. alisia looked at',
+    ))
+
+
 def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> StudentProfile:
     child_name = child.get('name') or student.name
     grade = _grade_number(child.get('grade_level')) or student.grade
@@ -370,11 +392,11 @@ def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentRe
     performance_label = _child_safe_performance_label(result.score_label)
     strengths = _child_safe_strengths(result.strengths, subject)
     practice_next = _child_safe_next_step(result)
-    score_summary = f'Performance: {performance_label}'
-    celebration_title = 'Great job!'
+    score_summary = f'Next focus: {practice_next}'
+    celebration_title = 'Check-in complete'
     celebration_message = f'You completed your {subject} check-in.'
     next_step_message = f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.'
-    encouragement = 'You worked hard on this. Keep going one small step at a time.'
+    encouragement = "Glad you completed it. We'll work on this together one step at a time."
     message = f'{celebration_message} {encouragement}'
     return ChildAssessmentResult(
         subject=result.subject,
@@ -406,14 +428,14 @@ def _child_safe_performance_label(score_label: str | None) -> str:
     text = _clean_child_safe_text(score_label or '')
     lower = text.lower()
     if not text:
-        return 'Great Effort'
+        return 'Learning Path Ready'
     if any(word in lower for word in ('excellent', 'advanced', 'strong', 'master', 'great')):
-        return 'Excellent Work'
+        return 'Ready for the Next Step'
     if any(word in lower for word in ('ready', 'proficient', 'on track', 'solid')):
-        return 'Strong Understanding'
+        return 'Ready for the Next Step'
     if any(word in lower for word in ('progress', 'develop', 'practice', 'review', 'emerging')):
-        return 'Great Progress'
-    return 'Great Effort'
+        return 'Ready for Practice'
+    return 'Learning Path Ready'
 
 
 def _child_safe_strengths(strengths: list[str], subject: str) -> list[str]:
@@ -421,7 +443,7 @@ def _child_safe_strengths(strengths: list[str], subject: str) -> list[str]:
     safe = [item for item in safe if item]
     if safe:
         return safe[:2]
-    return [f'You showed effort in {subject}.', 'You are building this skill step by step.']
+    return ['You finished the check-in.', f'Ms. Alisia knows what to practice next in {subject}.']
 
 
 def _child_safe_next_step(result: AssessmentResult) -> str:

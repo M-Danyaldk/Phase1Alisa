@@ -25,6 +25,7 @@ class ChildAccessResponse(BaseModel):
     trial_started_at: str | None = None
     current_period_ends_at: str | None = None
     current_period_started_at: str | None = None
+    cancel_at_period_end: bool = False
     grace_period_ends_at: str | None = None
     access_paused_reason: str | None = None
     created_at: str | None = None
@@ -85,6 +86,16 @@ class StartTrialResponse(BaseModel):
 class CheckoutSessionRequest(BaseModel):
     child_id: str
     plan_key: PlanKey
+    coupon_code: str | None = None
+
+
+class CheckoutChildPlanRequest(BaseModel):
+    child_id: str
+    plan_key: PlanKey
+
+
+class BulkCheckoutSessionRequest(BaseModel):
+    children: list[CheckoutChildPlanRequest] = Field(min_length=1, max_length=10)
     coupon_code: str | None = None
 
 

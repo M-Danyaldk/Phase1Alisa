@@ -8,6 +8,7 @@ import { getMyReferrals } from '../lib/api/referrals';
 import { getFamilyClassroomLink } from '../lib/api/studentAuth';
 import { getParentWeeklyRhythm } from '../lib/api/studentDashboard';
 import { ParentView } from '../types';
+import { ChildAccess } from '../types/billing';
 import { ChildProfile } from '../types/childProfile';
 import { ReferralSummary } from '../types/referrals';
 import { FamilyClassroomLink } from '../types/studentSession';
@@ -18,6 +19,9 @@ type Props = {
   parentName: string;
   children: ChildProfile[];
   selectedChildId: string;
+  selectedChildAccess?: ChildAccess | null;
+  trialAvailable?: boolean;
+  billingLocked?: boolean;
   onSelectChild: (childId: string) => void;
   onViewChange: (view: ParentView) => void;
 };
@@ -27,6 +31,9 @@ export function ParentDashboardView({
   parentName,
   children,
   selectedChildId,
+  selectedChildAccess = null,
+  trialAvailable = false,
+  billingLocked = false,
   onSelectChild,
   onViewChange,
 }: Props) {
@@ -69,6 +76,8 @@ export function ParentDashboardView({
   }, [accessToken, children]);
 
   const dashboardMessage = parentDashboardMessage(children, weeklyRhythms, hasLearningHistory);
+  const selectedChildHasLearningAccess = childAccessAllowsLearning(selectedChildAccess);
+  const selectedChildCanStartTrial = Boolean(selectedChild && trialAvailable && !selectedChildHasLearningAccess && !billingLocked);
 
   async function copyReferralLink() {
     if (!referralSummary?.referral_url) return;
@@ -119,10 +128,14 @@ export function ParentDashboardView({
             </select>
           </label>
           {!hasActiveChild && <p className="paused-access-note">Learning access is paused for every child. Reactivate access before using the classroom link.</p>}
+          {selectedChildCanStartTrial && <p className="success-note">The 7-day free trial starts automatically when this child logs in for the first time.</p>}
+          {billingLocked && <p className="paused-access-note">{selectedChild?.name || 'This child'} needs a paid plan before the classroom can open.</p>}
           {classroomUrl ? <>
             <input className="referral-link-input" readOnly value={classroomUrl} aria-label="Family classroom link" />
             <div className="parent-action-row">
-              <button className="primary-button" onClick={() => window.location.assign(classroomUrl)} disabled={!hasActiveChild}>Open Classroom</button>
+              <button className="primary-button" onClick={() => billingLocked ? onViewChange('billing') : window.location.assign(classroomUrl)} disabled={!hasActiveChild}>
+                {billingLocked ? 'Choose Plan' : 'Open Classroom'}
+              </button>
               <button className="secondary-button" onClick={copyClassroomLink} type="button"><Copy /> Copy Link</button>
             </div>
             {classroomMessage && <p className="success-note">{classroomMessage}</p>}
@@ -207,6 +220,18 @@ export function ParentDashboardView({
   </div>;
 }
 
+function childAccessAllowsLearning(record: ChildAccess | null): boolean {
+  if (!record) return false;
+  const now = Date.now();
+  if (record.access_status === 'trial') {
+    return Boolean(record.trial_ends_at && Date.parse(record.trial_ends_at) > now);
+  }
+  if (record.access_status === 'active') {
+    return !record.current_period_ends_at || Date.parse(record.current_period_ends_at) > now;
+  }
+  return false;
+}
+
 function latestRewardStatus(summary: ReferralSummary): string {
   const latest = summary.rewards[0];
   if (latest?.status_label) return latest.status_label.replace(/_/g, ' ');
@@ -218,7 +243,6 @@ function latestRewardStatus(summary: ReferralSummary): string {
 }
 
 function statusLabel(status: ChildProfile['status']): string {
-  if (status === 'pending_consent') return 'Parent consent needed - please confirm consent in the child profile settings.';
   if (status === 'inactive') return 'Paused';
   return 'Active';
 }

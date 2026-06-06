@@ -39,6 +39,8 @@ type Props = {
 };
 
 const CHAT_FALLBACK_MESSAGE = 'No problem — we will use chat instead!';
+const VOICE_AUTO_STOP_MS = 5000;
+const VOICE_AUTO_STOP_MESSAGE = 'I stopped recording so we can keep things moving. If you are still there, tap Record and tell me one thing you want help with.';
 
 export function ChatWorkspace({
   messages,
@@ -72,6 +74,8 @@ export function ChatWorkspace({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const autoStopTimerRef = useRef<number | null>(null);
+  const autoStoppedRef = useRef(false);
   const voiceUnavailable = inputDisabled || voiceDisabled || voiceProcessing;
 
   useEffect(() => {
@@ -91,7 +95,17 @@ export function ChatWorkspace({
     streamRef.current = null;
   }
 
-  useEffect(() => () => stopTracks(), []);
+  function clearAutoStopTimer() {
+    if (autoStopTimerRef.current !== null) {
+      window.clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => () => {
+    clearAutoStopTimer();
+    stopTracks();
+  }, []);
 
   async function startRecording() {
     if (!onVoiceSubmit) return;
@@ -112,19 +126,37 @@ export function ChatWorkspace({
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
+        clearAutoStopTimer();
+        const stoppedAutomatically = autoStoppedRef.current;
+        autoStoppedRef.current = false;
         const type = recorder.mimeType || mimeType || 'audio/webm';
         const audio = new Blob(chunksRef.current, { type });
         chunksRef.current = [];
         stopTracks();
         setRecording(false);
         if (audio.size > 0) {
-          onVoiceSubmit(audio).catch(() => onVoiceNotice?.(CHAT_FALLBACK_MESSAGE));
+          onVoiceSubmit(audio)
+            .catch(() => onVoiceNotice?.(CHAT_FALLBACK_MESSAGE))
+            .finally(() => {
+              if (stoppedAutomatically) onVoiceNotice?.(VOICE_AUTO_STOP_MESSAGE);
+            });
+        } else if (stoppedAutomatically) {
+          onVoiceNotice?.(VOICE_AUTO_STOP_MESSAGE);
         }
       };
       recorder.start();
       setRecording(true);
       onVoiceNotice?.('Listening...');
+      autoStopTimerRef.current = window.setTimeout(() => {
+        const activeRecorder = recorderRef.current;
+        if (activeRecorder && activeRecorder.state === 'recording') {
+          autoStoppedRef.current = true;
+          onVoiceNotice?.(VOICE_AUTO_STOP_MESSAGE);
+          activeRecorder.stop();
+        }
+      }, VOICE_AUTO_STOP_MS);
     } catch {
+      clearAutoStopTimer();
       stopTracks();
       setRecording(false);
       onVoiceNotice?.(CHAT_FALLBACK_MESSAGE);
@@ -134,10 +166,14 @@ export function ChatWorkspace({
   function stopRecording() {
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
+      clearAutoStopTimer();
+      autoStoppedRef.current = false;
       recorder.stop();
       onVoiceNotice?.('Processing your question...');
       return;
     }
+    clearAutoStopTimer();
+    autoStoppedRef.current = false;
     stopTracks();
     setRecording(false);
   }

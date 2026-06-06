@@ -91,8 +91,12 @@ async def child_billing_access_state(child_id: str, child_name: str | None = Non
         blocked_reason = status
     elif status == 'trial' and _is_past(access.get('trial_ends_at')):
         blocked_reason = 'trial_expired'
+    elif status == 'active' and access.get('current_period_ends_at') and _is_past(access.get('current_period_ends_at')):
+        blocked_reason = 'subscription_expired'
     elif access.get('grace_period_ends_at') and _is_past(access.get('grace_period_ends_at')):
         blocked_reason = 'grace_expired'
+    elif status not in {'trial', 'active'}:
+        blocked_reason = 'no_billing_access'
     return _billing_state(
         access_allowed=blocked_reason is None,
         child_name=child_name,

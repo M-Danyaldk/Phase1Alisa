@@ -22,6 +22,8 @@ EMAIL_TRIGGER_TYPES = {
     'annual_renewal_reminder',
     'weekly_progress',
     'referral_success',
+    'student_credentials_created',
+    'student_credentials_updated',
 }
 
 
@@ -30,6 +32,7 @@ class EmailContent:
     subject: str
     text: str
     html: str
+    from_email: str | None = None
 
 
 class EmailService:
@@ -107,6 +110,49 @@ class EmailService:
             recipient_email=recipient_email,
             scheduled_send_at=scheduled_send_at,
         )
+
+    def _student_credentials_notice(self, child_name: str, app_url: str, action: str) -> EmailContent:
+        action_label = 'created' if action == 'created' else 'updated'
+        return self._content(
+            f'MsAlisia student login {action_label}',
+            [
+                f'Student login access was {action_label} for {child_name}.',
+                'For security, this email does not include the username or PIN.',
+                'You can view or reset student login access from your parent dashboard.',
+                f'Open MsAlisia: {app_url}',
+                'The MsAlisia Team',
+            ],
+        )
+
+    async def queue_and_send_signup_welcome(self, *, parent_id: str, recipient_email: str, scheduled_send_at: str | None = None) -> dict:
+        event = await self.queue_signup_welcome(
+            parent_id=parent_id,
+            recipient_email=recipient_email,
+            scheduled_send_at=scheduled_send_at,
+        )
+        return await self.send_pending_event(event)
+
+    async def queue_and_send_trial_started_welcome(
+        self,
+        *,
+        parent_id: str,
+        child_id: str | None,
+        recipient_email: str,
+        trial_started_at: str,
+        trial_ends_at: str,
+    ) -> dict:
+        event = await self.create_event(
+            trigger_type='signup_welcome',
+            parent_id=parent_id,
+            child_id=child_id,
+            recipient_email=recipient_email,
+            metadata={
+                'trial_started_at': trial_started_at,
+                'trial_ends_at': trial_ends_at,
+                'dedupe_key': f'trial_started_welcome|{parent_id}|{child_id or ""}|{recipient_email}',
+            },
+        )
+        return await self.send_pending_event(event)
 
     async def queue_trial_day_5(self, *, parent_id: str, recipient_email: str, scheduled_send_at: str, metadata: dict[str, Any] | None = None) -> dict:
         return await self.create_event(
@@ -203,6 +249,29 @@ class EmailService:
             metadata=metadata,
         )
 
+    async def queue_and_send_student_credentials_notice(
+        self,
+        *,
+        parent_id: str,
+        child_id: str,
+        recipient_email: str,
+        child_name: str,
+        action: str,
+    ) -> dict:
+        trigger_type = 'student_credentials_updated' if action == 'updated' else 'student_credentials_created'
+        event = await self.create_event(
+            trigger_type=trigger_type,
+            parent_id=parent_id,
+            child_id=child_id,
+            recipient_email=recipient_email,
+            metadata={
+                'child_name': child_name,
+                'action': action,
+                'dedupe_key': f'{trigger_type}|{parent_id}|{child_id}|{datetime.now(UTC).isoformat()}',
+            },
+        )
+        return await self.send_pending_event(event)
+
     async def send_signup_verification_code(self, *, recipient_email: str, code: str, expires_in_minutes: int) -> str | None:
         if not self.settings.resend_api_key.strip():
             raise RuntimeError('RESEND_API_KEY is not configured.')
@@ -254,6 +323,30 @@ class EmailService:
         )
         events = await self.supabase.select('email_events', query)
         summary = {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, **generated}
+
+        for event in events:
+            summary['processed'] += 1
+            result = await self.send_event(event)
+            status = result.get('status')
+            if status in ('sent', 'failed', 'skipped'):
+                summary[status] += 1
+
+        return summary
+
+    async def process_due_event_batch(self, limit: int = 10) -> dict:
+        if not self.supabase.configured():
+            return {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, 'message': 'Supabase is not configured.'}
+
+        now = datetime.now(UTC).isoformat()
+        safe_limit = max(1, min(limit, 25))
+        query = (
+            'status=eq.pending'
+            f'&or=(scheduled_send_at.is.null,scheduled_send_at.lte.{quote(now)})'
+            '&order=scheduled_send_at.asc.nullsfirst'
+            f'&limit={safe_limit}'
+        )
+        events = await self.supabase.select('email_events', query)
+        summary = {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0}
 
         for event in events:
             summary['processed'] += 1
@@ -423,6 +516,11 @@ class EmailService:
                 payload_preview={'subject': content.subject},
             )
 
+    async def send_pending_event(self, event: dict) -> dict:
+        if event.get('status') != 'pending' or not event.get('id'):
+            return event
+        return await self.send_event(event)
+
     def render_template(self, trigger_type: str, metadata: dict[str, Any] | None = None) -> EmailContent:
         self._validate_trigger(trigger_type)
         data = metadata or {}
@@ -440,12 +538,14 @@ class EmailService:
             'annual_renewal_reminder': self._annual_renewal_reminder(data, manage_url),
             'weekly_progress': self._weekly_progress(data, child_name, app_url),
             'referral_success': self._referral_success(app_url),
+            'student_credentials_created': self._student_credentials_notice(child_name, app_url, 'created'),
+            'student_credentials_updated': self._student_credentials_notice(child_name, app_url, 'updated'),
         }
         return templates[trigger_type]
 
     async def _send_resend_email(self, recipient_email: str, content: EmailContent) -> str | None:
         payload = {
-            'from': self.settings.resend_from_email,
+            'from': content.from_email or self.settings.resend_from_email,
             'to': [recipient_email],
             'subject': content.subject,
             'text': content.text,
@@ -592,14 +692,21 @@ class EmailService:
 
         try:
             preview = await ChildReportService().weekly_email_preview(parent_id, child_id)
-            subject_highlights = [
-                f'{item.subject}: {item.recent_improvement or item.strong_area or "practice is ready"}'
+            subject_cards = [
+                {
+                    'subject': self._subject_label(item.subject),
+                    'summary': item.recent_improvement or item.strong_area or item.current_topic or 'Practice is ready when your child is.',
+                    'next_step': item.needs_review or 'Continue with one short learning session.',
+                    'completed_lessons': item.completed_lessons,
+                    'chat_count': item.chat_count,
+                }
                 for item in preview.subject_progress[:3]
             ]
             return {
                 'child_name': preview.child_name,
                 'session_count': sum(item.chat_count for item in preview.subject_progress),
-                'subject_highlights': subject_highlights,
+                'subject_cards': subject_cards,
+                'subject_highlights': [f'{item["subject"]}: {item["summary"]}' for item in subject_cards],
                 'recommended_next_step': preview.recommended_next_steps[0] if preview.recommended_next_steps else None,
                 'send_date': monday.date().isoformat(),
                 'dedupe_key': f'weekly_progress|{parent_id}|{child_id}|{monday.date().isoformat()}',
@@ -741,25 +848,224 @@ class EmailService:
         )
 
     def _weekly_progress(self, data: dict[str, Any], child_name: str, app_url: str) -> EmailContent:
-        session_count = str(data.get('session_count') or '0')
-        subject_highlights = data.get('subject_highlights') or []
-        if isinstance(subject_highlights, list) and subject_highlights:
-            highlights = '; '.join(str(item) for item in subject_highlights[:4])
-        else:
-            highlights = 'Ms. Alisia will keep building highlights as learning sessions are completed.'
-        recommended_next_step = str(data.get('recommended_next_step') or 'Try one short, focused practice session this week.')
-        return self._content(
-            f"{child_name}'s weekly learning summary",
-            [
-                f'Here is {child_name}\'s weekly learning summary.',
-                f'Session count: {session_count}.',
-                f'Subject highlights: {highlights}',
+        first_name = self._first_name(child_name)
+        session_count = self._int_value(data.get('session_count'))
+        subject_cards = self._weekly_subject_cards(data)
+        recommended_next_step = str(data.get('recommended_next_step') or 'Try one short, focused practice session this week.').strip()
+        app_url = app_url.rstrip('/') or 'https://www.msalisia.com'
+        report_url = f'{app_url}/login?redirect=%2Freports'
+        logo_url = self.settings.email_logo_url.strip()
+        from_email = self.settings.weekly_progress_from_email.strip() or self.settings.resend_from_email
+        if session_count <= 0:
+            subject = f'A gentle MsAlisia nudge for {first_name}'
+            text_lines = [
+                f'{first_name} did not have a MsAlisia learning session this week.',
+                'No worries. A short check-in can help rebuild momentum.',
                 f'Recommended next step: {recommended_next_step}',
-                'Every bit of steady practice helps build confidence.',
-                f'Open MsAlisia: {app_url}',
-                'The MsAlisia Team',
-            ],
+                f'Open MsAlisia: {report_url}',
+                'Warmly,',
+                'Francesca and the MsAlisia Team',
+            ]
+            html = self._weekly_email_shell(
+                logo_url=logo_url,
+                first_name=first_name,
+                eyebrow='Weekly learning nudge',
+                headline=f'Let us help {first_name} get back into rhythm.',
+                intro='There were no completed MsAlisia learning sessions this week, so we are sending a warm reminder instead of a data report.',
+                body_html=(
+                    '<div style="background:#fff8e8;border:1px solid #f1d99c;border-radius:16px;padding:18px 20px;margin:22px 0;">'
+                    '<p style="margin:0;color:#5f5576;font-size:16px;line-height:1.6;">'
+                    'Even one short Math, Reading, or Writing session can help rebuild confidence and keep the learning habit alive.'
+                    '</p>'
+                    '</div>'
+                    f'{self._weekly_next_step_html(recommended_next_step)}'
+                ),
+                cta_url=report_url,
+                cta_label='Open MsAlisia',
+            )
+            return EmailContent(subject=subject, text='\n\n'.join(text_lines), html=html, from_email=from_email)
+
+        subject = f"{first_name}'s MsAlisia weekly progress"
+        subject_sections_html = ''.join(self._weekly_subject_card_html(card) for card in subject_cards)
+        text_lines = [
+            f'Here is {first_name}\'s weekly MsAlisia learning summary.',
+            f'{first_name} completed {session_count} learning session{"s" if session_count != 1 else ""} this week.',
+            'Subject summaries:',
+            *[f'- {card["subject"]}: {card["summary"]}' for card in subject_cards],
+            f'Recommended next step: {recommended_next_step}',
+            f'Open MsAlisia: {report_url}',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=logo_url,
+            first_name=first_name,
+            eyebrow='Weekly progress report',
+            headline=f"{first_name}'s learning week",
+            intro=f'{first_name} completed {session_count} learning session{"s" if session_count != 1 else ""} this week. Here is a clean subject-by-subject summary.',
+            body_html=(
+                '<div style="display:block;margin:22px 0;">'
+                f'{subject_sections_html}'
+                '</div>'
+                f'{self._weekly_next_step_html(recommended_next_step)}'
+            ),
+            cta_url=report_url,
+            cta_label='View full report',
         )
+        return EmailContent(subject=subject, text='\n\n'.join(text_lines), html=html, from_email=from_email)
+
+    def _weekly_email_shell(
+        self,
+        *,
+        logo_url: str,
+        first_name: str,
+        eyebrow: str,
+        headline: str,
+        intro: str,
+        body_html: str,
+        cta_url: str,
+        cta_label: str,
+    ) -> str:
+        safe_logo_url = escape(logo_url, quote=True)
+        logo_html = (
+            f'<img src="{safe_logo_url}" alt="MsAlisia" width="64" height="64" style="display:block;border-radius:18px;background:#ffffff;object-fit:cover;" />'
+            if safe_logo_url
+            else '<div style="width:64px;height:64px;border-radius:18px;background:#ffffff;color:#5e3ca0;font-size:22px;line-height:64px;text-align:center;font-weight:900;">MA</div>'
+        )
+        safe_first_name = escape(first_name)
+        safe_eyebrow = escape(eyebrow)
+        safe_headline = escape(headline)
+        safe_intro = escape(intro)
+        safe_cta_url = escape(cta_url, quote=True)
+        safe_cta_label = escape(cta_label)
+        return f'''<!doctype html>
+<html>
+  <body style="margin:0;background:#f7f1ff;font-family:Arial,Helvetica,sans-serif;color:#20173d;">
+    <div style="display:none;max-height:0;overflow:hidden;">{safe_headline}</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f1ff;margin:0;padding:28px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;background:#ffffff;border:1px solid #e4d8f7;border-radius:24px;overflow:hidden;box-shadow:0 16px 40px rgba(93,60,150,0.12);">
+            <tr>
+              <td style="background:#5e3ca0;padding:26px 30px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="vertical-align:middle;">
+                      {logo_html}
+                    </td>
+                    <td style="vertical-align:middle;padding-left:16px;">
+                      <div style="font-size:24px;line-height:1.1;font-weight:800;color:#ffffff;">MsAlisia</div>
+                      <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#f4d77a;margin-top:6px;">Weekly parent update</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:34px 30px 12px;">
+                <div style="font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#d6a72e;margin-bottom:10px;">{safe_eyebrow}</div>
+                <h1 style="margin:0;color:#5e3ca0;font-size:34px;line-height:1.12;font-weight:900;">{safe_headline}</h1>
+                <p style="margin:14px 0 0;color:#5f5576;font-size:17px;line-height:1.6;">{safe_intro}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 30px 10px;">
+                <div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:18px;padding:18px 20px;margin:20px 0;">
+                  <div style="font-size:14px;color:#7c6b9e;font-weight:700;">Student</div>
+                  <div style="font-size:26px;color:#20173d;font-weight:900;margin-top:4px;">{safe_first_name}</div>
+                </div>
+                {body_html}
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:8px 30px 34px;">
+                <a href="{safe_cta_url}" style="display:inline-block;background:#5e3ca0;color:#ffffff;text-decoration:none;font-weight:900;font-size:16px;border-radius:14px;padding:15px 24px;">{safe_cta_label}</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#fbf8ff;border-top:1px solid #eadffc;padding:24px 30px;color:#5f5576;font-size:14px;line-height:1.6;">
+                <p style="margin:0 0 8px;">Warmly,</p>
+                <p style="margin:0;font-weight:800;color:#5e3ca0;">Francesca and the MsAlisia Team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>'''
+
+    def _weekly_subject_cards(self, data: dict[str, Any]) -> list[dict[str, str]]:
+        cards = data.get('subject_cards')
+        if isinstance(cards, list) and cards:
+            return [self._normalize_weekly_subject_card(card) for card in cards[:3]]
+
+        highlights = data.get('subject_highlights') or []
+        parsed_cards: list[dict[str, str]] = []
+        if isinstance(highlights, str):
+            highlights = [part.strip() for part in highlights.split(';') if part.strip()]
+        if isinstance(highlights, list):
+            for item in highlights[:3]:
+                text = str(item or '').strip().rstrip('.')
+                if not text:
+                    continue
+                subject, _, summary = text.partition(':')
+                parsed_cards.append({
+                    'subject': self._subject_label(subject.strip() or 'Learning'),
+                    'summary': summary.strip() or 'Practice is ready when your child is.',
+                    'next_step': 'Continue with one short learning session.',
+                })
+        if parsed_cards:
+            return parsed_cards
+        return [
+            {'subject': 'Math', 'summary': 'Practice is ready when your child is.', 'next_step': 'Try one short Math activity.'},
+            {'subject': 'Reading', 'summary': 'Practice is ready when your child is.', 'next_step': 'Try one short Reading activity.'},
+            {'subject': 'Writing', 'summary': 'Practice is ready when your child is.', 'next_step': 'Try one short Writing activity.'},
+        ]
+
+    def _normalize_weekly_subject_card(self, card: object) -> dict[str, str]:
+        if not isinstance(card, dict):
+            return {'subject': 'Learning', 'summary': str(card or 'Practice is ready when your child is.'), 'next_step': 'Continue with one short learning session.'}
+        return {
+            'subject': self._subject_label(str(card.get('subject') or 'Learning')),
+            'summary': str(card.get('summary') or 'Practice is ready when your child is.').strip(),
+            'next_step': str(card.get('next_step') or 'Continue with one short learning session.').strip(),
+        }
+
+    def _weekly_subject_card_html(self, card: dict[str, str]) -> str:
+        subject = escape(card.get('subject') or 'Learning')
+        summary = escape(card.get('summary') or 'Practice is ready when your child is.')
+        next_step = escape(card.get('next_step') or 'Continue with one short learning session.')
+        return (
+            '<div style="border:1px solid #eadffc;border-radius:16px;padding:18px 20px;margin:0 0 14px;background:#ffffff;">'
+            f'<h2 style="margin:0 0 8px;color:#5e3ca0;font-size:20px;line-height:1.25;">{subject}</h2>'
+            f'<p style="margin:0;color:#5f5576;font-size:15px;line-height:1.55;">{summary}</p>'
+            f'<p style="margin:10px 0 0;color:#8a6a00;font-size:14px;line-height:1.5;"><strong>Next:</strong> {next_step}</p>'
+            '</div>'
+        )
+
+    def _weekly_next_step_html(self, recommended_next_step: str) -> str:
+        safe_next_step = escape(recommended_next_step)
+        return (
+            '<div style="background:#fff4cf;border:1px solid #f1d99c;border-radius:16px;padding:18px 20px;margin:22px 0;">'
+            '<div style="font-size:14px;color:#8a6a00;font-weight:900;text-transform:uppercase;letter-spacing:.08em;">Recommended next step</div>'
+            f'<p style="margin:8px 0 0;color:#3d315e;font-size:16px;line-height:1.6;">{safe_next_step}</p>'
+            '</div>'
+        )
+
+    def _first_name(self, name: str) -> str:
+        clean_name = str(name or '').strip()
+        return clean_name.split()[0] if clean_name else 'your child'
+
+    def _subject_label(self, subject: str) -> str:
+        text = str(subject or '').strip()
+        return 'Reading' if text.upper() == 'ELA' else text or 'Learning'
+
+    def _int_value(self, value: object) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _referral_success(self, app_url: str) -> EmailContent:
         return self._content(

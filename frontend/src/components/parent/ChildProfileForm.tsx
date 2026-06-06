@@ -1,4 +1,4 @@
-import { ReactNode, useMemo, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { gradeLevelOptions, isLaunchGradeLevel, launchSubjects, subjectLabel } from '../../constants';
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../../types/childProfile';
 
@@ -13,19 +13,8 @@ const defaultValues: ChildProfileFormValues = {
   learning_goals: '',
   difficulty_level: 'At Grade Level',
   parent_notes: '',
-  parental_consent_accepted: false,
+  parental_consent_accepted: true,
 };
-
-function getAge(dateOfBirth: string): number | null {
-  if (!dateOfBirth) return null;
-  const birthDate = new Date(`${dateOfBirth}T00:00:00`);
-  if (Number.isNaN(birthDate.getTime())) return null;
-  const today = new Date();
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const birthdayPassed = today.getMonth() > birthDate.getMonth() || (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
-  if (!birthdayPassed) age -= 1;
-  return age;
-}
 
 function valuesFromChild(child?: ChildProfile | null): ChildProfileFormValues {
   if (!child) return defaultValues;
@@ -49,6 +38,7 @@ export function ChildProfileForm({
   onSubmit,
   onCancel,
   extraFields,
+  lockedAfterSetup = false,
 }: {
   child?: ChildProfile | null;
   submitLabel: string;
@@ -56,11 +46,16 @@ export function ChildProfileForm({
   onSubmit: (values: ChildProfileFormValues) => Promise<void> | void;
   onCancel?: () => void;
   extraFields?: ReactNode;
+  lockedAfterSetup?: boolean;
 }) {
   const [values, setValues] = useState<ChildProfileFormValues>(() => valuesFromChild(child));
   const [error, setError] = useState('');
-  const age = useMemo(() => getAge(values.date_of_birth), [values.date_of_birth]);
-  const needsConsent = age !== null && age < 13;
+  const fixedDetailsLocked = lockedAfterSetup && Boolean(child);
+
+  useEffect(() => {
+    setValues(valuesFromChild(child));
+    setError('');
+  }, [child?.id]);
 
   function toggleSubject(subject: ChildSubject) {
     setValues(prev => {
@@ -78,17 +73,14 @@ export function ChildProfileForm({
       setError('Select at least one subject.');
       return;
     }
-    if (needsConsent && !values.parental_consent_accepted) {
-      setError('Please confirm parental consent for this child profile.');
-      return;
-    }
     setError('');
     await onSubmit(values);
   }
 
   return <div className="child-form">
+    {fixedDetailsLocked && <p className="muted-copy locked-profile-note">Name and date of birth are locked after setup. To correct fixed profile details, deactivate this profile and create a new one. You can still update grade level and subjects.</p>}
     <label>Child name
-      <input value={values.name} onChange={event => setValues(prev => ({ ...prev, name: event.target.value }))} />
+      <input value={values.name} onChange={event => setValues(prev => ({ ...prev, name: event.target.value }))} disabled={fixedDetailsLocked} />
     </label>
     <label>Grade level
       <select value={values.grade_level} onChange={event => setValues(prev => ({ ...prev, grade_level: event.target.value }))}>
@@ -96,7 +88,7 @@ export function ChildProfileForm({
       </select>
     </label>
     <label>Date of birth
-      <input type="date" value={values.date_of_birth} onChange={event => setValues(prev => ({ ...prev, date_of_birth: event.target.value }))} />
+      <input type="date" value={values.date_of_birth} onChange={event => setValues(prev => ({ ...prev, date_of_birth: event.target.value }))} disabled={fixedDetailsLocked} />
     </label>
     <div className="field-group">
       <strong>Subjects</strong>
@@ -108,20 +100,16 @@ export function ChildProfileForm({
       </div>
     </div>
     <label>Learning goals
-      <textarea value={values.learning_goals} onChange={event => setValues(prev => ({ ...prev, learning_goals: event.target.value }))} placeholder="Example: Build confidence with fractions." />
+      <textarea value={values.learning_goals} onChange={event => setValues(prev => ({ ...prev, learning_goals: event.target.value }))} placeholder="Example: Build confidence with fractions." disabled={fixedDetailsLocked} />
     </label>
     <label>Current difficulty level
-      <select value={values.difficulty_level} onChange={event => setValues(prev => ({ ...prev, difficulty_level: event.target.value }))}>
+      <select value={values.difficulty_level} onChange={event => setValues(prev => ({ ...prev, difficulty_level: event.target.value }))} disabled={fixedDetailsLocked}>
         {difficultyOptions.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
     </label>
     <label>Parent notes
-      <textarea value={values.parent_notes} onChange={event => setValues(prev => ({ ...prev, parent_notes: event.target.value }))} placeholder="Anything Ms Alisia should know later." />
+      <textarea value={values.parent_notes} onChange={event => setValues(prev => ({ ...prev, parent_notes: event.target.value }))} placeholder="Anything Ms Alisia should know later." disabled={fixedDetailsLocked} />
     </label>
-    {needsConsent && <label className="check-row consent-row">
-      <input type="checkbox" checked={values.parental_consent_accepted} onChange={event => setValues(prev => ({ ...prev, parental_consent_accepted: event.target.checked }))} />
-      <span>I confirm I am this child&apos;s parent or guardian and consent to creating this learning profile.</span>
-    </label>}
     {extraFields}
     {error && <p className="error-note">{error}</p>}
     <div className="form-actions">

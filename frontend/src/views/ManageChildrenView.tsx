@@ -1,22 +1,30 @@
-import { useState } from 'react';
-import { ConfirmDeactivateChildModal } from '../components/parent/ConfirmDeactivateChildModal';
-import { ConfirmReactivateChildModal } from '../components/parent/ConfirmReactivateChildModal';
+import { BookOpen, CalendarDays, CreditCard, Eye, GraduationCap, KeyRound, Lock, Pencil, PlusCircle, SlidersHorizontal, User, UsersRound } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChildProfileForm } from '../components/parent/ChildProfileForm';
 import { StudentAccessForm } from '../components/parent/StudentAccessForm';
 import { SectionHeader } from '../components/SectionHeader';
-import { saveStudentAccess } from '../lib/api/studentAccess';
-import { createChild, deactivateChild, reactivateChild, updateChild } from '../lib/api/children';
-import { ChildProfile, ChildProfileFormValues } from '../types/childProfile';
+import { getStudentAccess, saveStudentAccess } from '../lib/api/studentAccess';
+import { createChild, updateChild } from '../lib/api/children';
+import { BillingStatus, ChildAccess } from '../types/billing';
+import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../types/childProfile';
+import { StudentAccess } from '../types/studentAccess';
 
 export function ManageChildrenView({
   accessToken,
   children,
   selectedChildId,
+  billingStatus,
+  onSelectChild,
+  onOpenBilling,
   onChildrenChanged,
 }: {
   accessToken: string;
   children: ChildProfile[];
   selectedChildId: string;
+  billingStatus?: BillingStatus | null;
+  onSelectChild: (childId: string) => void;
+  onOpenBilling: () => void;
   onChildrenChanged: (children: ChildProfile[], selectedChildId?: string) => void;
 }) {
   const [editingChildId, setEditingChildId] = useState<string | null>(null);
@@ -24,11 +32,35 @@ export function ManageChildrenView({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [deactivateTarget, setDeactivateTarget] = useState<ChildProfile | null>(null);
-  const [reactivateTarget, setReactivateTarget] = useState<ChildProfile | null>(null);
   const [newStudentUsername, setNewStudentUsername] = useState('');
   const [newStudentPin, setNewStudentPin] = useState('');
+  const [studentAccessByChildId, setStudentAccessByChildId] = useState<Record<string, StudentAccess | null>>({});
+  const selectedChild = children.find(child => child.id === selectedChildId) || children[0] || null;
   const editingChild = children.find(child => child.id === editingChildId) || null;
+  const childAccessById = useMemo(() => {
+    const entries = (billingStatus?.children || []).map(record => [record.child_id, record] as const);
+    return Object.fromEntries(entries) as Record<string, ChildAccess | undefined>;
+  }, [billingStatus?.children]);
+
+  useEffect(() => {
+    if (!children.length) {
+      setStudentAccessByChildId({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(children.map(child => getStudentAccess(accessToken, child.id).then(record => [child.id, record] as const).catch(() => [child.id, null] as const)))
+      .then(entries => {
+        if (!cancelled) setStudentAccessByChildId(Object.fromEntries(entries));
+      });
+    return () => { cancelled = true; };
+  }, [accessToken, children]);
+
+  useEffect(() => {
+    if (!editingChildId || adding || !selectedChildId || editingChildId === selectedChildId) return;
+    if (children.some(child => child.id === selectedChildId)) {
+      setEditingChildId(selectedChildId);
+    }
+  }, [adding, children, editingChildId, selectedChildId]);
 
   async function add(values: ChildProfileFormValues) {
     const username = newStudentUsername.trim().toLowerCase();
@@ -41,11 +73,12 @@ export function ManageChildrenView({
     setError('');
     try {
       const child = await createChild(accessToken, values);
-      await saveStudentAccess(accessToken, child.id, {
+      const studentAccess = await saveStudentAccess(accessToken, child.id, {
         username,
         pin,
         is_active: true,
       });
+      setStudentAccessByChildId(prev => ({ ...prev, [child.id]: studentAccess }));
       onChildrenChanged([...children, child], child.id);
       setAdding(false);
       setNewStudentUsername('');
@@ -74,86 +107,148 @@ export function ManageChildrenView({
     }
   }
 
-  async function deactivate() {
-    if (!deactivateTarget) return;
-    setSaving(true);
+  function startAddChild() {
+    setAdding(true);
+    setEditingChildId(null);
+    setNewStudentUsername('');
+    setNewStudentPin('');
+    setMessage('');
     setError('');
-    try {
-      const updated = await deactivateChild(accessToken, deactivateTarget.id);
-      onChildrenChanged(children.map(child => child.id === updated.id ? updated : child), selectedChildId);
-      if (editingChildId === updated.id) setEditingChildId(null);
-      setDeactivateTarget(null);
-      setMessage(`${updated.name}'s learning access is paused. Their history has not been deleted.`);
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Could not deactivate child profile.');
-    } finally {
-      setSaving(false);
-    }
   }
 
-  async function reactivate() {
-    if (!reactivateTarget) return;
-    setSaving(true);
-    setError('');
-    try {
-      const updated = await reactivateChild(accessToken, reactivateTarget.id);
-      onChildrenChanged(children.map(child => child.id === updated.id ? updated : child), updated.id);
-      setReactivateTarget(null);
-      setMessage(`${updated.name}'s learning access is active again. Their history was not changed.`);
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Could not reactivate child profile.');
-    } finally {
-      setSaving(false);
-    }
+  function selectChild(childId: string) {
+    onSelectChild(childId);
+    setAdding(false);
   }
 
-  return <div className="page-stack">
-    <SectionHeader eyebrow="Parent Controls" title="Manage child profiles" desc="Add, edit, or deactivate child profiles. Learning data stays separated by child." />
+  function editChild(childId: string) {
+    selectChild(childId);
+    setEditingChildId(childId);
+  }
+
+  function openBillingForChild(childId: string) {
+    onSelectChild(childId);
+    onOpenBilling();
+  }
+
+  const selectedAccess = selectedChild ? childAccessById[selectedChild.id] : undefined;
+  const selectedStudentAccess = selectedChild ? studentAccessByChildId[selectedChild.id] : null;
+  const selectedStudentUsername = selectedStudentAccess?.child_id === selectedChild?.id
+    ? selectedStudentAccess.username
+    : '';
+
+  return <div className="page-stack manage-children-redesign">
+    <SectionHeader
+      eyebrow="Parent Controls"
+      title="Manage child profiles"
+      desc="View each child's profile, learning settings, and subscription status. Sensitive identity details are locked after setup."
+    />
     {message && <p className="success-note">{message}</p>}
     {error && <p className="error-note">{error}</p>}
-    {deactivateTarget && <ConfirmDeactivateChildModal child={deactivateTarget} saving={saving} onCancel={() => setDeactivateTarget(null)} onConfirm={deactivate} />}
-    {reactivateTarget && <ConfirmReactivateChildModal child={reactivateTarget} saving={saving} onCancel={() => setReactivateTarget(null)} onConfirm={reactivate} />}
-    <div className="manage-children-grid">
-      <div className="form-card">
+
+    <div className="manage-profile-layout">
+      <section className="form-card child-roster-panel">
         <div className="section-row">
           <h3>Children</h3>
-          <button className="secondary-button compact" onClick={() => { setAdding(true); setEditingChildId(null); setNewStudentUsername(''); setNewStudentPin(''); }}>Add Child</button>
         </div>
-        <div className="child-card-list">
-          {children.map(child => <div key={child.id} className="child-profile-card">
-            <div>
-              <h4>{child.name}</h4>
-              <p>{child.grade_level} · {child.subjects.join(', ')}</p>
-              <span className={`child-status ${child.status}`}>{statusLabel(child.status)}</span>
-            </div>
-            <div className="child-card-actions">
-              <button className="secondary-button compact" onClick={() => { setEditingChildId(child.id); setAdding(false); }}>Edit</button>
-              {child.status === 'inactive'
-                ? <button className="secondary-button compact" onClick={() => setReactivateTarget(child)} disabled={saving}>Reactivate</button>
-                : <button className="secondary-button compact muted-danger" onClick={() => setDeactivateTarget(child)} disabled={saving}>Deactivate</button>}
-            </div>
-          </div>)}
+        <div className="child-roster-list">
+          {children.map(child => {
+            const access = childAccessById[child.id];
+            const accessState = childAccessState(access);
+            return <article key={child.id} className={`child-roster-card${selectedChild?.id === child.id ? ' selected' : ''}`}>
+              <div className="child-roster-main">
+                <div className="child-roster-avatar" aria-hidden="true">{child.name.charAt(0).toUpperCase()}</div>
+                <div>
+                  <h4>{child.name}</h4>
+                  <p>{child.grade_level} · {formatSubjects(child.subjects)}</p>
+                  <span className={`child-status-pill ${child.status === 'inactive' ? 'paused' : 'active'}`}>{child.status === 'inactive' ? 'Profile Paused' : 'Profile Active'}</span>
+                </div>
+              </div>
+              <div className="child-roster-subscription">
+                <span className={`access-summary ${accessState.kind}`}>{accessState.label}</span>
+                <span>{accessState.detail}</span>
+              </div>
+              <div className="child-roster-actions">
+                <button className="secondary-button compact outline" onClick={() => selectChild(child.id)}><Eye /> View Details</button>
+                <button className="secondary-button compact outline" onClick={() => editChild(child.id)}><SlidersHorizontal /> Edit Learning Settings</button>
+                {accessState.needsBilling
+                  ? <button className="primary-button compact-action" onClick={() => openBillingForChild(child.id)}><CreditCard /> Subscribe Now</button>
+                  : <button className="secondary-button compact outline" onClick={() => editChild(child.id)}><UsersRound /> Manage Login</button>}
+              </div>
+              <p className="identity-lock-note"><Lock /> Name / DOB locked after setup</p>
+            </article>;
+          })}
           {!children.length && <p className="muted-copy">No child profiles yet.</p>}
         </div>
-      </div>
-      {(adding || editingChild) && <div className="form-card">
-        <h3>{editingChild ? `Edit ${editingChild.name}` : 'Add child profile'}</h3>
-        <ChildProfileForm
-          child={editingChild}
-          submitLabel={editingChild ? 'Save Child' : 'Add Child and Login Access'}
-          saving={saving}
-          onSubmit={editingChild ? save : add}
-          onCancel={() => { setAdding(false); setEditingChildId(null); }}
-          extraFields={adding ? <StudentAccessCreateFields
-            username={newStudentUsername}
-            pin={newStudentPin}
-            onUsernameChange={setNewStudentUsername}
-            onPinChange={setNewStudentPin}
-          /> : undefined}
-        />
-        {editingChild && <StudentAccessForm accessToken={accessToken} child={editingChild} />}
-      </div>}
+        <div className="profile-action-row">
+          <button className="secondary-button" onClick={startAddChild}><PlusCircle /> Add Child</button>
+          <button className="secondary-button outline" onClick={onOpenBilling}><CreditCard /> Pay for All Children</button>
+        </div>
+      </section>
+
+      <section className="form-card selected-child-panel">
+        <div className="section-row">
+          <h3>Selected Child Details</h3>
+          <span className="locked-detail-badge"><Lock /> Identity details are locked after setup.</span>
+        </div>
+        {selectedChild ? <>
+          <div className="selected-child-details">
+            <DetailRow icon={<User />} label="Name" value={`${selectedChild.name} (Locked)`} locked />
+            <DetailRow icon={<CalendarDays />} label="Date of Birth" value={selectedChild.date_of_birth ? 'Locked' : 'Locked'} locked />
+            <DetailRow icon={<User />} label="Username" value={selectedStudentUsername || 'Not created yet'} />
+            <DetailRow icon={<KeyRound />} label="PIN" value="****" action={<button className="link-button inline-link" onClick={() => editChild(selectedChild.id)}>Reset PIN</button>} />
+            <DetailRow icon={<GraduationCap />} label="Grade" value={selectedChild.grade_level} />
+            <DetailRow icon={<BookOpen />} label="Subjects" value={formatSubjects(selectedChild.subjects)} />
+            <DetailRow icon={<SlidersHorizontal />} label="Learning Settings" value="Editable" action={<button className="link-button inline-link" onClick={() => editChild(selectedChild.id)}>Edit</button>} />
+            <DetailRow icon={<CreditCard />} label="Subscription Status" value={childAccessState(selectedAccess).label} emphasis={childAccessState(selectedAccess).needsBilling ? 'warning' : 'success'} />
+          </div>
+          <p className="selected-child-note"><Pencil /> Learning settings, grade, subjects, and student login can be updated. Identity details remain locked.</p>
+        </> : <p className="muted-copy">Select or add a child to view profile details.</p>}
+      </section>
     </div>
+
+    {(adding || editingChild) && <section className="form-card manage-edit-panel">
+      <h3>{editingChild ? `Edit ${editingChild.name}` : 'Add child profile'}</h3>
+      <ChildProfileForm
+        key={editingChild ? editingChild.id : 'new-child'}
+        child={editingChild}
+        lockedAfterSetup={Boolean(editingChild)}
+        submitLabel={editingChild ? 'Save Child' : 'Add Child and Login Access'}
+        saving={saving}
+        onSubmit={editingChild ? save : add}
+        onCancel={() => { setAdding(false); setEditingChildId(null); }}
+        extraFields={adding ? <StudentAccessCreateFields
+          username={newStudentUsername}
+          pin={newStudentPin}
+          onUsernameChange={setNewStudentUsername}
+          onPinChange={setNewStudentPin}
+        /> : undefined}
+      />
+      {editingChild && <StudentAccessForm accessToken={accessToken} child={editingChild} />}
+    </section>}
+  </div>;
+}
+
+function DetailRow({
+  icon,
+  label,
+  value,
+  action,
+  locked = false,
+  emphasis = '',
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  action?: ReactNode;
+  locked?: boolean;
+  emphasis?: 'success' | 'warning' | '';
+}) {
+  return <div className="selected-child-detail-row">
+    <span className="detail-icon">{icon}</span>
+    <span>{label}</span>
+    <strong className={emphasis}>{value}</strong>
+    {action || (locked ? <Lock className="detail-lock" /> : <span />)}
   </div>;
 }
 
@@ -182,8 +277,61 @@ export function StudentAccessCreateFields({
   </div>;
 }
 
-function statusLabel(status: ChildProfile['status']): string {
-  if (status === 'pending_consent') return 'Parent consent needed - please confirm consent in the child profile settings.';
-  if (status === 'inactive') return 'Paused';
-  return 'Active';
+function formatSubjects(subjects: ChildSubject[]): string {
+  return subjects.map(subject => subject === 'ELA' ? 'Reading' : subject).join(', ');
+}
+
+function childAccessState(access?: ChildAccess) {
+  if (!access) {
+    return {
+      kind: 'billing-required',
+      label: 'Billing Required',
+      detail: 'No active subscription yet',
+      needsBilling: true,
+    };
+  }
+  if (access.cancel_at_period_end) {
+    return {
+      kind: 'paused',
+      label: 'Pauses After Period',
+      detail: access.current_period_ends_at ? `Access pauses ${formatDate(access.current_period_ends_at)}` : 'Pause scheduled',
+      needsBilling: false,
+    };
+  }
+  if (access.access_status === 'active') {
+    return {
+      kind: 'active',
+      label: 'Subscription: Active',
+      detail: `${access.plan_name || 'Plan active'}${access.current_period_ends_at ? ` · Renews ${formatDate(access.current_period_ends_at)}` : ''}`,
+      needsBilling: false,
+    };
+  }
+  if (access.access_status === 'trial') {
+    return {
+      kind: 'trial',
+      label: 'Trial Active',
+      detail: access.trial_ends_at ? `Trial ends ${formatDate(access.trial_ends_at)}` : 'Trial period active',
+      needsBilling: false,
+    };
+  }
+  if (access.access_status === 'past_due') {
+    return {
+      kind: 'billing-required',
+      label: 'Payment Needed',
+      detail: 'Billing needs attention',
+      needsBilling: true,
+    };
+  }
+  return {
+    kind: 'billing-required',
+    label: 'Billing Required',
+    detail: 'Access locked until billing is completed',
+    needsBilling: true,
+  };
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'soon';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }

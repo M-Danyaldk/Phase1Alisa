@@ -303,6 +303,9 @@ class VoiceService:
         directives = [
             f'The currently selected subject is {subject}. Stay in this subject unless the student clearly asks to switch to another subject.',
             'This message came from voice input. Reply naturally for spoken audio: warm, calm, and concise.',
+            'Lead the spoken activity with one clear next step. Do not ask broad questions when assessment, homework, or current task context is available.',
+            'Ask only one question at a time. Do not include multiple open-ended questions in one spoken reply.',
+            'Use assessment results when available: start from the assessed working level, recommended topic, or recommended next step before starting unrelated practice.',
             'After the current problem is finished, you may end with one short same-subject practice question or mini-check when helpful. Do not add a new practice question before the current step is settled.',
             'Use compact tutor chat: 5-7 short lines maximum for normal help.',
             'For direct math questions, include the main step, calculation, and **Final answer:**.',
@@ -396,7 +399,7 @@ class VoiceService:
             raise HTTPException(status_code=503, detail=VOICE_FALLBACK_MESSAGE)
         payload = {
             'model': self.settings.openai_tts_model or 'gpt-4o-mini-tts',
-            'voice': self.settings.openai_tts_voice or 'alloy',
+            'voice': self.settings.openai_tts_voice or 'nova',
             'input': text,
             'response_format': 'mp3',
         }
