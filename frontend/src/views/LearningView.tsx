@@ -531,6 +531,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         onActivity={handleLocalActivity}
         onInputChange={setInput}
         onSend={send}
+        onNewChat={studentSession ? () => startNewChat() : undefined}
         onQuickAction={applyQuickAction}
         voiceAllowed={voiceAvailable}
         voiceDisabled={tutorDisabled}

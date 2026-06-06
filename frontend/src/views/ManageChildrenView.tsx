@@ -10,6 +10,8 @@ import { BillingStatus, ChildAccess } from '../types/billing';
 import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../types/childProfile';
 import { StudentAccess } from '../types/studentAccess';
 
+const BILLING_TARGET_CHILD_KEY = 'msalisia_billing_target_child';
+
 export function ManageChildrenView({
   accessToken,
   children,
@@ -114,6 +116,9 @@ export function ManageChildrenView({
     setNewStudentPin('');
     setMessage('');
     setError('');
+    window.setTimeout(() => {
+      document.getElementById('child-profile-form-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
   }
 
   function selectChild(childId: string) {
@@ -128,6 +133,7 @@ export function ManageChildrenView({
 
   function openBillingForChild(childId: string) {
     onSelectChild(childId);
+    sessionStorage.setItem(BILLING_TARGET_CHILD_KEY, childId);
     onOpenBilling();
   }
 
@@ -207,7 +213,7 @@ export function ManageChildrenView({
       </section>
     </div>
 
-    {(adding || editingChild) && <section className="form-card manage-edit-panel">
+    {(adding || editingChild) && <section className="form-card manage-edit-panel" id="child-profile-form-panel">
       <h3>{editingChild ? `Edit ${editingChild.name}` : 'Add child profile'}</h3>
       <ChildProfileForm
         key={editingChild ? editingChild.id : 'new-child'}

@@ -79,6 +79,7 @@ async def create_customer_portal_session(payload: CustomerPortalRequest, authori
     return CustomerPortalResponse(**result)
 
 
+@router.post('/webhook', response_model=StripeWebhookResponse)
 @router.post('/stripe/webhook', response_model=StripeWebhookResponse)
 async def stripe_webhook(request: Request, stripe_signature: str = Header(default='', alias='Stripe-Signature')) -> StripeWebhookResponse:
     payload = await request.body()

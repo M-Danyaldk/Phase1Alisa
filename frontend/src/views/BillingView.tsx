@@ -6,6 +6,7 @@ import { createBulkCheckoutSession, createCheckoutSession, createCustomerPortalS
 import { BillingPlan, BillingPlanKey, ChildAccess, ChildAccessStatus, CheckoutChildPlan, CouponRedemption, FamilyDiscountStatus } from '../types/billing';
 
 const PENDING_CHECKOUT_KEY = 'msalisia_pending_checkout_child';
+const BILLING_TARGET_CHILD_KEY = 'msalisia_billing_target_child';
 
 type PendingCheckout = {
   childId: string;
@@ -50,6 +51,25 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
   useEffect(() => {
     load();
   }, [accessToken]);
+
+  useEffect(() => {
+    if (!records.length || !plans.length) return;
+    const targetChildId = sessionStorage.getItem(BILLING_TARGET_CHILD_KEY);
+    if (!targetChildId) return;
+    const target = records.find(record => record.child_id === targetChildId);
+    if (!target || hasCurrentPaidAccess(target)) {
+      sessionStorage.removeItem(BILLING_TARGET_CHILD_KEY);
+      return;
+    }
+    setSelectedPlans(current => ({
+      ...current,
+      [targetChildId]: current[targetChildId] || defaultPlanKey(plans),
+    }));
+    window.setTimeout(() => {
+      document.getElementById('subscribe-children')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+    sessionStorage.removeItem(BILLING_TARGET_CHILD_KEY);
+  }, [records, plans]);
 
   useEffect(() => {
     if (!window.location.pathname.includes('/billing/success')) return;
@@ -119,6 +139,11 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
     const selected = checkoutSelections(records, selectedPlans);
     if (!selected.length) {
       setError('Choose at least one child and plan before checkout.');
+      return;
+    }
+    const unavailable = selected.find(selection => !plans.find(plan => plan.plan_key === selection.plan_key)?.stripe_price_configured);
+    if (unavailable) {
+      setError(`${childName(records, unavailable.child_id)} has a selected plan that is not connected to Stripe yet. Choose another plan or configure the missing Stripe price.`);
       return;
     }
     setCheckoutKey('bulk');
@@ -201,18 +226,15 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
         <span>Coupon code</span>
         <input value={couponCode} onChange={(event) => setCouponCode(event.target.value)} placeholder="Optional" />
       </label>
-      <button className="secondary-button compact" onClick={openPortal} disabled={portalLoading || !records.length}>{portalLoading ? 'Opening...' : 'Manage Payment Method'}</button>
+      <button className="secondary-button compact" onClick={openPortal} disabled={portalLoading || !records.length}>{portalLoading ? 'Opening...' : 'Update Payment Details'}</button>
     </div>
 
-    <section className="report-card">
+    <section className="report-card" id="subscribe-children">
       <div className="section-row">
         <div>
           <h3>Subscribe children</h3>
           <p className="muted-copy">Select one or more children, choose a plan for each, then continue to one secure Stripe checkout.</p>
         </div>
-        <button className="primary-button" onClick={beginBulkCheckout} disabled={!checkoutSelectionCount || checkoutKey === 'bulk'}>
-          {checkoutKey === 'bulk' ? 'Opening Checkout...' : `Checkout ${checkoutSelectionCount || ''}`.trim()}
-        </button>
       </div>
       {records.length >= 2 && <p className="billing-checkout-note">Family discount: 5% off applies when 2 or more child subscriptions are active or included in this checkout.</p>}
       <div className="billing-list compact-list">
@@ -239,10 +261,15 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
                 disabled={!selected}
                 onChange={(event) => choosePlan(record.child_id, event.target.value as BillingPlanKey)}
               >
-                {plans.map(plan => <option key={plan.plan_key} value={plan.plan_key}>{planButtonText(plan)}</option>)}
+                {plans.map(plan => <option key={plan.plan_key} value={plan.plan_key} disabled={!plan.stripe_price_configured}>{planButtonText(plan)}</option>)}
               </select>}
           </div>;
         })}
+      </div>
+      <div className="billing-checkout-footer">
+        <button className="primary-button" onClick={beginBulkCheckout} disabled={!checkoutSelectionCount || checkoutKey === 'bulk'}>
+          {checkoutKey === 'bulk' ? 'Opening Checkout...' : `Checkout ${checkoutSelectionCount || ''}`.trim()}
+        </button>
       </div>
     </section>
 
@@ -292,15 +319,15 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
             ? <button className="secondary-button compact" onClick={() => resumeAccess(record.child_id)} disabled={savingChildId === record.child_id}>
               {savingChildId === record.child_id && savingAccessAction === 'resume' ? 'Resuming access...' : 'Resume Access'}
             </button>
-            : hasCurrentPaidAccess(record) ? <button className="secondary-button compact danger" onClick={() => pauseAccess(record.child_id)} disabled={savingChildId === record.child_id}>
-              {savingChildId === record.child_id && savingAccessAction === 'pause' ? 'Pausing access...' : 'Pause Access'}
-            </button> : <span className="muted-copy compact-status-note">Choose a plan below to start access.</span>}
+            : hasCurrentPaidAccess(record) ? <button className="pause-access-link" onClick={() => pauseAccess(record.child_id)} disabled={savingChildId === record.child_id}>
+              {savingChildId === record.child_id && savingAccessAction === 'pause' ? 'Pausing access...' : 'Pause after current period'}
+            </button> : null}
         </div>
         <div className="billing-actions billing-plan-actions">
           {hasCurrentPaidAccess(record)
             ? <div className="subscription-management-note">
               <strong>This child is already covered for the current billing period.</strong>
-              <span>Use Manage Payment Method for plan, payment, or subscription changes.</span>
+              <span>Use Update Payment Details for plan, payment, or subscription changes.</span>
             </div>
             : plans.map(plan => {
               const key = `${record.child_id}:${plan.plan_key}`;
@@ -336,6 +363,11 @@ function labelForStatus(recordOrStatus: ChildAccess | ChildAccessStatus): string
   if (status === 'active') return 'Active';
   if (status === 'trial') return 'Trial';
   if (status === 'past_due') return 'Past Due';
+  if (status === 'inactive' && typeof recordOrStatus !== 'string') {
+    const hasPriorAccess = Boolean(recordOrStatus.current_period_ends_at || recordOrStatus.trial_started_at || recordOrStatus.trial_ends_at);
+    return hasPriorAccess ? 'Paused' : 'Billing Required';
+  }
+  if (status === 'inactive') return 'Billing Required';
   return 'Paused';
 }
 
@@ -343,7 +375,7 @@ function periodText(record: ChildAccess): string {
   if (record.cancel_at_period_end && record.current_period_ends_at) return `Access pauses after ${new Date(record.current_period_ends_at).toLocaleDateString()}`;
   if (record.trial_ends_at) return `Trial ends ${new Date(record.trial_ends_at).toLocaleDateString()}`;
   if (record.current_period_ends_at) return `Current period ends ${new Date(record.current_period_ends_at).toLocaleDateString()}`;
-  return 'No active billing period.';
+  return 'No paid plan selected.';
 }
 
 function planButtonText(plan: BillingPlan): string {

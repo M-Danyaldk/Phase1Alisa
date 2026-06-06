@@ -198,6 +198,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .tutor-identity span { display: block; color: var(--muted); font-size: 12px; line-height: 1.35; }
 .lesson-progress { display: grid; gap: 3px; justify-items: end; border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px; background: #faf7ff; color: var(--muted); font-size: 12px; }
 .lesson-progress strong { color: var(--purple-dark); }
+.chat-new-button { flex-shrink: 0; }
 .session-banner, .session-nudge, .brain-break-lockout { margin: 14px 16px 0; border-radius: 18px; padding: 14px 16px; border: 1px solid var(--border); }
 .session-banner { display: grid; gap: 4px; color: #8a6310; background: var(--gold-soft); border-color: #f0d88f; }
 .session-banner strong, .session-nudge strong, .brain-break-lockout strong { color: var(--purple-dark); }
@@ -273,6 +274,8 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .report-mini-card { border: 1px solid var(--border); border-radius: 16px; background: #faf7ff; padding: 12px; margin-top: 10px; }
 .report-mini-card strong { color: var(--purple-dark); }
 .report-mini-card p { margin: 6px 0 0; }
+.homework-history-card.active { border-color: rgba(108, 72, 180, .5); background: #f3ecff; }
+.homework-history-card .secondary-button { margin-top: 12px; }
 .subject-progress-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .subject-progress-card { border: 1px solid var(--border); border-radius: 18px; background: #fff; padding: 14px; }
 .subject-progress-title { display: flex; align-items: center; gap: 10px; color: var(--purple-dark); }
@@ -313,6 +316,8 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .billing-plan-action .secondary-button { min-width: 220px; min-height: 40px; white-space: normal; line-height: 1.25; }
 .subscription-management-note { display: grid; gap: 5px; max-width: 520px; padding: 13px 16px; border: 1px solid #d5efde; border-radius: 18px; background: #eaf8f0; color: var(--success); text-align: left; }
 .subscription-management-note span { color: var(--muted); font-weight: 800; line-height: 1.35; }
+.pause-access-link { border: 0; background: transparent; color: #7c7288; padding: 4px 0; font: inherit; font-size: 12px; font-weight: 900; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.pause-access-link:disabled { opacity: .55; cursor: not-allowed; }
 .compact-list { gap: 16px; }
 .subscribe-child-row { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 0.9fr); align-items: center; gap: 18px; }
 .subscribe-child-row.subscribed { background: #fcfbff; }
@@ -324,6 +329,8 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .billing-selection-copy small { display: block; color: var(--muted); font-weight: 800; line-height: 1.35; }
 .subscribe-child-row select { width: 100%; min-height: 54px; }
 .subscription-covered-note { justify-self: stretch; display: inline-flex; align-items: center; justify-content: center; min-height: 54px; border: 1px solid #d5efdE; border-radius: 18px; background: #eaf8f0; color: var(--success); font-weight: 900; text-align: center; padding: 10px 14px; }
+.billing-checkout-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.billing-checkout-footer .primary-button { min-width: 180px; }
 .access-status { display: inline-flex; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 900; background: #f5f2fa; color: var(--muted); }
 .access-status.active { color: var(--success); background: #eaf8f0; }
 .access-status.trial { color: #8a6310; background: var(--gold-soft); }

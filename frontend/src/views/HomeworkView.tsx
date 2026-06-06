@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ProblemReportButton } from '../components/ProblemReportButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiPost } from '../lib/api';
@@ -41,6 +41,7 @@ export function HomeworkView({
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpError, setFollowUpError] = useState('');
   const [tutoringState, setTutoringState] = useState<TutoringState>(initialTutoringState);
+  const activeUploadRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!accessToken || !childId) return;
@@ -78,6 +79,18 @@ export function HomeworkView({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The file could not be uploaded right now. Please try again.');
     } finally { setLoading(false); }
+  }
+
+  function openPreviousUpload(upload: HomeworkUpload) {
+    setUploadResult(upload);
+    setSelectedFile(null);
+    setFileName('');
+    setMessage('');
+    setFollowUpMessages(homeworkContextMessages(upload));
+    setFollowUpInput('');
+    setFollowUpError('');
+    setTutoringState(initialTutoringState);
+    window.setTimeout(() => activeUploadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   }
 
   async function sendFollowUp() {
@@ -121,7 +134,7 @@ export function HomeworkView({
   return <div className="page-stack narrow">
     <SectionHeader eyebrow="Homework" title={`${student.name}'s homework helper`} desc="Upload a clear photo or PDF. Ms. Alisia checks what she can see before helping one step at a time." />
     <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
-    <div className="form-card">
+    <div className="form-card" ref={activeUploadRef}>
       <div className="field-group">
         <strong>Homework photo or file</strong>
         <label className="file-upload-button">Take a Photo or Upload
@@ -157,7 +170,12 @@ export function HomeworkView({
         disabled={!accessToken || !childId}
       />
     </div>
-    <HomeworkHistory uploads={history} loading={historyLoading} />
+    <HomeworkHistory
+      uploads={history}
+      loading={historyLoading}
+      activeUploadId={uploadResult?.id || ''}
+      onOpenUpload={openPreviousUpload}
+    />
   </div>;
 }
 
@@ -244,17 +262,30 @@ function childFriendlyFollowUpError(error: unknown): string {
   return 'That did not send yet. Please try again in a moment.';
 }
 
-function HomeworkHistory({ uploads, loading }: { uploads: HomeworkUpload[]; loading: boolean }) {
+function HomeworkHistory({
+  uploads,
+  loading,
+  activeUploadId,
+  onOpenUpload,
+}: {
+  uploads: HomeworkUpload[];
+  loading: boolean;
+  activeUploadId: string;
+  onOpenUpload: (upload: HomeworkUpload) => void;
+}) {
   return <section className="report-card">
     <div className="section-row">
       <h3>Upload History</h3>
       {loading && <span className="muted-note">Loading...</span>}
     </div>
-    {uploads.length ? uploads.slice(0, 6).map(upload => <div className="report-mini-card" key={upload.id || `${upload.file_name}-${upload.created_at}`}>
+    {uploads.length ? uploads.slice(0, 6).map(upload => <div className={`report-mini-card homework-history-card${activeUploadId && upload.id === activeUploadId ? ' active' : ''}`} key={upload.id || `${upload.file_name}-${upload.created_at}`}>
       <strong>{upload.file_name}</strong>
       <p>{formatDate(upload.created_at) || 'Just now'} · {upload.file_type.toUpperCase()} · {upload.detected_subject || 'Subject pending'}</p>
       <p>{upload.ai_validation_summary || statusLabel(upload.ai_validation_status)}</p>
       {upload.is_unclear && <p className="error-note inline-note">Ms. Alisia needs a clearer photo before tutoring from this upload.</p>}
+      <button className="secondary-button compact" type="button" onClick={() => onOpenUpload(upload)}>
+        {activeUploadId && upload.id === activeUploadId ? 'Currently viewing' : 'Continue with this upload'}
+      </button>
     </div>) : <p className="muted-copy">No homework uploads yet.</p>}
   </section>;
 }

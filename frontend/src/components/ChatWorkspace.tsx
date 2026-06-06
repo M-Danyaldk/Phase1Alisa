@@ -23,6 +23,7 @@ type Props = {
   onActivity?: () => void;
   onInputChange: (value: string) => void;
   onSend: () => void;
+  onNewChat?: () => void;
   onQuickAction: (prompt: string) => void;
   onVoiceNotice?: (message: string) => void;
   onVoiceEnabledChange?: (enabled: boolean) => void;
@@ -60,6 +61,7 @@ export function ChatWorkspace({
   onActivity,
   onInputChange,
   onSend,
+  onNewChat,
   onQuickAction,
   onVoiceNotice,
   onVoiceEnabledChange,
@@ -191,6 +193,9 @@ export function ChatWorkspace({
         <span>{skill}</span>
         <strong>{step}</strong>
       </div>
+      {onNewChat && <button type="button" className="secondary-button compact chat-new-button" onClick={() => { onActivity?.(); onNewChat(); }} disabled={historyLoading || loading}>
+        New Chat
+      </button>}
     </div>
     {(brainBreakWarning || disabledMessage) && !brainBreak?.active && <div className="session-banner" role="status">
       <strong>{brainBreakWarning ? 'Brain Break reminder' : 'Learning paused'}</strong>
@@ -212,7 +217,7 @@ export function ChatWorkspace({
       {historyLoading && <div className="chat-bubble assistant"><p>Loading this conversation...</p></div>}
       {!historyLoading && messages.length === 0 && <div className="chat-empty-state">
         <strong>No messages yet</strong>
-        <p>Start with a question or choose an older chat from the sidebar.</p>
+        <p>Start with a question, or choose New Chat when you want a fresh activity.</p>
       </div>}
       {messages.map((message, index) => <div key={index} className={classNames('chat-bubble', message.role === 'student' ? 'student' : 'assistant')}>
         <MarkdownText text={message.content} />

@@ -37,6 +37,7 @@ type AuthView = 'login' | 'signup' | 'verify';
 const AUTH_SESSION_KEY = 'msalisia-auth-session';
 const STUDENT_SESSION_KEY = 'msalisia-student-session';
 const REFERRAL_CODE_KEY = 'msalisia-referral-code';
+const BILLING_TARGET_CHILD_KEY = 'msalisia_billing_target_child';
 const PARENT_VIEW_PATHS: Record<ParentView, string> = {
   home: '/dashboard',
   profile: '/settings',
@@ -359,6 +360,7 @@ export function App() {
     setSelectedChildId(selected && nextChildren.some(child => child.id === selected) ? selected : preferredChildId(nextChildren));
     if (session) void loadBillingStatus(session);
     if (addedChild) {
+      if (selected) sessionStorage.setItem(BILLING_TARGET_CHILD_KEY, selected);
       setParentView('billing');
       navigate('/billing');
     }
