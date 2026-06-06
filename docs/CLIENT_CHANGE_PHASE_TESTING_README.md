@@ -164,8 +164,9 @@ Required proof:
 - Screenshot: cron-job.org points to `/api/internal/email/process-due-fast`.
 - Screenshot: cron-job.org request method is POST.
 - Screenshot: cron-job.org has `x-internal-cron-secret` header configured without exposing the value.
-- Screenshot: cron history shows successful runs.
-- Backend proof: pending due emails are processed without timeout.
+- Screenshot: cron test run returns `200 OK`.
+- Screenshot: cron history shows successful scheduled runs.
+- Backend proof: pending due emails are processed without timeout. A `processed: 0` response is acceptable when no due email events are pending.
 - Email proof: weekly progress email shows branded HTML design with no broken logo image.
 - Email proof: weekly progress CTA opens `/login?redirect=/reports` and lands on Reports after login.
 - Email proof: payment success email sends after Stripe webhook.

@@ -102,6 +102,7 @@ export function ReportsView({
 
   const subjectProgress = report?.subject_progress || fallbackSubjectProgress(student);
   const childName = report?.child_name || student.name;
+  const accessBlocked = isBillingAccessMessage(error);
 
   async function uploadForChild() {
     if (!parentFile) {
@@ -236,7 +237,10 @@ export function ReportsView({
     {error && <p className="error-note">{error}</p>}
     {!childId && <p className="error-note">Select or create a child profile to view reports.</p>}
 
-    {loading ? <ReportLoadingState childName={childName} /> : <>
+    {accessBlocked ? <section className="report-card access-message">
+      <h3>Choose a plan for {childName}</h3>
+      <p>This child's learning report will open after an active trial or paid subscription is available.</p>
+    </section> : loading ? <ReportLoadingState childName={childName} /> : <>
     <div className="card-grid three">
       <InfoCard icon={<Target />} title="Current Level" desc={report?.current_learning_level || 'No assessment completed yet.'} />
       <InfoCard icon={<TrendingUp />} title="Weekly Progress" desc={report?.weekly_progress || 'No learning activity recorded yet.'} />
@@ -690,6 +694,15 @@ function fallbackSubjectProgress(student: StudentProfile): SubjectProgress[] {
     fallbackProgress('ELA', student.ela_level),
     fallbackProgress('Writing', student.writing_level),
   ];
+}
+
+function isBillingAccessMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes('parent needs to take care of')
+    || lower.includes('billing')
+    || lower.includes('payment')
+    || lower.includes('trial')
+    || lower.includes('subscription');
 }
 
 function fallbackProgress(subject: string, level: string): SubjectProgress {

@@ -288,13 +288,13 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
           <p>{periodText(record)}</p>
         </div>
         <div className="billing-actions">
-          {record.access_status === 'inactive' || record.cancel_at_period_end
+          {record.cancel_at_period_end
             ? <button className="secondary-button compact" onClick={() => resumeAccess(record.child_id)} disabled={savingChildId === record.child_id}>
               {savingChildId === record.child_id && savingAccessAction === 'resume' ? 'Resuming access...' : 'Resume Access'}
             </button>
-            : <button className="secondary-button compact danger" onClick={() => pauseAccess(record.child_id)} disabled={savingChildId === record.child_id}>
+            : hasCurrentPaidAccess(record) ? <button className="secondary-button compact danger" onClick={() => pauseAccess(record.child_id)} disabled={savingChildId === record.child_id}>
               {savingChildId === record.child_id && savingAccessAction === 'pause' ? 'Pausing access...' : 'Pause Access'}
-            </button>}
+            </button> : <span className="muted-copy compact-status-note">Choose a plan below to start access.</span>}
         </div>
         <div className="billing-actions billing-plan-actions">
           {hasCurrentPaidAccess(record)

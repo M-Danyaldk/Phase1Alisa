@@ -833,7 +833,7 @@ class BillingService:
                     skipped_count += 1
                     continue
                 metadata = subscription_dict.get('metadata') or {}
-                if not metadata.get('parent_id') or not metadata.get('child_id'):
+                if not metadata.get('parent_id') or not (metadata.get('child_id') or metadata.get('child_plan_map')):
                     skipped_count += 1
                     continue
                 try:
@@ -881,7 +881,7 @@ class BillingService:
             if subscription_dict.get('status') not in self._subscription_statuses():
                 continue
             metadata = subscription_dict.get('metadata') or {}
-            if metadata.get('parent_id') != parent_id or not metadata.get('child_id'):
+            if metadata.get('parent_id') != parent_id or not (metadata.get('child_id') or metadata.get('child_plan_map')):
                 continue
             try:
                 await self._handle_subscription_upsert(subscription_dict)

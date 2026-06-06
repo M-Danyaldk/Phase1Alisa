@@ -584,13 +584,11 @@ export function App() {
   const selectedChild = children.find(child => child.id === selectedChildId);
   const selectedChildAccess = billingStatus?.children.find(record => record.child_id === selectedChildId) || null;
   const selectedChildHasAccess = childAccessAllowsLearning(selectedChildAccess);
-  const selectedChildCanStartTrial = Boolean(selectedChild && billingStatus?.trial_available && !selectedChildHasAccess);
   const selectedChildBillingLocked = Boolean(
     selectedChild
     && billingStatus
     && !billingStatusLoading
     && !selectedChildHasAccess
-    && !selectedChildCanStartTrial
   );
 
   return (

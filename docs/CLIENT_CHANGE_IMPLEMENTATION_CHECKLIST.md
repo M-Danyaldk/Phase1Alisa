@@ -34,9 +34,9 @@ Use this file as the master implementation tracker. Mark each item complete only
 
 ## Phase 4 - Child Profile Selection And Locked PII
 
-- [ ] Verify child selector updates content across dashboard.
-- [ ] Verify child selector updates reports.
-- [ ] Verify child selector updates billing.
+- [x] Verify child selector updates content across dashboard.
+- [x] Verify child selector updates reports.
+- [x] Verify child selector updates billing.
 - [x] Verify child selector updates child profile editing.
 - [x] Fix incorrect student information showing during view/edit.
 - [x] Lock student name after initial setup.
@@ -107,8 +107,8 @@ Use this file as the master implementation tracker. Mark each item complete only
 - [x] Stripe `invoice.paid` webhook code queues and immediately attempts payment success email.
 - [ ] Deploy immediate signup welcome email change.
 - [ ] Deploy immediate trial-start parent email change.
-- [ ] Update cron-job.org to use fast endpoint.
-- [ ] Verify cron sends pending emails without timeout in production.
+- [x] Update cron-job.org to use fast endpoint.
+- [x] Verify cron sends pending emails without timeout in production.
 - [ ] Verify credential-created email sends in production.
 - [ ] Verify credential-updated email sends in production.
 - [ ] Verify Stripe `invoice.paid` creates/sends payment success email with current Stripe keys/webhook.
@@ -129,9 +129,9 @@ Use this file as the master implementation tracker. Mark each item complete only
 - [x] Add weekly-report sender support for `Francesca@msalisia.com`.
 - [x] Locally verify weekly email sender setting resolves to `Francesca@msalisia.com`.
 - [x] Locally verify weekly report CTA contains `login?redirect=%2Freports`.
-- [ ] Verify `Francesca@msalisia.com` is approved/verified in Resend before production sending.
-- [ ] Set/verify production `EMAIL_LOGO_URL` in Railway.
-- [ ] Send a fresh deployed weekly email test and confirm logo/CTA behavior in Gmail.
+- [x] Verify `Francesca@msalisia.com` is approved/verified in Resend before production sending.
+- [x] Set/verify production `EMAIL_LOGO_URL` in Railway.
+- [x] Send a fresh deployed weekly email test and confirm logo/CTA behavior in Gmail.
 
 ## Phase 10 - Final Acceptance QA
 
