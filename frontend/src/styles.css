@@ -551,7 +551,11 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .mobile-drawer .status-pill { margin-top: auto; }
   .hero-grid, .assessment-grid, .learning-layout, .admin-grid, .report-metric-grid, .report-split-grid, .report-filter-card, .settings-card-grid, .card-grid.three, .card-grid.four, .manage-children-grid, .manage-profile-layout, .child-roster-card, .report-grid, .report-loading-grid, .subject-progress-grid, .report-toolbar, .working-level-row, .student-dashboard-hero, .student-dashboard-grid, .student-achievement-grid, .parent-dashboard-grid { grid-template-columns: 1fr; }
   .subscribe-child-row { grid-template-columns: 1fr; }
-  .child-roster-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .child-roster-card { gap: 14px; align-items: stretch; overflow: hidden; }
+  .child-roster-main { align-items: flex-start; }
+  .child-roster-subscription, .child-roster-actions, .identity-lock-note { grid-column: 1 / -1; grid-row: auto; }
+  .child-roster-actions { grid-template-columns: 1fr; }
+  .child-roster-actions .primary-button, .child-roster-actions .secondary-button { min-height: 44px; }
   .selected-child-detail-row { grid-template-columns: 24px minmax(92px, .8fr) minmax(0, 1fr) auto; }
   .report-row { grid-template-columns: 1fr; }
   .billing-child-card { align-items: stretch; flex-direction: column; }
@@ -594,6 +598,14 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .brand-block img, .student-avatar.small { width: 46px; height: 46px; border-radius: 14px; }
   .brand-block h1 { font-size: 20px; }
   .child-switcher, .hero-card, .profile-card, .info-card, .form-card, .result-card, .chat-card, .lesson-controls, .thread-sidebar, .learning-context-panel, .report-card, .pricing-card, .future-card, .student-summary-card { border-radius: 20px; padding: 18px; }
+  .manage-profile-layout { gap: 16px; }
+  .child-roster-panel, .selected-child-panel, .manage-edit-panel { border-radius: 20px; padding: 18px; }
+  .child-roster-card { padding: 14px; border-radius: 18px; }
+  .child-roster-main { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; }
+  .child-roster-avatar { width: 56px; height: 56px; border-radius: 18px; }
+  .child-status-pill, .access-summary { max-width: 100%; white-space: normal; }
+  .identity-lock-note { align-items: flex-start; line-height: 1.35; }
+  .profile-action-row { align-items: stretch; flex-direction: column; }
   .section-header h2 { font-size: 34px; line-height: 1.05; }
   .chat-bubble { max-width: 92%; }
   .chat-window { padding: 16px; }
