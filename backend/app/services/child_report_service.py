@@ -189,7 +189,8 @@ class ChildReportService:
             assessed_level = assessment_rows[0]['estimated_level'] if assessment_rows else None
             override = (overrides or {}).get(subject)
             override_level = (override or {}).get('approved_working_level')
-            level = override_level or assessed_level or f'{enrolled_grade} - not assessed yet'
+            working_level = override_level or assessed_level
+            level = self._display_subject_level(enrolled_grade, working_level, bool(override_level), bool(assessed_level))
             working_level_source = 'parent_override' if override_level else ('assessment' if assessed_level else 'enrolled_grade')
             gaps = self._json_list(assessment_rows[0].get('learning_gaps')) if assessment_rows else []
             last_activity = None
@@ -200,6 +201,8 @@ class ChildReportService:
             progress.append(SubjectProgress(
                 subject=subject,
                 level=level,
+                display_level=level,
+                working_level=working_level,
                 enrolled_grade=enrolled_grade,
                 working_level_source=working_level_source,
                 override_active=bool(override_level),
@@ -460,17 +463,47 @@ class ChildReportService:
     def _current_level(self, child: dict, progress: list[SubjectProgress]) -> str:
         override = next((item for item in progress if item.override_active and item.override_level), None)
         if override:
-            return f'Working at {override.override_level} level - enrolled in {child["grade_level"]}'
-        assessed = [item.level for item in progress if 'not assessed' not in item.level.lower()]
+            focus = self._practice_focus_label(override.override_level or '')
+            return f'{child["grade_level"]} - parent-set practice focus: {focus}' if focus else f'{child["grade_level"]} - parent-set practice focus'
+        assessed = [item for item in progress if item.working_level and 'not assessed' not in item.working_level.lower()]
         if assessed:
-            return assessed[0]
+            focus = self._practice_focus_label(assessed[0].working_level or '')
+            return f'{child["grade_level"]} - practice focus: {focus}' if focus else f'{child["grade_level"]} - learning path started'
         return f'{child["grade_level"]} - learning path not assessed yet'
+
+    def _display_subject_level(self, enrolled_grade: str, working_level: str | None, override_active: bool, assessed: bool) -> str:
+        enrolled = enrolled_grade or 'Enrolled grade'
+        if not working_level:
+            return f'{enrolled} - not assessed yet'
+        focus = self._practice_focus_label(working_level)
+        if not focus:
+            return f'{enrolled} - learning path started'
+        if override_active:
+            return f'{enrolled} - parent-set practice focus: {focus}'
+        if assessed:
+            return f'{enrolled} - practice focus: {focus}'
+        return f'{enrolled} - learning path started'
+
+    def _practice_focus_label(self, value: str) -> str:
+        text = self._safe_parent_text(value or '').strip()
+        if not text:
+            return ''
+        lowered = text.lower()
+        if 'not assessed' in lowered:
+            return ''
+        if text.lower().startswith('grade '):
+            parts = text.split(maxsplit=2)
+            text = parts[2] if len(parts) >= 3 else ''
+            text = text.replace('–', '-').replace('—', '-').lstrip(' -:').strip()
+        return text or 'Foundational practice'
 
     def _assessment_status(self, assessments: list[AssessmentSummary]) -> str:
         if not assessments:
             return 'No assessment completed yet. Start an assessment to create a personalized learning path.'
         latest = assessments[0]
-        return f'Latest assessment: {self._subject_label(latest.subject)} - {self._safe_parent_text(latest.score_label or latest.estimated_level)}.'
+        focus = self._practice_focus_label(latest.estimated_level or '')
+        label = latest.score_label or (f'practice focus: {focus}' if focus else 'Learning path saved')
+        return f'Latest assessment: {self._subject_label(latest.subject)} - {self._safe_parent_text(label)}.'
 
     def _progress_percent(self, assessment_count: int, chat_count: int, message_count: int) -> int:
         score = assessment_count * 20 + chat_count * 12 + message_count * 2

@@ -132,6 +132,9 @@ export function HomeworkView({
   }
 
   return <div className="page-stack narrow">
+    {studentSession && setView && <div className="student-view-actions">
+      <button className="secondary-button compact" type="button" onClick={() => setView('home')}>Back to Home</button>
+    </div>}
     <SectionHeader eyebrow="Homework" title={`${student.name}'s homework helper`} desc="Upload a clear photo or PDF. Ms. Alisia checks what she can see before helping one step at a time." />
     <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
     <div className="form-card" ref={activeUploadRef}>

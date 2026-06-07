@@ -32,13 +32,14 @@ class ChatStore:
         if payload.child_id:
             await self._ensure_child_for_user(user_id, payload.child_id)
         now = datetime.now(UTC).isoformat()
-        title = (payload.title or '').strip() or self._title_from_topic(payload.subject, payload.topic)
+        topic = self._safe_topic(payload.subject, payload.topic)
+        title = (payload.title or '').strip() or self._title_from_topic(payload.subject, topic)
         try:
             records = await self.supabase.insert('chat_threads', {
                 'user_id': user_id,
                 'child_id': payload.child_id,
                 'subject': payload.subject,
-                'topic': payload.topic.strip(),
+                'topic': topic,
                 'title': title,
                 'created_at': now,
                 'updated_at': now,
@@ -123,9 +124,26 @@ class ChatStore:
 
     def _title_from_topic(self, subject: str, topic: str) -> str:
         cleaned = ' '.join(topic.split()).strip()
-        if not cleaned:
-            return f'{subject} chat'
-        return cleaned[:48]
+        if len(cleaned) < 3:
+            return f'{self._subject_label(subject)} Practice'
+        return f'{self._subject_label(subject)} Practice - {cleaned[:48]}'
+
+    def _subject_label(self, subject: str) -> str:
+        return 'Reading' if subject == 'ELA' else (subject or 'Learning')
+
+    def _safe_topic(self, subject: str, topic: str) -> str:
+        cleaned = ' '.join(str(topic or '').split()).strip(' .,:;-()[]')
+        lowered = cleaned.lower()
+        raw_markers = ('i need help', "i don't know", 'i dont know', 'good try', 'you are close', "you're close", 'student:', 'msalisia:')
+        if len(cleaned) >= 3 and any(char.isalpha() for char in cleaned) and not any(marker in lowered for marker in raw_markers):
+            return cleaned[:80]
+        if subject == 'Math':
+            return 'multiplication facts'
+        if subject == 'ELA':
+            return 'reading vocabulary'
+        if subject == 'Writing':
+            return 'sentence writing'
+        return 'guided practice'
 
     async def _ensure_child_for_user(self, user_id: str, child_id: str) -> None:
         try:

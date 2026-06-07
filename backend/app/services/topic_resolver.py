@@ -1,4 +1,5 @@
 from typing import Literal
+import re
 
 from ..models import Subject
 
@@ -15,7 +16,7 @@ class TopicResolver:
         assessment_context: dict | None,
     ) -> dict:
         normalized_source = topic_source if topic_source in ('manual', 'default', 'assessment') else 'manual'
-        clean_topic = topic.strip() or 'general practice'
+        clean_topic = self._safe_topic(subject, topic)
         if normalized_source == 'manual':
             return {
                 'subject': subject,
@@ -25,7 +26,7 @@ class TopicResolver:
                 'source': 'manual',
             }
 
-        assessment_topic = self._assessment_topic(assessment_context)
+        assessment_topic = self._assessment_topic(subject, assessment_context)
         if assessment_topic:
             return {
                 'subject': subject,
@@ -43,16 +44,16 @@ class TopicResolver:
             'source': 'default',
         }
 
-    def _assessment_topic(self, assessment_context: dict | None) -> str:
+    def _assessment_topic(self, subject: Subject, assessment_context: dict | None) -> str:
         if not assessment_context:
             return ''
         for key in ('recommended_next_topics', 'learning_gaps', 'recommended_next_steps'):
             values = assessment_context.get(key) or []
             if values:
-                return self._topic_from_text(str(values[0]))
+                return self._topic_from_text(subject, str(values[0]))
         return ''
 
-    def _topic_from_text(self, value: str) -> str:
+    def _topic_from_text(self, subject: Subject, value: str) -> str:
         text = value.strip()
         if not text:
             return ''
@@ -62,4 +63,24 @@ class TopicResolver:
                 if candidate:
                     text = candidate
                     break
+        return self._safe_topic(subject, text)
+
+    def _safe_topic(self, subject: Subject, value: str | None) -> str:
+        text = str(value or '').strip()
+        text = re.sub(r'[*_`#>\[\]()]', '', text)
+        text = re.sub(r'https?://\S+', '', text)
+        text = re.sub(r'\s+', ' ', text).strip(' .,:;-')
+        if len(text) < 3 or not re.search(r'[A-Za-z]', text):
+            return self._default_topic(subject)
+        if any(marker in text.lower() for marker in ('i need help', "i don't know", 'i dont know', 'good try', 'you are close', "you're close", 'we just found', 'student:', 'msalisia:')):
+            return self._default_topic(subject)
         return text[:80]
+
+    def _default_topic(self, subject: Subject) -> str:
+        if subject == 'Math':
+            return 'multiplication facts'
+        if subject == 'ELA':
+            return 'reading vocabulary'
+        if subject == 'Writing':
+            return 'sentence writing'
+        return 'guided practice'

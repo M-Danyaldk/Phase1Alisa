@@ -3,6 +3,8 @@ import { HomeworkUpload } from './homework';
 export type SubjectProgress = {
   subject: string;
   level: string;
+  display_level?: string | null;
+  working_level?: string | null;
   enrolled_grade?: string | null;
   working_level_source?: string;
   override_active?: boolean;

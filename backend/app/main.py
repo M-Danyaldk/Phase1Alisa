@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import re
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -134,7 +135,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         payload.subject,
         topic=resolved_topic,
         student_message=payload.message,
-        working_level=(assessment_context or {}).get('assessed_level'),
+        working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
     )
     chat_store: ChatStore | None = None
     chat_user_id: str | None = child_user['id']
@@ -148,7 +149,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 child_id=payload.child_id,
                 subject=payload.subject,
                 topic=resolved_topic,
-                title=payload.message.strip()[:48] or None,
+                title=_session_title(payload.subject, resolved_topic),
             ))
             chat_thread_id = thread['id']
         if chat_thread_id:
@@ -268,7 +269,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             subject=payload.subject,
             topic=resolved_topic,
             grade_level=f'Grade {prompt_student.grade}',
-            working_level=(assessment_context or {}).get('assessed_level'),
+            working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
             student_message=payload.message,
             assistant_text=formatted_reply,
             tutoring_state=next_state,
@@ -278,7 +279,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 'provider': result.provider,
                 'model': result.model,
                 'topic_source': topic_resolution['source'],
-                'assessed_level': topic_resolution.get('assessed_level'),
+                'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
             },
         )
     return ChatResponse(
@@ -292,7 +293,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         history_error=history_error,
         resolved_topic=resolved_topic,
         topic_source=topic_resolution['source'],
-        assessed_level=topic_resolution.get('assessed_level'),
+        assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
     )
 
 
@@ -343,14 +344,40 @@ def _student_with_assessed_level(student: StudentProfile, subject: str, assessme
     assessed_level = (assessment_context or {}).get('assessed_level')
     if not assessed_level:
         return student
+    working_focus = _practice_focus_label(assessed_level)
+    safe_level = f'Grade {student.grade} practice focus: {working_focus}' if working_focus else f'Grade {student.grade} learning path ready'
     updates = {}
     if subject == 'Math':
-        updates['math_level'] = assessed_level
+        updates['math_level'] = safe_level
     elif subject == 'ELA':
-        updates['ela_level'] = assessed_level
+        updates['ela_level'] = safe_level
     elif subject == 'Writing':
-        updates['writing_level'] = assessed_level
+        updates['writing_level'] = safe_level
     return student.model_copy(update=updates) if updates else student
+
+
+def _practice_level_label(value: object) -> str | None:
+    focus = _practice_focus_label(value)
+    return f'Practice focus: {focus}' if focus else None
+
+
+def _session_title(subject: str, topic: str | None) -> str:
+    label = _subject_label(subject)
+    clean_topic = _session_topic_label(subject, topic)
+    return f'{label} Practice - {clean_topic}'
+
+
+def _session_topic_label(subject: str, topic: str | None) -> str:
+    text = ' '.join(str(topic or '').split()).strip(' .,:;-')
+    if len(text) < 3 or not re.search(r'[A-Za-z]', text):
+        if subject == 'Math':
+            return 'Multiplication'
+        if subject == 'ELA':
+            return 'Reading Vocabulary'
+        if subject == 'Writing':
+            return 'Sentence Writing'
+        return 'Guided Practice'
+    return text[:48]
 
 
 def _homework_context_available(message: str, topic: str, history: list) -> bool:
@@ -385,6 +412,17 @@ def _grade_number(value: object) -> int | None:
         return None
     grade = int(digits)
     return grade if 3 <= grade <= 12 else None
+
+
+def _practice_focus_label(value: object) -> str:
+    text = str(value or '').strip()
+    if not text or 'not assessed' in text.lower():
+        return ''
+    if text.lower().startswith('grade '):
+        parts = text.split(maxsplit=2)
+        text = parts[2] if len(parts) >= 3 else ''
+        text = text.lstrip(' -:–—').strip()
+    return text or 'Foundational practice'
 
 
 def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentResult:

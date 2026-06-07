@@ -6,6 +6,8 @@ from .homework import HomeworkHistoryItem
 class SubjectProgress(BaseModel):
     subject: str
     level: str
+    display_level: str | None = None
+    working_level: str | None = None
     enrolled_grade: str | None = None
     working_level_source: str = 'assessment'
     override_active: bool = False

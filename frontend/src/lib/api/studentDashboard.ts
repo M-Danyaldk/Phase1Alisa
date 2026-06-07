@@ -4,6 +4,9 @@ import { StudentDashboardData, StudentProgressItem, WeeklyRhythm } from '../../t
 type DashboardProgressResponse = {
   subject: StudentProgressItem['subject'];
   level: string;
+  enrolled_grade?: string | null;
+  working_level?: string | null;
+  working_level_source?: string;
   progress_percentage: number;
   current_focus: string;
   next_step: string;
@@ -64,6 +67,9 @@ export async function getStudentDashboard(accessToken: string, childId: string, 
     subjectProgress: data.subject_progress.map(item => ({
       subject: item.subject,
       level: item.level,
+      enrolledGrade: item.enrolled_grade,
+      workingLevel: item.working_level,
+      workingLevelSource: item.working_level_source,
       progressPercentage: item.progress_percentage,
       currentFocus: item.current_focus,
       nextStep: item.next_step,

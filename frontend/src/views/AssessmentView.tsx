@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ProblemReportButton } from '../components/ProblemReportButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { ResultPanel } from '../components/ResultPanel';
@@ -20,7 +20,7 @@ export function AssessmentView({
   childId?: string;
   accessToken?: string;
   studentSession?: boolean;
-  onContinueLearning?: () => void;
+  onContinueLearning?: (result: ChildAssessmentResult) => void;
   onBackToDashboard?: () => void;
 }) {
   const [subject, setSubject] = useState<Subject>('Math');
@@ -29,8 +29,14 @@ export function AssessmentView({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ChildAssessmentResult | null>(null);
   const [error, setError] = useState('');
+  const resultRef = useRef<HTMLDivElement | null>(null);
   const questions = questionsForAttempt(subject, attemptNumber);
   const assessmentComplete = Boolean(result);
+
+  useEffect(() => {
+    if (!result) return;
+    window.setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }, [result]);
 
   async function submit() {
     if (!studentSession) {
@@ -55,14 +61,10 @@ export function AssessmentView({
     } finally { setLoading(false); }
   }
 
-  function startRetake() {
-    setAttemptNumber(prev => prev + 1);
-    setAnswers(['', '', '']);
-    setResult(null);
-    setError('');
-  }
-
   return <div className="page-stack">
+    {studentSession && onBackToDashboard && <div className="student-view-actions">
+      <button className="secondary-button compact" type="button" onClick={onBackToDashboard}>Back to Home</button>
+    </div>}
     <SectionHeader eyebrow="Assessment center" title="Learning check-in" desc="Complete a short check-in so MsAlisia can choose helpful next steps." />
     <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
     <div className="tabs">
@@ -75,7 +77,6 @@ export function AssessmentView({
         <h3>{subjectLabel(subject)} quick check</h3>
         {questions.map((q, idx) => <label key={q}>{q}<textarea value={answers[idx]} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Student answer..." disabled={assessmentComplete} /></label>)}
         <button className="primary-button" onClick={submit} disabled={loading || !studentSession || assessmentComplete}>{loading ? 'Evaluating...' : assessmentComplete ? 'Assessment Complete' : studentSession ? 'Evaluate Assessment' : 'Login Required'}</button>
-        {assessmentComplete && <button className="secondary-button" type="button" onClick={startRetake}>Try a New Check-in</button>}
         <ProblemReportButton
           accessToken={accessToken}
           childId={childId}
@@ -86,7 +87,9 @@ export function AssessmentView({
           disabled={!studentSession || !accessToken || !childId}
         />
       </div>
-      <ResultPanel result={result} onContinueLearning={onContinueLearning} onBackToDashboard={onBackToDashboard} />
+      <div ref={resultRef}>
+        <ResultPanel result={result} onContinueLearning={onContinueLearning} onBackToDashboard={onBackToDashboard} />
+      </div>
     </div>
   </div>;
 }

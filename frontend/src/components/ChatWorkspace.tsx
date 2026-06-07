@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, Square } from 'lucide-react';
+import { Home, Mic, Square } from 'lucide-react';
 import { classNames } from '../lib/classNames';
 import { MarkdownText } from './MarkdownText';
 import { ProblemReportButton } from './ProblemReportButton';
@@ -23,6 +23,7 @@ type Props = {
   onActivity?: () => void;
   onInputChange: (value: string) => void;
   onSend: () => void;
+  onBackHome?: () => void;
   onNewChat?: () => void;
   onQuickAction: (prompt: string) => void;
   onVoiceNotice?: (message: string) => void;
@@ -40,7 +41,7 @@ type Props = {
 };
 
 const CHAT_FALLBACK_MESSAGE = 'No problem — we will use chat instead!';
-const VOICE_AUTO_STOP_MS = 5000;
+const VOICE_AUTO_STOP_MS = 2000;
 const VOICE_AUTO_STOP_MESSAGE = 'I stopped recording so we can keep things moving. If you are still there, tap Record and tell me one thing you want help with.';
 
 export function ChatWorkspace({
@@ -61,6 +62,7 @@ export function ChatWorkspace({
   onActivity,
   onInputChange,
   onSend,
+  onBackHome,
   onNewChat,
   onQuickAction,
   onVoiceNotice,
@@ -193,6 +195,10 @@ export function ChatWorkspace({
         <span>{skill}</span>
         <strong>{step}</strong>
       </div>
+      {onBackHome && <button type="button" className="secondary-button compact chat-home-button" onClick={() => { onActivity?.(); onBackHome(); }} disabled={historyLoading || loading}>
+        <Home aria-hidden="true" />
+        Back to Home
+      </button>}
       {onNewChat && <button type="button" className="secondary-button compact chat-new-button" onClick={() => { onActivity?.(); onNewChat(); }} disabled={historyLoading || loading}>
         New Chat
       </button>}

@@ -272,6 +272,17 @@ Runtime tutoring directives:
 """
 
 
+def practice_focus_label(value: object) -> str:
+    text = str(value or '').strip()
+    if not text or 'not assessed' in text.lower():
+        return ''
+    if text.lower().startswith('grade '):
+        parts = text.split(maxsplit=2)
+        text = parts[2] if len(parts) >= 3 else ''
+        text = text.lstrip(' -:–—').strip()
+    return text or 'Foundational practice'
+
+
 def compact_chat_system_prompt(
     student: StudentProfile,
     subject: str,
@@ -312,7 +323,7 @@ Assess by competency, not just enrolled grade. Students may be ahead or behind b
 Grade {grade} {subject} launch-scope topics include: {grade_topics}.
 Grades 7-12 are prepared for future release and are not part of launch assessment.
 Use the questions and answers below to identify:
-- estimated subject working level from Grades 3-6
+- subject practice focus within the Grades 3-6 launch scope
 - strengths
 - learning gaps
 - recommended progression
@@ -325,7 +336,7 @@ Assessment responses:
 
 Return concise JSON only with this schema:
 {{
-  "estimated_level": "Grade X - brief level label",
+  "estimated_level": "brief practice focus label without a grade number",
   "score_label": "brief score/readiness label",
   "strengths": ["..."],
   "learning_gaps": ["..."],
@@ -375,15 +386,16 @@ def assessment_context_prompt(assessment_context: dict | None) -> str:
     next_step = next_steps[0] if next_steps else 'Continue with one short guided practice step.'
     next_topics = assessment_context.get('recommended_next_topics') or []
     next_topic = next_topics[0] if next_topics else 'Use the recommended next step.'
+    practice_focus = practice_focus_label(assessment_context.get('assessed_level')) or 'Learning path ready'
     return f"""
 Assessment context:
 - Enrolled grade remains profile information only.
 - Current subject: {assessment_context.get('subject') or 'Unknown'}
-- Assessed subject level: {assessment_context.get('assessed_level') or 'Not assessed yet'}
+- Current practice focus: {practice_focus}
 - Learning gaps: {gaps}
 - Strengths: {strengths}
 - Recommended next topic: {next_topic}
 - Recommended next step: {next_step}
-- Teach at the assessed subject level when available. Do not assume enrolled grade equals current skill level.
+- Teach from the current practice focus when available. Keep enrolled grade separate from practice focus.
 - Begin from this assessment context when it is relevant. Choose one small next step and guide it before asking another question.
 """

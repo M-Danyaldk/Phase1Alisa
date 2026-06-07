@@ -25,13 +25,13 @@ const subjectDefaults: Record<Subject, string> = {
   Writing: 'sentence structure'
 };
 
-function subjectGreeting(studentName: string, subject: Subject): string {
+function subjectGreeting(student: StudentProfile, subject: Subject): string {
   const labels: Record<Subject, string> = {
     Math: 'math',
     ELA: 'reading',
     Writing: 'writing'
   };
-  return `Hi ${studentName}! I am Ms Alisia. We are working on ${labels[subject]} now, and I will help with one small step at a time.`;
+  return `Hi ${student.name}! I am Ms Alisia. We are working on Grade ${student.grade} ${labels[subject]} now. ${openingActivity(subject)}`;
 }
 
 function subjectSwitchMessage(subject: Subject): string {
@@ -56,15 +56,21 @@ function detectSubjectFromMessage(message: string): Subject | null {
   return null;
 }
 
-export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', studentSession = false, voiceAllowed = false, onInactivePause, onRequireRelogin }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; studentSession?: boolean; voiceAllowed?: boolean; onInactivePause?: (message: string) => void; onRequireRelogin?: (message: string) => void }) {
+function openingActivity(subject: Subject): string {
+  if (subject === 'Math') return 'Let us start with one quick question: what is 6 × 7?';
+  if (subject === 'ELA') return 'Let us start with one quick reading question: in "Mia sprinted to the bus," what does sprinted mean?';
+  return 'Let us start with one quick writing task: write one strong sentence about your favorite place.';
+}
+
+export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', initialTopic, studentSession = false, voiceAllowed = false, onBackHome, onInactivePause, onRequireRelogin }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; initialTopic?: string; studentSession?: boolean; voiceAllowed?: boolean; onBackHome?: () => void; onInactivePause?: (message: string) => void; onRequireRelogin?: (message: string) => void }) {
   const initialTutoringState: TutoringState = { active_problem: '', current_step: '', attempt_count: 0, answer_revealed: false, mode: 'solve', status: 'idle', memory_note: '' };
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
   const [subject, setSubject] = useState<Subject>(initialSubject);
-  const [topic, setTopic] = useState(subjectDefaults[initialSubject]);
-  const [topicSource, setTopicSource] = useState<TopicSource>('default');
-  const [input, setInput] = useState('I need help understanding this.');
+  const [topic, setTopic] = useState(initialTopic || subjectDefaults[initialSubject]);
+  const [topicSource, setTopicSource] = useState<TopicSource>(initialTopic ? 'assessment' : 'default');
+  const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'msalisia', content: subjectGreeting(student.name, initialSubject), subject: initialSubject }
+    { role: 'msalisia', content: subjectGreeting(student, initialSubject), subject: initialSubject }
   ]);
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -95,7 +101,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const voiceAvailable = Boolean(studentSession && voiceAllowed && accessToken && childId);
 
   function greetingFor(nextSubject: Subject) {
-    return [{ role: 'msalisia' as const, content: subjectGreeting(student.name, nextSubject), subject: nextSubject }];
+    return [{ role: 'msalisia' as const, content: subjectGreeting(student, nextSubject), subject: nextSubject }];
   }
 
   async function refreshThreads() {
@@ -120,10 +126,11 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setActiveThread(null);
     setTutoringState(initialTutoringState);
     setSubject(initialSubject);
-    setTopic(subjectDefaults[initialSubject]);
-    setTopicSource('default');
+    setTopic(initialTopic || subjectDefaults[initialSubject]);
+    setTopicSource(initialTopic ? 'assessment' : 'default');
     setLastAnnouncedSubject(initialSubject);
     setMessages(greetingFor(initialSubject));
+    setInput('');
     refreshThreads();
     setSessionStatus(null);
     setNudgeVisible(false);
@@ -138,7 +145,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     nudgeAudioPlayedRef.current = false;
     pauseRecordedRef.current = false;
     brainBreakWasActiveRef.current = false;
-  }, [accessToken, childId, initialSubject]);
+  }, [accessToken, childId, initialSubject, initialTopic]);
 
   useEffect(() => {
     if (!trackingEnabled) return;
@@ -239,7 +246,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setTopic(prev => prev === subjectDefaults.Math || prev === subjectDefaults.ELA || prev === subjectDefaults.Writing ? subjectDefaults[subject] : prev);
     setMessages(prev => {
       if (prev.length === 1 && prev[0].role === 'msalisia') {
-        return [{ role: 'msalisia', content: subjectGreeting(student.name, subject), subject }];
+        return [{ role: 'msalisia', content: subjectGreeting(student, subject), subject }];
       }
       return prev;
     });
@@ -262,6 +269,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setActiveThread(null);
     setTutoringState(initialTutoringState);
     setMessages(greetingFor(nextSubject));
+    setInput('');
     setLastAnnouncedSubject(nextSubject);
     setSubject(nextSubject);
     setTopic(subjectDefaults[nextSubject]);
@@ -286,6 +294,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         provider: message.provider || undefined,
         subject: message.subject || nextSubject,
       })) : greetingFor(nextSubject));
+      setInput('');
       const latestState = [...history].reverse().find(message => message.tutoring_state)?.tutoring_state;
       setTutoringState(latestState || initialTutoringState);
     } catch (error) {
@@ -357,7 +366,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       }
     } catch (error) {
       setThreadError(error instanceof Error ? error.message : 'The tutor request failed.');
-      setMessages(prev => [...prev, { role: 'msalisia', content: 'Let us take one small step. Tell me what part feels confusing, and I will guide you with a quick example.', subject: activeSubject }]);
+      setMessages(prev => [...prev, { role: 'msalisia', content: fallbackTutorMessage(tutoringState), subject: activeSubject }]);
     } finally { setLoading(false); }
   }
 
@@ -531,6 +540,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         onActivity={handleLocalActivity}
         onInputChange={setInput}
         onSend={send}
+        onBackHome={studentSession ? onBackHome : undefined}
         onNewChat={studentSession ? () => startNewChat() : undefined}
         onQuickAction={applyQuickAction}
         voiceAllowed={voiceAvailable}
@@ -550,7 +560,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
           messageContext: latestAssistantMessage(messages),
         }}
       />
-      <LearningContextPanel
+      {!studentSession && <LearningContextPanel
         student={student}
         subject={subject}
         topic={topic}
@@ -559,7 +569,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
           setTopic(nextTopic);
           setTopicSource('manual');
         }}
-      />
+      />}
     </div>
   </div>;
 }
@@ -567,6 +577,13 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
 function latestAssistantMessage(messages: ChatMessage[]): string | null {
   const latest = [...messages].reverse().find(message => message.role === 'msalisia');
   return latest?.content?.slice(0, 1200) || null;
+}
+
+function fallbackTutorMessage(state: TutoringState): string {
+  if (state.attempt_count > 0 || state.current_question || state.current_step) {
+    return "That answer doesn't look right yet. Let's try one hint: look back at the question, find the key numbers or words, and try the same step again.";
+  }
+  return 'Something got stuck on my side. Let us keep going with one small step: tell me your answer, and I will check it.';
 }
 
 function playAssistantAudio(audioBase64: string, mimeType: string) {

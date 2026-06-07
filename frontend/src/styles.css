@@ -469,6 +469,17 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .student-achievement-card p { margin: 0; color: var(--muted); line-height: 1.45; }
 .student-achievement-card.locked { background: #faf7ff; opacity: .78; }
 .student-achievement-card.in_progress { border-color: #f0d88f; background: var(--gold-soft); }
+.student-home-page { max-width: 980px; }
+.student-home-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.student-home-action { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "icon title" "icon text"; align-items: center; gap: 6px 14px; min-height: 126px; width: 100%; border: 1px solid var(--border); border-radius: 20px; padding: 20px; background: #fff; color: var(--text); text-align: left; cursor: pointer; box-shadow: 0 18px 50px rgba(92, 62, 150, .08); }
+.student-home-action.featured { grid-column: 1 / -1; min-height: 150px; background: linear-gradient(135deg, #fff, #f3e9ff); border-color: #d7c5f8; }
+.student-home-action:hover, .student-home-action:focus-visible { border-color: #d7c5f8; background: #fbf8ff; outline: none; transform: translateY(-1px); }
+.student-home-action-icon { grid-area: icon; display: grid; place-items: center; width: 58px; height: 58px; border-radius: 18px; background: var(--purple-soft); color: var(--purple-dark); }
+.student-home-action.featured .student-home-action-icon { width: 68px; height: 68px; background: var(--purple-dark); color: #fff; }
+.student-home-action-icon svg { width: 29px; height: 29px; }
+.student-home-action strong { grid-area: title; color: var(--purple-dark); font-size: 22px; line-height: 1.1; }
+.student-home-action.featured strong { font-size: 30px; }
+.student-home-action small { grid-area: text; color: var(--muted); font-size: 14px; line-height: 1.4; font-weight: 800; }
 .prelaunch-page { min-height: 100vh; padding: 0; background: linear-gradient(180deg, #fffaf1 0%, #fbf8ff 48%, #fff 100%); color: var(--text); overflow-x: hidden; }
 .prelaunch-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px clamp(18px, 5vw, 70px); border-bottom: 1px solid rgba(231,222,244,.75); background: rgba(255,255,255,.9); backdrop-filter: blur(14px); }
 .prelaunch-brand { display: inline-flex; align-items: center; gap: 12px; border: none; background: transparent; color: #15003f; font-weight: 900; font-size: 24px; cursor: pointer; }
@@ -556,7 +567,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .mobile-drawer-header .brand-block { min-width: 0; }
   .mobile-drawer-nav { display: grid; gap: 8px; }
   .mobile-drawer .status-pill { margin-top: auto; }
-  .hero-grid, .assessment-grid, .learning-layout, .admin-grid, .report-metric-grid, .report-split-grid, .report-filter-card, .settings-card-grid, .card-grid.three, .card-grid.four, .manage-children-grid, .manage-profile-layout, .child-roster-card, .report-grid, .report-loading-grid, .subject-progress-grid, .report-toolbar, .working-level-row, .student-dashboard-hero, .student-dashboard-grid, .student-achievement-grid, .parent-dashboard-grid { grid-template-columns: 1fr; }
+  .hero-grid, .assessment-grid, .learning-layout, .admin-grid, .report-metric-grid, .report-split-grid, .report-filter-card, .settings-card-grid, .card-grid.three, .card-grid.four, .manage-children-grid, .manage-profile-layout, .child-roster-card, .report-grid, .report-loading-grid, .subject-progress-grid, .report-toolbar, .working-level-row, .student-dashboard-hero, .student-dashboard-grid, .student-achievement-grid, .student-home-actions, .parent-dashboard-grid { grid-template-columns: 1fr; }
   .subscribe-child-row { grid-template-columns: 1fr; }
   .child-roster-card { gap: 14px; align-items: stretch; overflow: hidden; }
   .child-roster-main { align-items: flex-start; }

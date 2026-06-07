@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     reset_code_max_attempts: int = 5
 
     resend_api_key: str = ''
-    resend_from_email: str = 'enrol@msalisia.com'
-    weekly_progress_from_email: str = 'Francesca@msalisia.com'
+    resend_from_email: str = 'francesca@msalisia.com'
+    weekly_progress_from_email: str = 'francesca@msalisia.com'
     email_logo_url: str = ''
     waitlist_notify_email: str = 'enrol@msalisia.com'
     waitlist_open_date: str = '2026-06-14'

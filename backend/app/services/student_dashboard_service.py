@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import re
 from urllib.parse import quote
 
 from ..schemas.child_report import ChildReportResponse, SubjectProgress
@@ -20,9 +21,9 @@ class StudentDashboardService:
 
     async def dashboard_for_child(self, parent_id: str, child_id: str) -> StudentDashboardResponse:
         report = await ChildReportService().report_for_child(parent_id, child_id, period='week', subject='All')
-        assessed_count = len([item for item in report.subject_progress if item.assessment_count > 0])
         weekly_focus = self._weekly_focus(report)
         weekly_rhythm = await self.weekly_rhythm_for_child(parent_id, child_id, report.child_name)
+        achievement_counts = await self._achievement_counts(parent_id, child_id, report, weekly_rhythm)
 
         return StudentDashboardResponse(
             student=StudentDashboardProfile(
@@ -38,8 +39,8 @@ class StudentDashboardService:
             weekly_rhythm=weekly_rhythm,
             subject_progress=[self._progress_item(item) for item in report.subject_progress],
             recent_activity=self._recent_activity(report),
-            achievements=self._achievements(report, assessed_count),
-            recommended_next_actions=report.recommended_next_steps or self._default_next_actions(report),
+            achievements=self._achievements(report, achievement_counts['assessment_count'], achievement_counts['session_count']),
+            recommended_next_actions=self._student_next_actions(report),
         )
 
     async def weekly_rhythm_for_parent(self, parent_id: str) -> list[WeeklyRhythmResponse]:
@@ -82,7 +83,10 @@ class StudentDashboardService:
     def _progress_item(self, item: SubjectProgress) -> StudentProgressItem:
         return StudentProgressItem(
             subject=item.subject,  # type: ignore[arg-type]
-            level=item.level,
+            level=item.display_level or item.level,
+            enrolled_grade=item.enrolled_grade,
+            working_level=item.working_level,
+            working_level_source=item.working_level_source,
             progress_percentage=item.progress_percentage,
             current_focus=item.current_topic or item.needs_review or 'Start with a short placement check',
             next_step=self._next_step_for_subject(item),
@@ -105,7 +109,7 @@ class StudentDashboardService:
             activity.append(StudentActivityItem(
                 id=f'session-{session.thread_id}',
                 title=session.title or f'{subject_label} learning session',
-                detail=session.next_step,
+                detail=self._session_activity_detail(session.subject, session.topic),
                 when=self._display_date(session.last_activity_at),
                 subject=session.subject if session.subject in ('Math', 'ELA', 'Writing') else None,
             ))
@@ -118,8 +122,37 @@ class StudentDashboardService:
             when='Not started',
         )]
 
-    def _achievements(self, report: ChildReportResponse, assessed_count: int) -> list[StudentAchievement]:
-        lesson_count = report.lessons_completed
+    async def _achievement_counts(
+        self,
+        parent_id: str,
+        child_id: str,
+        report: ChildReportResponse,
+        weekly_rhythm: WeeklyRhythmResponse,
+    ) -> dict[str, int]:
+        assessment_count = max(
+            len(report.recent_assessments),
+            sum(item.assessment_count for item in report.subject_progress),
+        )
+        session_count = max(report.lessons_completed, weekly_rhythm.session_count)
+
+        assessment_count = max(assessment_count, await self._has_records('assessment_results', f'child_id=eq.{quote(child_id)}&limit=1'))
+        session_count = max(
+            session_count,
+            await self._has_records('learning_sessions', f'parent_id=eq.{quote(parent_id)}&child_id=eq.{quote(child_id)}&limit=1'),
+            await self._has_records('chat_threads', f'user_id=eq.{quote(parent_id)}&child_id=eq.{quote(child_id)}&limit=1'),
+            await self._has_records('session_activity_events', f'parent_id=eq.{quote(parent_id)}&child_id=eq.{quote(child_id)}&limit=1'),
+        )
+
+        return {'assessment_count': assessment_count, 'session_count': session_count}
+
+    async def _has_records(self, table: str, query: str) -> int:
+        try:
+            records = await self.supabase.select(table, query)
+        except SupabaseClientError:
+            return 0
+        return 1 if records else 0
+
+    def _achievements(self, report: ChildReportResponse, assessment_count: int, session_count: int) -> list[StudentAchievement]:
         return [
             StudentAchievement(
                 id='profile-created',
@@ -131,13 +164,13 @@ class StudentDashboardService:
                 id='first-assessment',
                 title='First Assessment',
                 detail='Complete one subject check to unlock a learning path.',
-                status='earned' if assessed_count else 'in_progress',
+                status='earned' if assessment_count else 'in_progress',
             ),
             StudentAchievement(
                 id='first-session',
                 title='First Learning Session',
                 detail='Finish one guided MsAlisia tutoring session.',
-                status='earned' if lesson_count else 'locked',
+                status='earned' if session_count else 'locked',
             ),
         ]
 
@@ -196,11 +229,51 @@ class StudentDashboardService:
             return f'Review {item.needs_review}'
         return f'Practice one guided {self._subject_label(item.subject)} lesson with MsAlisia'
 
-    def _default_next_actions(self, report: ChildReportResponse) -> list[str]:
+    def _student_next_actions(self, report: ChildReportResponse) -> list[str]:
         missing = [item.subject for item in report.subject_progress if item.assessment_count == 0]
         if missing:
-            return [f'Start the {self._subject_label(missing[0])} assessment.', 'Try one short learning chat.', 'Upload homework when written work is ready.']
-        return ['Continue the next guided lesson.', 'Review the latest report.', 'Upload homework when written work is ready.']
+            return [f'Take your {self._subject_label(missing[0])} assessment.', 'Start Practice', 'Upload Homework']
+
+        focus_subject = self._most_recent_subject(report)
+        return [f'Start {self._subject_label(focus_subject)} Practice', 'Start Practice', 'Upload Homework']
+
+    def _session_activity_detail(self, subject: str | None, topic: str | None) -> str:
+        topic_label = self._student_topic_label(subject, topic)
+        return f'Continue practicing {topic_label} with a short session.'
+
+    def _student_topic_label(self, subject: str | None, topic: str | None) -> str:
+        value = self._clean_student_fragment(topic)
+        if value:
+            return value
+        subject_label = self._subject_label(subject)
+        if subject_label == 'Math':
+            return 'multiplication facts'
+        if subject_label == 'Reading':
+            return 'reading vocabulary'
+        if subject_label == 'Writing':
+            return 'writing skills'
+        return 'one learning skill'
+
+    def _clean_student_fragment(self, value: str | None) -> str:
+        text = str(value or '').strip()
+        if not text:
+            return ''
+        text = re.sub(r'[*_`#>\[\]()]', '', text)
+        text = re.sub(r'https?://\S+', '', text)
+        text = re.sub(r'\s+', ' ', text).strip(' .,:;-')
+        if len(text) < 3 or not re.search(r'[A-Za-z]', text):
+            return ''
+        if any(marker in text.lower() for marker in ('good try', 'you are close', "you're close", 'we just found', 'student:', 'msalisia:')):
+            return ''
+        return text[:80]
+
+    def _most_recent_subject(self, report: ChildReportResponse) -> str | None:
+        if report.recent_tutor_sessions:
+            return report.recent_tutor_sessions[0].subject
+        if report.recent_assessments:
+            return report.recent_assessments[0].subject
+        assessed = next((item.subject for item in report.subject_progress if item.assessment_count > 0), None)
+        return assessed or (report.subject_progress[0].subject if report.subject_progress else None)
 
     def _display_date(self, value: str | None) -> str:
         if not value:

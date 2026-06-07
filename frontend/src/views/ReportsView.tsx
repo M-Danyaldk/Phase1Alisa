@@ -102,6 +102,7 @@ export function ReportsView({
 
   const subjectProgress = report?.subject_progress || fallbackSubjectProgress(student);
   const childName = report?.child_name || student.name;
+  const enrolledGrade = report?.grade_level || `Grade ${student.grade}`;
   const accessBlocked = isBillingAccessMessage(error);
 
   async function uploadForChild() {
@@ -216,7 +217,7 @@ export function ReportsView({
     <SectionHeader eyebrow="Parent reports" title={`${childName}'s learning report`} desc="A clear, child-specific view of progress, strengths, areas needing review, and recommended next steps." />
 
     <div className="report-toolbar report-filters">
-        <small>{report?.grade_level || `Grade ${student.grade}`} · Last updated {formatDate(report?.last_updated_at) || 'not yet'}</small>
+        <small>{enrolledGrade} · Last updated {formatDate(report?.last_updated_at) || 'not yet'}</small>
       <label>Period
         <select value={period} onChange={event => setPeriod(event.target.value as Period)}>
           <option value="week">This week</option>
@@ -242,7 +243,7 @@ export function ReportsView({
       <p>This child's learning report will open after an active trial or paid subscription is available.</p>
     </section> : loading ? <ReportLoadingState childName={childName} /> : <>
     <div className="card-grid three">
-      <InfoCard icon={<Target />} title="Current Level" desc={report?.current_learning_level || 'No assessment completed yet.'} />
+      <InfoCard icon={<Target />} title="Current Level" desc={displayCurrentLearningLevel(report?.current_learning_level, enrolledGrade)} />
       <InfoCard icon={<TrendingUp />} title="Weekly Progress" desc={report?.weekly_progress || 'No learning activity recorded yet.'} />
       <InfoCard icon={<Clock />} title="Study Time" desc={report?.time_spent_learning || 'No tracked learning time yet.'} />
     </div>
@@ -486,7 +487,7 @@ function SubjectProgressSection({ progress }: { progress: SubjectProgress[] }) {
           {iconForSubject(item.subject)}
           <div>
             <strong>{subjectLabel(item.subject)}</strong>
-            <span>{item.level}</span>
+            <span>{displaySubjectProgressLevel(item)}</span>
           </div>
         </div>
         <div className="progress-track" aria-label={`${subjectLabel(item.subject)} progress ${item.progress_percentage}%`}>
@@ -502,6 +503,48 @@ function SubjectProgressSection({ progress }: { progress: SubjectProgress[] }) {
       </div>)}
     </div>
   </div>;
+}
+
+function displaySubjectProgressLevel(item: SubjectProgress): string {
+  if (item.enrolled_grade) {
+    const rawFocus = item.working_level || item.display_level || item.level;
+    const focus = practiceFocusLabel(rawFocus);
+    if (focus) {
+      const prefix = item.override_active ? 'parent-set practice focus' : 'practice focus';
+      return `${item.enrolled_grade} - ${prefix}: ${focus}`;
+    }
+    return `${item.enrolled_grade} - learning path not assessed yet`;
+  }
+  if (item.display_level) return item.display_level;
+  return item.level.replace(/^Grade\s+\d+\s*[-:–—]?\s*/i, 'Practice focus: ');
+}
+
+function displayCurrentLearningLevel(value: string | undefined, enrolledGrade: string): string {
+  const text = (value || '').trim();
+  if (!text) return 'No assessment completed yet.';
+  const enrolled = normalizedGradeLabel(enrolledGrade);
+  const focus = practiceFocusLabel(text);
+  if (focus) return `${enrolled} - practice focus: ${focus}`;
+  if (/not assessed|learning path/i.test(text)) return `${enrolled} - learning path not assessed yet`;
+  return text;
+}
+
+function displayAssessmentPerformance(item: AssessmentSummary): string {
+  return item.score_label || practiceFocusLabel(item.estimated_level) || 'Learning path saved';
+}
+
+function practiceFocusLabel(value?: string | null): string {
+  const text = (value || '').trim();
+  if (!text || /not assessed/i.test(text)) return '';
+  return text
+    .replace(/^Grade\s+\d+\s*[-:–—]?\s*/i, '')
+    .replace(/^(parent-set\s+)?practice\s+focus\s*:\s*/i, '')
+    .trim() || 'Foundational practice';
+}
+
+function normalizedGradeLabel(value: string): string {
+  const parsed = gradeNumber(value);
+  return parsed ? `Grade ${parsed}` : value || 'Enrolled grade';
 }
 
 function ParentPersonalizationSection({ report, childName }: { report: ChildReport | null; childName: string }) {
@@ -616,7 +659,7 @@ function AssessmentSection({ assessments }: { assessments: AssessmentSummary[] }
           <strong>{subjectLabel(item.subject)} check-in</strong>
           <span className="muted-note">{formatDate(item.created_at) || 'Date not available'}</span>
         </div>
-        <p><strong>Performance:</strong> {item.score_label || item.estimated_level || 'Learning path saved'}</p>
+        <p><strong>Performance:</strong> {displayAssessmentPerformance(item)}</p>
         <p>{item.parent_summary || 'Assessment saved for this child.'}</p>
         {!!strengths.length && <p><strong>Strengths to celebrate:</strong> {strengths.join(', ')}</p>}
         {!!growth.length && <p><strong>Growth areas:</strong> {growth.join(', ')}</p>}

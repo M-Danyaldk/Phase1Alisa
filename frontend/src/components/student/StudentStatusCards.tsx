@@ -16,7 +16,17 @@ export function StudentStatusCards({
   return <div className="card-grid four">
     <InfoCard icon={<ClipboardCheck />} title="Latest Assessment" desc={assessmentStatus} />
     <InfoCard icon={<ImageUp />} title="Homework Status" desc={homeworkStatus} />
-    <InfoCard icon={<Target />} title="Weekly Focus" desc={weeklyFocus} />
+    <InfoCard icon={<Target />} title="Weekly Focus" desc={childFriendlyWeeklyFocus(weeklyFocus)} />
     <InfoCard icon={<CalendarDays />} title="Weekly Rhythm" desc={`${weeklyRhythm.displayLabel}: ${weeklyRhythm.sessionCount} session${weeklyRhythm.sessionCount === 1 ? '' : 's'} this week.`} />
   </div>;
+}
+
+function childFriendlyWeeklyFocus(weeklyFocus: string): string {
+  const value = weeklyFocus.trim();
+  if (!value) return 'This week: Try one practice activity and keep going.';
+
+  const subject = value.match(/\b(reading|vocabulary|math|writing|ela|homework)\b/i)?.[1] ?? 'learning';
+  const label = subject.toLowerCase() === 'ela' ? 'Reading' : subject.charAt(0).toUpperCase() + subject.slice(1).toLowerCase();
+
+  return `This week: Practice ${label} - you're getting there!`;
 }

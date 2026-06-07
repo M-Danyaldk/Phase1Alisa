@@ -30,7 +30,7 @@ Use this file as the master implementation tracker. Mark each item complete only
 - [x] Do not imply paid access stops immediately unless that is the actual behavior.
 - [x] Show pending pause/cancel-at-period-end state clearly.
 - [x] Prevent re-payment for the same child while the existing subscription period is active.
-- [ ] Verify active subscription indicators after Stripe webhook sync.
+- [x] Verify active subscription indicators after Stripe webhook sync.
 
 ## Phase 4 - Child Profile Selection And Locked PII
 
@@ -81,6 +81,8 @@ Use this file as the master implementation tracker. Mark each item complete only
 - [x] Prevent sessions from expiring while user is actively working.
 - [x] Test/fix parent homework/photo upload.
 - [x] Test/fix student homework/photo upload.
+- [x] Allow previous homework uploads to be reopened from Upload History.
+- [x] Show homework follow-up input after reopening a previous upload.
 - [x] Disable Evaluate Assessment button after assessment completion.
 - [x] Ensure retaking assessment shows new or changed questions.
 - [x] Update assessment feedback to avoid praising incorrect answers.
@@ -105,12 +107,13 @@ Use this file as the master implementation tracker. Mark each item complete only
 - [x] Credential-created email code queues and sends without exposing username or PIN.
 - [x] Credential-updated email code queues and sends without exposing username or PIN.
 - [x] Stripe `invoice.paid` webhook code queues and immediately attempts payment success email.
-- [ ] Deploy immediate signup welcome email change.
-- [ ] Deploy immediate trial-start parent email change.
+- [x] Deploy immediate signup welcome email change.
+- [x] Deploy immediate trial-start parent email change.
 - [x] Update cron-job.org to use fast endpoint.
 - [x] Verify cron sends pending emails without timeout in production.
-- [ ] Verify credential-created email sends in production.
-- [ ] Verify credential-updated email sends in production.
+- [x] Verify credential-created email sends in production.
+- [x] Verify credential-updated email sends in production.
+- [x] Verify Stripe webhook route `/billing/webhook` returns `200 OK` in production logs.
 - [ ] Verify Stripe `invoice.paid` creates/sends payment success email with current Stripe keys/webhook.
 
 ## Urgent Weekly Progress Email Fix
@@ -139,11 +142,11 @@ Use this file as the master implementation tracker. Mark each item complete only
 - [ ] Run first-child free trial flow.
 - [ ] Run second-child paid-only flow.
 - [ ] Run multi-child checkout flow.
-- [ ] Run active subscription and duplicate payment prevention tests.
+- [x] Run active subscription and duplicate payment prevention tests.
 - [ ] Run profile lock/edit tests.
 - [ ] Run child login tests.
-- [ ] Run homework upload tests.
-- [ ] Run assessment retake tests.
-- [ ] Run voice tests.
-- [ ] Run email/cron tests.
+- [x] Run homework upload tests.
+- [x] Run assessment retake tests.
+- [x] Run voice tests.
+- [x] Run email/cron tests.
 - [ ] Collect final screenshots and logs for client proof.

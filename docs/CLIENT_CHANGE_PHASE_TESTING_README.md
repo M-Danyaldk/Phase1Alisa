@@ -98,6 +98,7 @@ Required proof:
 
 - Screenshot: Future Modules is hidden from parent settings/sidebar.
 - Screenshot: Previous Chats is hidden from the main student interface.
+- Screenshot: New Chat remains visible to students even though Previous Chats is hidden.
 - Screenshot: Deactivate is small/secondary or hidden.
 - Screenshot: if deactivation remains available, confirmation appears before action.
 - Screenshot: wrong student login shows friendly copy: `That username or PIN didn't work. Talk to your parent if you have trouble logging in.`
@@ -130,6 +131,8 @@ Required proof:
 - Screenshot: parent homework/photo upload is available.
 - Screenshot: student homework/photo upload is available.
 - Screenshot: after upload analysis, follow-up input appears when needed.
+- Screenshot: previous homework upload can be selected from Upload History after leaving and returning.
+- Screenshot: selected previous homework upload opens its saved analysis and shows the follow-up input.
 - Screenshot: Evaluate Assessment button is disabled after completion.
 - Screenshot: retaking assessment shows new or changed questions.
 - Screenshot: incorrect assessment answer does not receive overpraise.
@@ -166,6 +169,7 @@ Required proof:
 - Screenshot: cron-job.org has `x-internal-cron-secret` header configured without exposing the value.
 - Screenshot: cron test run returns `200 OK`.
 - Screenshot: cron history shows successful scheduled runs.
+- Screenshot: Railway logs show `POST /billing/webhook` returning `200 OK`.
 - Backend proof: pending due emails are processed without timeout. A `processed: 0` response is acceptable when no due email events are pending.
 - Email proof: weekly progress email shows branded HTML design with no broken logo image.
 - Email proof: weekly progress CTA opens `/login?redirect=/reports` and lands on Reports after login.

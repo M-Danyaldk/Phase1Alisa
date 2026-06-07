@@ -113,15 +113,39 @@ class EmailService:
 
     def _student_credentials_notice(self, child_name: str, app_url: str, action: str) -> EmailContent:
         action_label = 'created' if action == 'created' else 'updated'
-        return self._content(
-            f'MsAlisia student login {action_label}',
-            [
-                f'Student login access was {action_label} for {child_name}.',
-                'For security, this email does not include the username or PIN.',
-                'You can view or reset student login access from your parent dashboard.',
-                f'Open MsAlisia: {app_url}',
-                'The MsAlisia Team',
-            ],
+        first_name = self._first_name(child_name)
+        app_url = app_url.rstrip('/') or 'https://www.msalisia.com'
+        dashboard_url = f'{app_url}/login?redirect=%2Fchildren'
+        text_lines = [
+            f'Student login access was {action_label} for {child_name}.',
+            'For security, this email does not include the username or PIN.',
+            'You can view or reset student login access from your parent dashboard.',
+            f'Open parent dashboard: {dashboard_url}',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=self.settings.email_logo_url.strip(),
+            first_name=first_name,
+            eyebrow='Student login update',
+            header_note='Parent account notice',
+            headline=f"{first_name}'s student login was {action_label}",
+            intro='Your child can use their student login to open the MsAlisia classroom. For security, we do not include login credentials in email.',
+            body_html=(
+                '<div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:16px;padding:18px 20px;margin:22px 0;">'
+                '<p style="margin:0;color:#5f5576;font-size:16px;line-height:1.6;">'
+                'Use the parent dashboard to view, reset, or manage student login access.'
+                '</p>'
+                '</div>'
+            ),
+            cta_url=dashboard_url,
+            cta_label='Open parent dashboard',
+        )
+        return EmailContent(
+            subject=f'MsAlisia student login {action_label}',
+            text='\n\n'.join(text_lines),
+            html=html,
+            from_email=self._parent_facing_from_email(),
         )
 
     async def queue_and_send_signup_welcome(self, *, parent_id: str, recipient_email: str, scheduled_send_at: str | None = None) -> dict:
@@ -475,7 +499,11 @@ class EmailService:
         retry_count = int(event.get('retry_count') or 0)
         trigger_type = event.get('trigger_type') or ''
         recipient_email = event.get('recipient_email') or ''
-        metadata = event.get('metadata') or {}
+        metadata = {**(event.get('metadata') or {})}
+        if event.get('child_id') and not metadata.get('child_id'):
+            metadata['child_id'] = event.get('child_id')
+        if event.get('parent_id') and not metadata.get('parent_id'):
+            metadata['parent_id'] = event.get('parent_id')
 
         try:
             content = self.render_template(trigger_type, metadata)
@@ -703,6 +731,7 @@ class EmailService:
                 for item in preview.subject_progress[:3]
             ]
             return {
+                'child_id': child_id,
                 'child_name': preview.child_name,
                 'session_count': sum(item.chat_count for item in preview.subject_progress),
                 'subject_cards': subject_cards,
@@ -714,6 +743,7 @@ class EmailService:
         except Exception as exc:
             logger.warning('Weekly progress preview failed for child %s: %s', child_id, exc)
             return {
+                'child_id': child_id,
                 'child_name': child.get('name') or 'your child',
                 'session_count': 0,
                 'subject_highlights': [],
@@ -853,9 +883,11 @@ class EmailService:
         subject_cards = self._weekly_subject_cards(data)
         recommended_next_step = str(data.get('recommended_next_step') or 'Try one short, focused practice session this week.').strip()
         app_url = app_url.rstrip('/') or 'https://www.msalisia.com'
-        report_url = f'{app_url}/login?redirect=%2Freports'
+        child_id = str(data.get('child_id') or '').strip()
+        report_path = f'/reports?child_id={quote(child_id)}' if child_id else '/reports'
+        report_url = f'{app_url}/login?redirect={quote(report_path, safe="")}'
         logo_url = self.settings.email_logo_url.strip()
-        from_email = self.settings.weekly_progress_from_email.strip() or self.settings.resend_from_email
+        from_email = self._parent_facing_from_email()
         if session_count <= 0:
             subject = f'A gentle MsAlisia nudge for {first_name}'
             text_lines = [
@@ -925,6 +957,7 @@ class EmailService:
         body_html: str,
         cta_url: str,
         cta_label: str,
+        header_note: str = 'Weekly parent update',
     ) -> str:
         safe_logo_url = escape(logo_url, quote=True)
         logo_html = (
@@ -938,6 +971,7 @@ class EmailService:
         safe_intro = escape(intro)
         safe_cta_url = escape(cta_url, quote=True)
         safe_cta_label = escape(cta_label)
+        safe_header_note = escape(header_note)
         return f'''<!doctype html>
 <html>
   <body style="margin:0;background:#f7f1ff;font-family:Arial,Helvetica,sans-serif;color:#20173d;">
@@ -955,7 +989,7 @@ class EmailService:
                     </td>
                     <td style="vertical-align:middle;padding-left:16px;">
                       <div style="font-size:24px;line-height:1.1;font-weight:800;color:#ffffff;">MsAlisia</div>
-                      <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#f4d77a;margin-top:6px;">Weekly parent update</div>
+                      <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#f4d77a;margin-top:6px;">{safe_header_note}</div>
                     </td>
                   </tr>
                 </table>
@@ -1062,6 +1096,9 @@ class EmailService:
             return int(value or 0)
         except (TypeError, ValueError):
             return 0
+
+    def _parent_facing_from_email(self) -> str:
+        return (self.settings.weekly_progress_from_email.strip() or 'francesca@msalisia.com').lower()
 
     def _referral_success(self, app_url: str) -> EmailContent:
         return self._content(

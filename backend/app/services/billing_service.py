@@ -392,7 +392,7 @@ class BillingService:
         else:
             checkout_payload['allow_promotion_codes'] = True
 
-        session = await anyio.to_thread.run_sync(lambda: stripe.checkout.Session.create(**checkout_payload))
+        session = await self._create_stripe_checkout_session(stripe, checkout_payload)
         if coupon:
             await self._record_coupon_redemption(parent_id, child_id, coupon, 'valid', payment_reference=session.id, metadata={
                 'plan_key': plan_key,
@@ -437,10 +437,7 @@ class BillingService:
         checkout_payload = {
             'mode': 'subscription',
             'customer': customer_id,
-            'line_items': [
-                {'price': self._stripe_price_id(item['plan']), 'quantity': 1}
-                for item in normalized
-            ],
+            'line_items': self._checkout_line_items(normalized),
             'success_url': self.settings.stripe_success_url or 'http://localhost:5173/billing/success',
             'cancel_url': self.settings.stripe_cancel_url or 'http://localhost:5173/billing/cancel',
             'client_reference_id': f'bulk:{normalized[0]["child_id"]}',
@@ -475,7 +472,7 @@ class BillingService:
         else:
             checkout_payload['allow_promotion_codes'] = True
 
-        session = await anyio.to_thread.run_sync(lambda: stripe.checkout.Session.create(**checkout_payload))
+        session = await self._create_stripe_checkout_session(stripe, checkout_payload)
         if coupon:
             for item in normalized:
                 await self._record_coupon_redemption(parent_id, item['child_id'], coupon, 'valid', payment_reference=session.id, metadata={
@@ -1003,6 +1000,26 @@ class BillingService:
             return False
         period_end = self._parse_iso_datetime(access.get('current_period_ends_at'))
         return period_end is None or period_end > datetime.now(UTC)
+
+    def _checkout_line_items(self, selections: list[dict]) -> list[dict]:
+        line_items_by_price: dict[str, dict] = {}
+        for item in selections:
+            price_id = self._stripe_price_id(item['plan'])
+            line_item = line_items_by_price.setdefault(price_id, {'price': price_id, 'quantity': 0})
+            line_item['quantity'] += 1
+        return list(line_items_by_price.values())
+
+    async def _create_stripe_checkout_session(self, stripe, checkout_payload: dict):
+        try:
+            return await anyio.to_thread.run_sync(lambda: stripe.checkout.Session.create(**checkout_payload))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception('Stripe checkout session creation failed: %s', exc)
+            raise HTTPException(
+                status_code=503,
+                detail='Could not start Stripe checkout. Please try again or contact support.',
+            ) from exc
 
     def _encode_child_plan_map(self, selections: list[dict]) -> str:
         return '|'.join(f'{item["child_id"]}:{item["plan_key"]}' for item in selections)

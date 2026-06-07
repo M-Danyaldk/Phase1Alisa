@@ -19,7 +19,7 @@ import { ParentDashboardView } from './views/ParentDashboardView';
 import { CompliancePage, PrelaunchLandingView } from './views/PrelaunchLandingView';
 import { ProfileView } from './views/ProfileView';
 import { ReportsView } from './views/ReportsView';
-import { ChildView, ParentView, StudentProfile } from './types';
+import { ChildAssessmentResult, ChildView, ParentView, StudentProfile, Subject } from './types';
 import { StudentLoginView } from './views/StudentLoginView';
 import { Login } from './pages/Login';
 import { Signup } from './pages/Signup';
@@ -59,6 +59,16 @@ function readStoredJson<T>(key: string): T | null {
   }
 }
 
+function initialStudentSession(): StudentSession | null {
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  const familyCode = new URLSearchParams(window.location.search).get('family')?.trim();
+  if (pathname === '/student' && familyCode) {
+    localStorage.removeItem(STUDENT_SESSION_KEY);
+    return null;
+  }
+  return readStoredJson<StudentSession>(STUDENT_SESSION_KEY);
+}
+
 export function App() {
   const [pathname, setPathname] = useState(() => window.location.pathname.replace(/\/+$/, '') || '/');
   const [parentView, setParentView] = useState<ParentView>('home');
@@ -79,12 +89,13 @@ export function App() {
   const [billingStatusLoading, setBillingStatusLoading] = useState(false);
   const [showParentOnboarding, setShowParentOnboarding] = useState(false);
   const [paidCheckoutRequiredAfterSignup, setPaidCheckoutRequiredAfterSignup] = useState(false);
-  const [studentSession, setStudentSession] = useState<StudentSession | null>(() => readStoredJson<StudentSession>(STUDENT_SESSION_KEY));
+  const [studentSession, setStudentSession] = useState<StudentSession | null>(() => initialStudentSession());
   const [studentMe, setStudentMe] = useState<StudentMe | null>(null);
   const [studentSessionLoading, setStudentSessionLoading] = useState(() => Boolean(localStorage.getItem(STUDENT_SESSION_KEY)));
   const [studentSessionError, setStudentSessionError] = useState('');
   const [studentSessionNotice, setStudentSessionNotice] = useState('');
   const [childDashboardNotice, setChildDashboardNotice] = useState('');
+  const [studentPracticeTarget, setStudentPracticeTarget] = useState<{ subject: Subject; topic?: string } | null>(null);
 
   useEffect(() => {
     checkHealth().then(() => setConnected('online')).catch(() => setConnected('offline'));
@@ -127,13 +138,25 @@ export function App() {
     if (!session || pathname !== '/login') return;
     const redirectView = parentRedirectViewFromLocation();
     if (!redirectView) return;
+    const targetChildId = targetChildIdFromLocation();
+    if (targetChildId && children.some(child => child.id === targetChildId)) {
+      setSelectedChildId(targetChildId);
+    }
     setParentView(redirectView);
-    navigate(parentPathForView(redirectView));
-  }, [pathname, session]);
+    navigate(parentPathForRedirect(redirectView, targetChildId));
+  }, [pathname, session, children]);
+
+  useEffect(() => {
+    if (!session || !children.length) return;
+    const targetChildId = targetChildIdFromLocation();
+    if (targetChildId && children.some(child => child.id === targetChildId)) {
+      setSelectedChildId(targetChildId);
+    }
+  }, [session, children]);
 
   function navigate(path: string) {
     window.history.pushState(null, '', path);
-    setPathname(path.replace(/\/+$/, '') || '/');
+    setPathname(window.location.pathname.replace(/\/+$/, '') || '/');
   }
 
   function changeParentView(view: ParentView) {
@@ -142,16 +165,31 @@ export function App() {
   }
 
   function parentRedirectViewFromLocation(): ParentView | null {
-    const redirect = new URLSearchParams(window.location.search).get('redirect');
+    const redirect = parentRedirectPathFromLocation();
     if (!redirect) return null;
+    const normalized = redirect.split('?')[0].replace(/\/+$/, '') || '/';
+    return parentViewFromPath(normalized);
+  }
+
+  function parentRedirectPathFromLocation(): string {
+    const redirect = new URLSearchParams(window.location.search).get('redirect');
+    if (!redirect) return '';
     try {
       const decoded = decodeURIComponent(redirect);
-      if (/^https?:\/\//i.test(decoded) || decoded.startsWith('//')) return null;
-      const normalized = decoded.split('?')[0].replace(/\/+$/, '') || '/';
-      return parentViewFromPath(normalized);
+      if (/^https?:\/\//i.test(decoded) || decoded.startsWith('//')) return '';
+      return decoded || '';
     } catch {
-      return null;
+      return '';
     }
+  }
+
+  function targetChildIdFromLocation(): string {
+    const directChildId = new URLSearchParams(window.location.search).get('child_id');
+    if (directChildId) return directChildId;
+    const redirect = parentRedirectPathFromLocation();
+    if (!redirect) return '';
+    const query = redirect.split('?')[1] || '';
+    return new URLSearchParams(query).get('child_id') || '';
   }
 
   async function loadProfile(nextSession: AuthSessionResponse) {
@@ -168,7 +206,11 @@ export function App() {
     if (!nextSession.access_token) return [];
     const records = await listChildren(nextSession.access_token);
     setChildren(records);
-    setSelectedChildId(prev => prev && records.some(child => child.id === prev) ? prev : preferredChildId(records));
+    const targetChildId = targetChildIdFromLocation();
+    setSelectedChildId(prev => {
+      if (targetChildId && records.some(child => child.id === targetChildId)) return targetChildId;
+      return prev && records.some(child => child.id === prev) ? prev : preferredChildId(records);
+    });
     if (!records.length) {
       setShowParentOnboarding(true);
     }
@@ -235,6 +277,11 @@ export function App() {
     }
     const paidCheckoutRequired = nextSession.paid_checkout_required === true;
     const redirectView = parentRedirectViewFromLocation();
+    const targetChildId = targetChildIdFromLocation();
+    if (targetChildId && loadedChildren.some(child => child.id === targetChildId)) {
+      setSelectedChildId(targetChildId);
+      setStudent(childToStudent(loadedChildren.find(child => child.id === targetChildId)!));
+    }
     const nextParentView = paidCheckoutRequired && loadedChildren.length ? 'billing' : redirectView || 'home';
     setPaidCheckoutRequiredAfterSignup(paidCheckoutRequired);
     setSession(nextSession);
@@ -287,6 +334,7 @@ export function App() {
       session_expires_at: nextSession.expires_at,
     });
     setChildView('home');
+    setStudentPracticeTarget(null);
   }
 
   async function logoutStudent(notice = '') {
@@ -297,6 +345,7 @@ export function App() {
     setStudentSessionNotice(notice);
     setChildDashboardNotice('');
     setChildView('home');
+    setStudentPracticeTarget(null);
     if (token) {
       try { await studentLogout(token); } catch { /* already cleared locally */ }
     }
@@ -501,9 +550,10 @@ export function App() {
         </div>}
         {!childAccessBlocked && childView === 'home' && <HomeView student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession notice={childDashboardNotice} setView={(view) => {
           setChildDashboardNotice('');
-          if (view === 'learn' || view === 'assessments' || view === 'homework') setChildView(view);
+          setStudentPracticeTarget(null);
+          if (view === 'learn' || view === 'assessments' || view === 'homework' || view === 'practice-math' || view === 'practice-ela' || view === 'practice-writing') setChildView(view);
         }} />}
-        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'learn' && <LearningView key="student-learn" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} studentSession voiceAllowed={studentMe.voice_allowed === true} onBackHome={() => setChildView('home')} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
@@ -513,18 +563,34 @@ export function App() {
           childId={studentMe.child_id}
           accessToken={studentSession.access_token}
           studentSession
-          onContinueLearning={() => setChildView('learn')}
-          onBackToDashboard={() => setChildView('home')}
+          onContinueLearning={(result) => {
+            const target = practiceTargetFromAssessment(result);
+            setStudentPracticeTarget(target);
+            setChildView(childViewForSubject(target.subject));
+          }}
+          onBackToDashboard={() => {
+            setStudentPracticeTarget(null);
+            setChildView('home');
+          }}
         />}
-        {!childAccessBlocked && childView === 'practice-math' && <LearningView key="student-practice-math" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-math' && <LearningView key={`student-practice-math-${studentPracticeTarget?.topic || ''}`} student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Math" initialTopic={studentPracticeTarget?.subject === 'Math' ? studentPracticeTarget.topic : undefined} studentSession voiceAllowed={studentMe.voice_allowed === true} onBackHome={() => {
+          setStudentPracticeTarget(null);
+          setChildView('home');
+        }} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key="student-practice-ela" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-ela' && <LearningView key={`student-practice-ela-${studentPracticeTarget?.topic || ''}`} student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="ELA" initialTopic={studentPracticeTarget?.subject === 'ELA' ? studentPracticeTarget.topic : undefined} studentSession voiceAllowed={studentMe.voice_allowed === true} onBackHome={() => {
+          setStudentPracticeTarget(null);
+          setChildView('home');
+        }} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
-        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key="student-practice-writing" student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" studentSession voiceAllowed={studentMe.voice_allowed === true} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
+        {!childAccessBlocked && childView === 'practice-writing' && <LearningView key={`student-practice-writing-${studentPracticeTarget?.topic || ''}`} student={sessionStudent} accessToken={studentSession.access_token} childId={studentMe.child_id} initialSubject="Writing" initialTopic={studentPracticeTarget?.subject === 'Writing' ? studentPracticeTarget.topic : undefined} studentSession voiceAllowed={studentMe.voice_allowed === true} onBackHome={() => {
+          setStudentPracticeTarget(null);
+          setChildView('home');
+        }} onRequireRelogin={requireStudentRelogin} onInactivePause={(message) => {
           setChildDashboardNotice(message);
           setChildView('home');
         }} />}
@@ -654,6 +720,12 @@ function parentPathForView(view: ParentView): string {
   return PARENT_VIEW_PATHS[view];
 }
 
+function parentPathForRedirect(view: ParentView, childId: string): string {
+  const path = parentPathForView(view);
+  if (view !== 'reports' || !childId) return path;
+  return `${path}?child_id=${encodeURIComponent(childId)}`;
+}
+
 function parentViewFromPath(pathname: string): ParentView | null {
   const match = (Object.entries(PARENT_VIEW_PATHS) as [ParentView, string][])
     .find(([, path]) => path === pathname);
@@ -678,6 +750,31 @@ function childAccessAllowsLearning(record: ChildAccess | null): boolean {
     return !record.current_period_ends_at || Date.parse(record.current_period_ends_at) > now;
   }
   return false;
+}
+
+function practiceTargetFromAssessment(result: ChildAssessmentResult): { subject: Subject; topic?: string } {
+  return {
+    subject: result.subject,
+    topic: cleanAssessmentTopic(
+      result.recommended_next_topics?.[0]
+      || result.practice_next
+      || result.next_step_message
+      || result.recommended_progression?.[0]
+    ),
+  };
+}
+
+function childViewForSubject(subject: Subject): ChildView {
+  if (subject === 'ELA') return 'practice-ela';
+  if (subject === 'Writing') return 'practice-writing';
+  return 'practice-math';
+}
+
+function cleanAssessmentTopic(value?: string | null): string | undefined {
+  const text = (value || '').trim();
+  if (!text) return undefined;
+  const parts = text.split(/[:\-–—]/).map(part => part.trim()).filter(Boolean);
+  return (parts.length > 1 ? parts.slice(-1)[0] : text).slice(0, 80);
 }
 
 function BillingRequiredNotice({ childName, onBilling }: { childName: string; onBilling: () => void }) {

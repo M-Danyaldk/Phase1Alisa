@@ -37,7 +37,7 @@ async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None 
         parsed = _extract_json(result.text)
     except Exception:
         parsed = {
-            'estimated_level': f'Grade {payload.grade} - needs review',
+            'estimated_level': 'Needs review',
             'score_label': 'Needs manual review',
             'strengths': ['Student submitted assessment responses'],
             'learning_gaps': ['The response could not be parsed as JSON. Check model output.'],
@@ -48,7 +48,7 @@ async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None 
     assessment = AssessmentResult(
         subject=payload.subject,
         enrolled_grade=payload.grade,
-        estimated_level=parsed.get('estimated_level', f'Grade {payload.grade} - needs review'),
+        estimated_level=parsed.get('estimated_level', 'Needs review'),
         score_label=parsed.get('score_label', 'Evaluated'),
         strengths=_list(parsed.get('strengths'))[:5],
         learning_gaps=_list(parsed.get('learning_gaps'))[:5],

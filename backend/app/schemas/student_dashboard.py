@@ -17,6 +17,9 @@ class StudentDashboardProfile(BaseModel):
 class StudentProgressItem(BaseModel):
     subject: Subject
     level: str
+    enrolled_grade: str | None = None
+    working_level: str | None = None
+    working_level_source: str = 'assessment'
     progress_percentage: int
     current_focus: str
     next_step: str

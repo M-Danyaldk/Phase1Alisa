@@ -436,14 +436,26 @@ class VoiceService:
         assessed_level = (assessment_context or {}).get('assessed_level')
         if not assessed_level:
             return student
+        working_focus = self._practice_focus_label(assessed_level)
+        safe_level = f'Practice focus: {working_focus}' if working_focus else 'Learning path ready'
         updates = {}
         if subject == 'Math':
-            updates['math_level'] = assessed_level
+            updates['math_level'] = safe_level
         elif subject == 'ELA':
-            updates['ela_level'] = assessed_level
+            updates['ela_level'] = safe_level
         elif subject == 'Writing':
-            updates['writing_level'] = assessed_level
+            updates['writing_level'] = safe_level
         return student.model_copy(update=updates) if updates else student
+
+    def _practice_focus_label(self, value: object) -> str:
+        text = str(value or '').strip()
+        if not text or 'not assessed' in text.lower():
+            return ''
+        if text.lower().startswith('grade '):
+            parts = text.split(maxsplit=2)
+            text = parts[2] if len(parts) >= 3 else ''
+            text = text.lstrip(' -:–—').strip()
+        return text or 'Foundational practice'
 
     def _grade_number(self, value: object) -> int | None:
         text = str(value or '')

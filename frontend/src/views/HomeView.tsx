@@ -1,15 +1,7 @@
-import { useEffect, useState } from 'react';
-import { StudentAchievementCards } from '../components/student/StudentAchievementCards';
-import { StudentActivityList } from '../components/student/StudentActivityList';
-import { StudentNextActions } from '../components/student/StudentNextActions';
-import { StudentProgressCards } from '../components/student/StudentProgressCards';
-import { StudentStatusCards } from '../components/student/StudentStatusCards';
-import { StudentSummaryCard } from '../components/student/StudentSummaryCard';
+import type { ReactNode } from 'react';
+import { BookOpen, ClipboardCheck, ImageUp, MessageCircle, PenTool } from 'lucide-react';
 import { SectionHeader } from '../components/SectionHeader';
-import { getStudentDashboard } from '../lib/api/studentDashboard';
-import { buildStudentDashboardMock } from '../mock/studentDashboard';
-import { StudentProfile, View } from '../types';
-import { StudentDashboardData } from '../types/studentDashboard';
+import { ChildView, StudentProfile, View } from '../types';
 
 export function HomeView({
   student,
@@ -26,68 +18,85 @@ export function HomeView({
   notice?: string;
   setView: (v: View) => void;
 }) {
-  const [dashboard, setDashboard] = useState<StudentDashboardData>(() => buildStudentDashboardMock(student));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  void accessToken;
+  void childId;
+  void studentSession;
 
-  useEffect(() => {
-    const fallback = buildStudentDashboardMock(student);
-    setDashboard(fallback);
-    if (!accessToken || !childId) {
-      setError('');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    getStudentDashboard(accessToken, childId, studentSession)
-      .then(setDashboard)
-      .catch(err => {
-        setDashboard(fallback);
-        const message = err instanceof Error ? err.message : 'Could not load student dashboard data.';
-        setError(childFriendlyMessage(message));
-      })
-      .finally(() => setLoading(false));
-  }, [accessToken, childId, student, studentSession]);
-
-  return <div className="page-stack">
-    <SectionHeader eyebrow="Student Dashboard" title={`${student.name}'s learning home`} desc="A focused view of progress, recent activity, achievements, and the next best learning actions." />
+  return <div className="page-stack student-home-page">
+    <SectionHeader title={`Hi, ${firstName(student.name)}!`} desc="Ready to learn today?" />
     {notice && <p className="success-note dashboard-notice">{notice}</p>}
-    {loading && <p className="muted-note">Loading student dashboard...</p>}
-    {error && <p className="error-note">{error}</p>}
 
-    <div className="student-dashboard-hero">
-      <StudentSummaryCard student={student} weeklyFocus={dashboard.weeklyFocus} weeklyRhythm={dashboard.weeklyRhythm} />
-      <StudentNextActions actions={dashboard.recommendedNextActions} setView={setView} />
-    </div>
-
-    <section className="report-card">
-      <div className="section-row">
-        <h3>How to get started</h3>
-        <span className="muted-note">One step at a time</span>
-      </div>
-      <ul>
-        <li>Start with a quick check-in.</li>
-        <li>Practice Math, Reading, or Writing.</li>
-        <li>Upload homework when you need help.</li>
-        <li>Ms. Alisia will guide you one step at a time.</li>
-        <li>Take a break when Ms. Alisia reminds you.</li>
-      </ul>
+    <section className="student-home-actions" aria-label="Choose what to do next">
+      <StudentHomeAction
+        icon={<MessageCircle />}
+        title="Start Learning"
+        text="Ask Ms. Alisia for help."
+        view="learn"
+        setView={setView}
+        featured
+      />
+      <StudentHomeAction
+        icon={<ClipboardCheck />}
+        title="Quick Check-In"
+        text="Try a short skill check."
+        view="assessments"
+        setView={setView}
+      />
+      <StudentHomeAction
+        icon={<BookOpen />}
+        title="Practice Reading"
+        text="Read, think, and answer."
+        view="practice-ela"
+        setView={setView}
+      />
+      <StudentHomeAction
+        icon={<BookOpen />}
+        title="Practice Math"
+        text="Work one step at a time."
+        view="practice-math"
+        setView={setView}
+      />
+      <StudentHomeAction
+        icon={<PenTool />}
+        title="Practice Writing"
+        text="Plan, write, and improve."
+        view="practice-writing"
+        setView={setView}
+      />
+      <StudentHomeAction
+        icon={<ImageUp />}
+        title="Homework Help"
+        text="Upload homework for help."
+        view="homework"
+        setView={setView}
+      />
     </section>
-
-    <StudentStatusCards assessmentStatus={dashboard.assessmentStatus} homeworkStatus={dashboard.homeworkStatus} weeklyFocus={dashboard.weeklyFocus} weeklyRhythm={dashboard.weeklyRhythm} />
-    <StudentProgressCards progress={dashboard.subjectProgress} />
-
-    <div className="student-dashboard-grid">
-      <StudentActivityList activity={dashboard.recentActivity} />
-      <StudentAchievementCards achievements={dashboard.achievements} />
-    </div>
   </div>;
 }
 
-function childFriendlyMessage(message: string): string {
-  if (message.includes('There is something your parent needs to take care of')) return message;
-  if (message.toLowerCase().includes('payment') || message.toLowerCase().includes('billing') || message.toLowerCase().includes('subscription')) {
-    return 'There is something your parent needs to take care of before learning can continue.';
-  }
-  return 'That did not work. Please try again in a moment.';
+function StudentHomeAction({
+  icon,
+  title,
+  text,
+  view,
+  setView,
+  featured = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  text: string;
+  view: ChildView;
+  setView: (v: View) => void;
+  featured?: boolean;
+}) {
+  return <button className={`student-home-action${featured ? ' featured' : ''}`} type="button" onClick={() => setView(view)}>
+    <span className="student-home-action-icon">{icon}</span>
+    <strong>{title}</strong>
+    <small>{text}</small>
+  </button>;
+}
+
+function firstName(name: string): string {
+  const value = name.trim().split(/\s+/)[0] || 'there';
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }

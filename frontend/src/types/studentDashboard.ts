@@ -3,6 +3,9 @@ import { Subject } from '../types';
 export type StudentProgressItem = {
   subject: Subject;
   level: string;
+  enrolledGrade?: string | null;
+  workingLevel?: string | null;
+  workingLevelSource?: string;
   progressPercentage: number;
   currentFocus: string;
   nextStep: string;

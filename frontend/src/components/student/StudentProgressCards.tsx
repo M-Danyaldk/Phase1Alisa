@@ -17,7 +17,7 @@ export function StudentProgressCards({ progress }: { progress: StudentProgressIt
         <div className="progress-track" aria-label={`${subjectLabel(item.subject)} progress ${item.progressPercentage}%`}>
           <span style={{ width: `${item.progressPercentage}%` }} />
         </div>
-        <p>{item.level}</p>
+        <p>{displayStudentProgressLevel(item)}</p>
         <div className="report-detail-list">
           <span>Focus: {item.currentFocus}</span>
           <span>Next: {item.nextStep}</span>
@@ -25,6 +25,11 @@ export function StudentProgressCards({ progress }: { progress: StudentProgressIt
       </article>)}
     </div>
   </section>;
+}
+
+function displayStudentProgressLevel(item: StudentProgressItem): string {
+  if (item.enrolledGrade) return item.level;
+  return item.level.replace(/^Grade\s+\d+\s*[-:–—]?\s*/i, 'Practice focus: ');
 }
 
 function iconForSubject(subject: StudentProgressItem['subject']) {

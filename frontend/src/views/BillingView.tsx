@@ -27,6 +27,7 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
   const [checkoutKey, setCheckoutKey] = useState('');
   const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState('');
+  const [checkoutError, setCheckoutError] = useState('');
   const [message, setMessage] = useState('');
   const [completedCheckout, setCompletedCheckout] = useState<PendingCheckout | null>(null);
 
@@ -121,6 +122,7 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
   async function beginCheckout(childId: string, planKey: BillingPlanKey) {
     setCheckoutKey(`${childId}:${planKey}`);
     setError('');
+    setCheckoutError('');
     setMessage('');
     try {
       const child = records.find(record => record.child_id === childId);
@@ -130,7 +132,9 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
       }));
       window.location.href = await createCheckoutSession(accessToken, childId, planKey, couponCode);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Could not start Stripe checkout.');
+      const nextError = submitError instanceof Error ? submitError.message : 'Could not start Stripe checkout.';
+      setError(nextError);
+      setCheckoutError(nextError);
       setCheckoutKey('');
     }
   }
@@ -139,15 +143,19 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
     const selected = checkoutSelections(records, selectedPlans);
     if (!selected.length) {
       setError('Choose at least one child and plan before checkout.');
+      setCheckoutError('Choose at least one child and plan before checkout.');
       return;
     }
     const unavailable = selected.find(selection => !plans.find(plan => plan.plan_key === selection.plan_key)?.stripe_price_configured);
     if (unavailable) {
-      setError(`${childName(records, unavailable.child_id)} has a selected plan that is not connected to Stripe yet. Choose another plan or configure the missing Stripe price.`);
+      const nextError = `${childName(records, unavailable.child_id)} has a selected plan that is not connected to Stripe yet. Choose another plan or configure the missing Stripe price.`;
+      setError(nextError);
+      setCheckoutError(nextError);
       return;
     }
     setCheckoutKey('bulk');
     setError('');
+    setCheckoutError('');
     setMessage('');
     try {
       sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
@@ -156,7 +164,9 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
       }));
       window.location.href = await createBulkCheckoutSession(accessToken, selected, couponCode);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Could not start Stripe checkout.');
+      const nextError = submitError instanceof Error ? submitError.message : 'Could not start Stripe checkout.';
+      setError(nextError);
+      setCheckoutError(nextError);
       setCheckoutKey('');
     }
   }
@@ -271,6 +281,7 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
           {checkoutKey === 'bulk' ? 'Opening Checkout...' : `Checkout ${checkoutSelectionCount || ''}`.trim()}
         </button>
       </div>
+      {checkoutError && <p className="error-note">{checkoutError}</p>}
     </section>
 
     {completedCheckout && <section className="report-card">

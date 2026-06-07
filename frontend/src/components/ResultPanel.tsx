@@ -8,7 +8,7 @@ export function ResultPanel({
   onBackToDashboard,
 }: {
   result: ChildAssessmentResult | null;
-  onContinueLearning?: () => void;
+  onContinueLearning?: (result: ChildAssessmentResult) => void;
   onBackToDashboard?: () => void;
 }) {
   if (!result) return <div className="result-card empty"><Brain /><h3>Check-in result will appear here</h3><p>Ms Alisia will use this to choose a helpful next step.</p></div>;
@@ -40,8 +40,8 @@ export function ResultPanel({
       <p>{nextStep}</p>
     </div>
     <div className="assessment-result-actions">
-      {onContinueLearning && <button className="primary-button" type="button" onClick={onContinueLearning}>Continue Learning</button>}
-      {onBackToDashboard && <button className="secondary-button" type="button" onClick={onBackToDashboard}>Back to Dashboard</button>}
+      {onContinueLearning && <button className="primary-button" type="button" onClick={() => onContinueLearning(result)}>Continue Learning</button>}
+      {onBackToDashboard && <button className="secondary-button" type="button" onClick={onBackToDashboard}>Back to Home</button>}
     </div>
   </div>;
 }
