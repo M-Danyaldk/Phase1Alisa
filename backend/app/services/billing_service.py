@@ -12,6 +12,7 @@ from .email_service import EmailService
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 TRIAL_DAYS = 7
+MIXED_BILLING_INTERVAL_ERROR = 'Monthly and annual plans need separate checkouts. Please checkout monthly children first, then annual children.'
 logger = logging.getLogger(__name__)
 
 PLAN_CATALOG: dict[str, dict] = {
@@ -425,6 +426,8 @@ class BillingService:
 
         if not normalized:
             raise HTTPException(status_code=422, detail='Choose at least one child to subscribe.')
+        if len({item['plan']['billing_interval'] for item in normalized}) > 1:
+            raise HTTPException(status_code=422, detail=MIXED_BILLING_INTERVAL_ERROR)
 
         customer_id = await self._get_or_create_stripe_customer(parent_id, email)
         family_discount = await self._family_discount_state(parent_id, pending_checkout_count=len(normalized))

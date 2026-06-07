@@ -7,6 +7,7 @@ import { BillingPlan, BillingPlanKey, ChildAccess, ChildAccessStatus, CheckoutCh
 
 const PENDING_CHECKOUT_KEY = 'msalisia_pending_checkout_child';
 const BILLING_TARGET_CHILD_KEY = 'msalisia_billing_target_child';
+const MIXED_BILLING_INTERVAL_ERROR = 'Monthly and annual plans need separate checkouts. Please checkout monthly children first, then annual children.';
 
 type PendingCheckout = {
   childId: string;
@@ -151,6 +152,11 @@ export function BillingView({ accessToken = '' }: { accessToken?: string }) {
       const nextError = `${childName(records, unavailable.child_id)} has a selected plan that is not connected to Stripe yet. Choose another plan or configure the missing Stripe price.`;
       setError(nextError);
       setCheckoutError(nextError);
+      return;
+    }
+    if (hasMixedBillingIntervals(selected, plans)) {
+      setError(MIXED_BILLING_INTERVAL_ERROR);
+      setCheckoutError(MIXED_BILLING_INTERVAL_ERROR);
       return;
     }
     setCheckoutKey('bulk');
@@ -415,6 +421,11 @@ function checkoutSelections(records: ChildAccess[], selectedPlans: Record<string
       child_id: record.child_id,
       plan_key: selectedPlans[record.child_id],
     }));
+}
+
+function hasMixedBillingIntervals(selections: CheckoutChildPlan[], plans: BillingPlan[]): boolean {
+  const intervals = new Set(selections.map(selection => plans.find(plan => plan.plan_key === selection.plan_key)?.billing_interval).filter(Boolean));
+  return intervals.size > 1;
 }
 
 function childName(records: ChildAccess[], childId: string): string {
