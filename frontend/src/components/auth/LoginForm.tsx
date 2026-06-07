@@ -32,13 +32,17 @@ export function LoginForm({ onSubmit, onSignup, onForgotPassword, notice = '' }:
       <h2>Log in to continue</h2>
     </div>
     <form className="auth-form" onSubmit={submit}>
-      <label>Email Address<input name="email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
-      <label>Password<input name="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>
+      <label>Email Address<input name="email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} disabled={loading} /></label>
+      <label>Password<input name="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} disabled={loading} /></label>
       {notice && <p className="success-note">{notice}</p>}
       {error && <p className="error-note">{error}</p>}
-      <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
-      <button className="link-button" onClick={onForgotPassword} type="button">Forgot password?</button>
-      <button className="link-button" onClick={onSignup} type="button">Create a new account</button>
+      <button className="primary-button auth-submit-button" type="submit" disabled={loading} aria-busy={loading}>
+        {loading && <span className="button-spinner" aria-hidden="true" />}
+        {loading ? 'Signing you in...' : 'Login'}
+      </button>
+      {loading && <p className="auth-processing-note" role="status">Please wait while we open your dashboard.</p>}
+      <button className="link-button" onClick={onForgotPassword} type="button" disabled={loading}>Forgot password?</button>
+      <button className="link-button" onClick={onSignup} type="button" disabled={loading}>Create a new account</button>
     </form>
   </div>;
 }

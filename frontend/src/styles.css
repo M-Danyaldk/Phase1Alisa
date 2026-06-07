@@ -348,6 +348,9 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .auth-heading p { margin: 0; color: var(--muted); line-height: 1.6; }
 .auth-form { display: grid; gap: 16px; }
 .auth-form .primary-button, .auth-form .secondary-button { width: 100%; }
+.auth-submit-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; }
+.button-spinner { width: 18px; height: 18px; flex: 0 0 auto; border-radius: 999px; border: 3px solid rgba(255,255,255,.42); border-top-color: #fff; animation: msalisia-spin .8s linear infinite; }
+.auth-processing-note { margin: -4px 0 0; color: var(--purple-dark); background: #f5efff; border: 1px solid var(--purple-soft); border-radius: 14px; padding: 10px 12px; font-weight: 800; text-align: center; }
 .link-button { padding: 8px; }
 .error-note { margin: 0; color: #a43c3c; background: #fff0f0; border: 1px solid #ffd2d2; border-radius: 14px; padding: 10px 12px; font-weight: 700; }
 .auth-error { width: min(100%, 560px); }

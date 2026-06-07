@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 import json
+import re
 from urllib.parse import quote
 
 from fastapi import HTTPException
@@ -319,7 +320,9 @@ class ChildReportService:
         if memory:
             latest_next = memory[0].next_step
             if latest_next:
-                steps.append(self._safe_parent_text(latest_next))
+                safe_next = self._safe_parent_text(latest_next)
+                if safe_next:
+                    steps.append(safe_next)
         if weak_areas and not weak_areas[0].startswith('No growth areas'):
             steps.append('Use the first growth area as the next short guided tutoring focus.')
         missing = [item.subject for item in progress if item.assessment_count == 0]
@@ -354,7 +357,7 @@ class ChildReportService:
         if memory:
             latest_memory = memory[0]
             focus = latest_memory.worked_on or latest_memory.topic or 'a recent learning session'
-            next_step = latest_memory.next_step or 'the next small practice step'
+            next_step = self._safe_parent_text(latest_memory.next_step) or self._safe_parent_text(latest_memory.topic) or 'the next small practice step'
             return f'Ms. Alisia remembers that {name} worked on {focus}. The next session can continue with {next_step}.'
         if homework_rows:
             return f'Ms. Alisia has homework activity saved for {name}. Reports will become more specific as tutoring and check-ins continue.'
@@ -378,8 +381,10 @@ class ChildReportService:
 
     def _next_focus(self, child: dict, assessments: list[AssessmentSummary], weak_areas: list[str], memory: list[LearningMemorySummary]) -> str:
         name = child['name']
-        if memory and memory[0].next_step:
-            return f'Next focus: {name} will benefit from {self._safe_parent_text(memory[0].next_step)}.'
+        if memory:
+            safe_memory_step = self._safe_parent_text(memory[0].next_step) or self._safe_parent_text(memory[0].topic)
+            if safe_memory_step:
+                return f'Next focus: {name} will benefit from {safe_memory_step}.'
         latest = assessments[0] if assessments else None
         if latest:
             focus = self._first_safe(latest.recommended_next_topics) or self._first_safe(latest.learning_gaps) or self._first_safe(latest.recommended_progression)
@@ -553,6 +558,31 @@ class ChildReportService:
     def _safe_parent_text(self, value: object) -> str:
         text = str(value or '').strip()
         if not text:
+            return ''
+        text = re.sub(r'[*_`#>\[\]()]', '', text)
+        text = re.sub(r'\s+', ' ', text).strip(' .,:;-')
+        if not text:
+            return ''
+        lowered = text.lower()
+        raw_prompt_markers = (
+            'would you like',
+            'do you want to',
+            'is it a specific',
+            'tell me what',
+            'what would you like',
+            'or something else',
+            'student:',
+            'msalisia:',
+            'good try',
+            "you're close",
+            'we just found',
+            'i need help',
+            "i don't know",
+            'i dont know',
+        )
+        if any(marker in lowered for marker in raw_prompt_markers):
+            return ''
+        if text.endswith('?') and any(lowered.startswith(prefix) for prefix in ('what ', 'which ', 'why ', 'how ', 'is ', 'are ', 'do ', 'does ', 'can ', 'would ')):
             return ''
         replacements = {
             'weaknesses': 'growth areas',
