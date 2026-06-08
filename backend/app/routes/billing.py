@@ -52,9 +52,8 @@ async def billing_status(authorization: str = Header(default=''), x_access_mode:
 
 @router.post('/trial/start', response_model=StartTrialResponse)
 async def start_trial(payload: StartTrialRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> StartTrialResponse:
-    user = await require_parent_access(authorization, x_access_mode)
-    result = await BillingService().start_trial(user['id'], user.get('email') or '', payload.child_id, payload.plan_key)
-    return StartTrialResponse(**{**result, 'child': ChildAccessResponse(**result['child'])})
+    await require_parent_access(authorization, x_access_mode)
+    raise HTTPException(status_code=409, detail='Free trial starts when the child signs into the classroom for the first time.')
 
 
 @router.post('/checkout/session', response_model=CheckoutSessionResponse)

@@ -779,7 +779,7 @@ class EmailService:
         return self._content(
             'Welcome to MsAlisia — Your Free Trial Starts Now',
             [
-                'Welcome to MsAlisia. Your free trial starts now.',
+                'Welcome to MsAlisia.',
                 'To get started, create or review your child profile, choose the subjects your child will practice, and begin with a short assessment.',
                 'Ms. Alisia will use that assessment to make tutoring feel helpful, warm, and personalized.',
                 f'Open MsAlisia: {app_url}',
@@ -1097,6 +1097,71 @@ class EmailService:
         except (TypeError, ValueError):
             return 0
 
+    def _signup_welcome(self, app_url: str) -> EmailContent:
+        app_url = app_url.rstrip('/') or 'https://www.msalisia.com'
+        text_lines = [
+            'Welcome to MsAlisia.',
+            'Create or review your child profile, choose the subjects your child will practice, and share the classroom login when you are ready.',
+            'The 7-day trial starts when your child signs into the classroom for the first time.',
+            f'Open MsAlisia: {app_url}',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=self.settings.email_logo_url.strip(),
+            first_name='Parent',
+            eyebrow='Welcome',
+            header_note='Parent account notice',
+            headline='Welcome to MsAlisia',
+            intro='Your parent account is ready. You can set up your child, share their classroom login, and begin when your family is ready.',
+            body_html=(
+                '<div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:16px;padding:18px 20px;margin:22px 0;">'
+                '<p style="margin:0;color:#5f5576;font-size:16px;line-height:1.6;">'
+                'The 7-day trial starts when your child signs into the classroom for the first time.'
+                '</p>'
+                '</div>'
+            ),
+            cta_url=app_url,
+            cta_label='Open MsAlisia',
+        )
+        return EmailContent(
+            subject='Welcome to MsAlisia',
+            text='\n\n'.join(text_lines),
+            html=html,
+            from_email=self._parent_facing_from_email(),
+        )
+
+    def _signup_verification_code(self, code: str, expires_in_minutes: int) -> EmailContent:
+        text_lines = [
+            f'Your verification code is: {code}.',
+            f'This code expires in {expires_in_minutes} minutes.',
+            'If you did not request this, you can ignore this email.',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=self.settings.email_logo_url.strip(),
+            first_name='Parent',
+            eyebrow='Verification code',
+            header_note='Account verification',
+            headline='Confirm your MsAlisia account',
+            intro=f'Enter this 6-digit code to finish creating your parent account. It expires in {expires_in_minutes} minutes.',
+            body_html=(
+                '<div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:18px;padding:22px;margin:22px 0;text-align:center;">'
+                '<div style="font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#d6a72e;margin-bottom:10px;">Verification code</div>'
+                f'<div style="font-size:38px;line-height:1;font-weight:900;letter-spacing:.14em;color:#5e3ca0;">{escape(code)}</div>'
+                '</div>'
+            ),
+            cta_url=self._app_url(),
+            cta_label='Open MsAlisia',
+        )
+        return EmailContent(
+            subject='Your MsAlisia verification code',
+            text='\n\n'.join(text_lines),
+            html=html,
+            from_email=self._parent_facing_from_email(),
+        )
+
     def _parent_facing_from_email(self) -> str:
         return (self.settings.weekly_progress_from_email.strip() or 'francesca@msalisia.com').lower()
 
@@ -1107,6 +1172,6 @@ class EmailService:
                 'Great news — your referral has qualified, and you earned one free week of MsAlisia access.',
                 'Thank you for sharing MsAlisia with another family.',
                 f'Open MsAlisia: {app_url}',
-                'The MsAlisia Team',
+                'Francesca and the MsAlisia Team',
             ],
         )

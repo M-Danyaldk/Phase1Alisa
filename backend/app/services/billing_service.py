@@ -114,9 +114,7 @@ class BillingService:
         if payload.access_status in {'active', 'past_due'}:
             raise HTTPException(status_code=403, detail='This billing action is handled by admin billing tools.')
         if payload.access_status == 'trial':
-            if not email:
-                raise HTTPException(status_code=400, detail='Parent email is required to start a trial.')
-            return (await self.start_trial(parent_id, email, child_id, payload.plan_key))['child']
+            raise HTTPException(status_code=409, detail='Free trial starts when the child signs into the classroom for the first time.')
         child = await self._child(parent_id, child_id)
         access = await self._access_for_child(parent_id, child_id)
         if payload.access_status == 'inactive' and self._has_current_paid_access(access):

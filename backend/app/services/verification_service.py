@@ -254,6 +254,11 @@ class VerificationService:
         profile = await self.current_profile(data.get('access_token', '')) if data.get('access_token') else None
         if profile and profile.get('status') in {'suspended', 'inactive'}:
             raise HTTPException(status_code=403, detail='This account is not active.')
+        trial_eligibility = (
+            await self._trial_eligibility_for_email(user.get('email') or normalized_email)
+            if profile and profile.get('role') == 'parent'
+            else {}
+        )
         return {
             'access_token': data.get('access_token'),
             'refresh_token': data.get('refresh_token'),
@@ -261,6 +266,7 @@ class VerificationService:
             'token_type': data.get('token_type'),
             'user': {'id': user.get('id', ''), 'email': user.get('email')},
             'message': 'Login successful.',
+            **trial_eligibility,
         }
 
     async def current_profile(self, access_token: str) -> dict:

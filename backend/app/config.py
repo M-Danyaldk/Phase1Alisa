@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     weekly_progress_from_email: str = 'francesca@msalisia.com'
     email_logo_url: str = ''
     waitlist_notify_email: str = 'enrol@msalisia.com'
-    waitlist_open_date: str = '2026-06-14'
+    waitlist_open_date: str = '2026-06-15'
     internal_cron_secret: str = ''
     app_public_url: str = ''
 

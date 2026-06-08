@@ -1,6 +1,6 @@
 import { BookOpen, CalendarDays, CreditCard, Eye, GraduationCap, KeyRound, Lock, Pencil, PlusCircle, SlidersHorizontal, User, UsersRound } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChildProfileForm } from '../components/parent/ChildProfileForm';
 import { StudentAccessForm } from '../components/parent/StudentAccessForm';
 import { SectionHeader } from '../components/SectionHeader';
@@ -38,6 +38,7 @@ export function ManageChildrenView({
   const [newStudentUsername, setNewStudentUsername] = useState('');
   const [newStudentPin, setNewStudentPin] = useState('');
   const [studentAccessByChildId, setStudentAccessByChildId] = useState<Record<string, StudentAccess | null>>({});
+  const previousSelectedChildIdRef = useRef(selectedChildId);
   const selectedChild = children.find(child => child.id === selectedChildId) || children[0] || null;
   const editingChild = children.find(child => child.id === editingChildId) || null;
   const childAccessById = useMemo(() => {
@@ -64,6 +65,16 @@ export function ManageChildrenView({
       setEditingChildId(selectedChildId);
     }
   }, [adding, children, editingChildId, selectedChildId]);
+
+  useEffect(() => {
+    const previousSelectedChildId = previousSelectedChildIdRef.current;
+    previousSelectedChildIdRef.current = selectedChildId;
+    if (!previousSelectedChildId || previousSelectedChildId === selectedChildId || adding) return;
+    if (!children.some(child => child.id === selectedChildId)) return;
+    window.setTimeout(() => {
+      document.getElementById('selected-child-profile-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+  }, [adding, children, selectedChildId]);
 
   async function add(values: ChildProfileFormValues) {
     const username = newStudentUsername.trim().toLowerCase();
@@ -199,7 +210,7 @@ export function ManageChildrenView({
         </div>
       </section>
 
-      <section className="form-card selected-child-panel">
+      <section className="form-card selected-child-panel" id="selected-child-profile-section">
         <div className="section-row">
           <h3>Selected Child Details</h3>
           <span className="locked-detail-badge"><Lock /> Identity details are locked after setup.</span>

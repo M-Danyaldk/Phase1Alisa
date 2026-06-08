@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { SectionHeader } from '../components/SectionHeader';
-import { createBulkCheckoutSession, createCheckoutSession, createCustomerPortalSession, getBillingStatus, resumeChildAccess, startTrial, updateChildAccess } from '../lib/api/billing';
+import { createBulkCheckoutSession, createCheckoutSession, createCustomerPortalSession, getBillingStatus, resumeChildAccess, updateChildAccess } from '../lib/api/billing';
+import { getStudentAccess } from '../lib/api/studentAccess';
 import { getFamilyClassroomLink } from '../lib/api/studentAuth';
 import { BillingPlan, BillingPlanKey, ChildAccess, ChildAccessStatus, CheckoutChildPlan, CouponRedemption } from '../types/billing';
+import { StudentAccess } from '../types/studentAccess';
 import { FamilyClassroomLink } from '../types/studentSession';
 
 const PENDING_CHECKOUT_KEY = 'msalisia_pending_checkout_child';
@@ -13,6 +15,8 @@ const MIXED_BILLING_INTERVAL_ERROR = 'Monthly and annual plans need separate che
 type PendingCheckout = {
   childId: string;
   childName: string;
+  username?: string;
+  pin?: string;
 };
 
 type ChildLoginHandoff = {
@@ -32,6 +36,8 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
   const [checkoutPlanKey, setCheckoutPlanKey] = useState<BillingPlanKey>('text_annual');
   const [familyLink, setFamilyLink] = useState<FamilyClassroomLink | null>(null);
   const [newChildLogin, setNewChildLogin] = useState<ChildLoginHandoff | null>(() => readChildLoginHandoff());
+  const [revealedTrialHandoffId, setRevealedTrialHandoffId] = useState('');
+  const [completedCheckoutAccess, setCompletedCheckoutAccess] = useState<StudentAccess | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingChildId, setSavingChildId] = useState('');
   const [savingAccessAction, setSavingAccessAction] = useState<'pause' | 'resume' | ''>('');
@@ -110,9 +116,15 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
     if (pending) {
       setCompletedCheckout(pending);
       sessionStorage.removeItem(PENDING_CHECKOUT_KEY);
-      onCheckoutComplete?.(pending.childId);
     }
   }, []);
+
+  useEffect(() => {
+    if (!accessToken || !completedCheckout) return;
+    getStudentAccess(accessToken, completedCheckout.childId)
+      .then(setCompletedCheckoutAccess)
+      .catch(() => setCompletedCheckoutAccess(null));
+  }, [accessToken, completedCheckout]);
 
   function chooseCheckoutPlan(planKey: BillingPlanKey) {
     setCheckoutPlanKey(planKey);
@@ -127,24 +139,12 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
     });
   }
 
-  async function startFreeTrialForNewChild() {
+  function startFreeTrialForNewChild() {
     if (!newChildLogin) return;
-    setCheckoutKey(`trial:${newChildLogin.childId}`);
     setError('');
     setCheckoutError('');
-    setMessage('');
-    try {
-      const result = await startTrial(accessToken, newChildLogin.childId);
-      setRecords(records.map(record => record.child_id === newChildLogin.childId ? result.child : record));
-      setMessage(`Free trial started for ${newChildLogin.childName}. Use the classroom link and PIN below to enter the student classroom.`);
-      await load();
-    } catch (submitError) {
-      const nextError = submitError instanceof Error ? submitError.message : 'Could not start the free trial.';
-      setError(nextError);
-      setCheckoutError(nextError);
-    } finally {
-      setCheckoutKey('');
-    }
+    setRevealedTrialHandoffId(newChildLogin.childId);
+    setMessage(`Use the classroom link and PIN below for ${newChildLogin.childName}. The 7-day trial starts when your child signs in for the first time.`);
   }
 
   function dismissNewChildLogin() {
@@ -200,6 +200,10 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
       sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
         childId,
         childName: child?.child_name || 'this child',
+        ...(newChildLogin?.childId === childId ? {
+          username: newChildLogin.username,
+          pin: newChildLogin.pin,
+        } : {}),
       }));
       window.location.href = await createCheckoutSession(accessToken, childId, planKey, couponCode);
     } catch (submitError) {
@@ -237,6 +241,10 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
       sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
         childId: selected[0].child_id,
         childName: selected.length === 1 ? childName(records, selected[0].child_id) : `${selected.length} children`,
+        ...(selected.length === 1 && newChildLogin?.childId === selected[0].child_id ? {
+          username: newChildLogin.username,
+          pin: newChildLogin.pin,
+        } : {}),
       }));
       window.location.href = await createBulkCheckoutSession(accessToken, selected, couponCode);
     } catch (submitError) {
@@ -281,6 +289,7 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
   const classroomUrl = familyLink ? `${window.location.origin}${familyLink.classroom_path}` : '';
   const targetRecord = newChildLogin ? records.find(record => record.child_id === newChildLogin.childId) : null;
   const canStartTrialForNewChild = Boolean(newChildLogin && !paidCheckoutRequired && targetRecord && !childAccessAllowsLearning(targetRecord));
+  const showNewChildLoginProof = Boolean(newChildLogin && (revealedTrialHandoffId === newChildLogin.childId || childAccessAllowsLearning(targetRecord)));
 
   return <div className="page-stack">
     <SectionHeader eyebrow="Billing and access" title="Choose access for your children" desc="Select a plan, keep the children you want included, and continue to secure checkout." />
@@ -294,16 +303,16 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
         <h3>Start learning</h3>
         <p>Use the free trial for the first child, or subscribe now if you prefer to start with a paid plan.</p>
       </div>
-      <div className="student-login-proof">
+      {showNewChildLoginProof && <div className="student-login-proof">
         {classroomUrl && <label>Family classroom link<input readOnly value={classroomUrl} /></label>}
         <label>Username<input readOnly value={newChildLogin.username} /></label>
         <label>PIN<input readOnly value={newChildLogin.pin} /></label>
-      </div>
+      </div>}
       <div className="parent-action-row">
-        {canStartTrialForNewChild && <button className="primary-button" onClick={startFreeTrialForNewChild} disabled={checkoutKey === `trial:${newChildLogin.childId}`}>
-          {checkoutKey === `trial:${newChildLogin.childId}` ? 'Starting trial...' : 'Start Free 7-Day Trial'}
+        {canStartTrialForNewChild && <button className="primary-button" onClick={startFreeTrialForNewChild}>
+          Start Free 7-Day Trial
         </button>}
-        {classroomUrl && childAccessAllowsLearning(targetRecord) && <button className="primary-button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
+        {classroomUrl && showNewChildLoginProof && <button className="primary-button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
         <button className="secondary-button" onClick={() => {
           setSelectedPlans(current => ({ ...current, [newChildLogin.childId]: current[newChildLogin.childId] || defaultPlanKey(plans) }));
           document.getElementById('subscribe-children')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -393,9 +402,19 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
             </div>
           </>
           : <>
-            <h3>All children are covered.</h3>
-            <p className="muted-copy">Payment is confirmed. Use the family classroom link from the parent dashboard to help your child sign in.</p>
-            <button className="primary-button" type="button" onClick={() => onCheckoutComplete?.(completedCheckout.childId)}>Go to Family Classroom Link</button>
+            <h3>Payment confirmed for {completedCheckout.childName}.</h3>
+            <p className="muted-copy">Use the family classroom link and student login below to help your child sign in.</p>
+            <div className="student-login-proof">
+              {classroomUrl && <label>Family classroom link<input readOnly value={classroomUrl} /></label>}
+              {(completedCheckout.username || completedCheckoutAccess?.username) && <label>Username<input readOnly value={completedCheckout.username || completedCheckoutAccess?.username || ''} /></label>}
+              {completedCheckout.pin
+                ? <label>PIN<input readOnly value={completedCheckout.pin} /></label>
+                : <p className="muted-copy">Use the PIN created for this child in Child Profiles.</p>}
+            </div>
+            <div className="parent-action-row">
+              {classroomUrl && <button className="primary-button" type="button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
+              <button className="secondary-button" type="button" onClick={() => onCheckoutComplete?.(completedCheckout.childId)}>Back to Dashboard</button>
+            </div>
           </>}
     </section>}
 
@@ -406,8 +425,8 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
         <div>
           <span className={`access-status ${record.cancel_at_period_end ? 'past_due' : record.access_status}`}>{labelForStatus(record)}</span>
           <h3>{record.child_name}</h3>
-          <p>{record.grade_level} - {record.plan_name}</p>
-          <p>{periodText(record)}</p>
+          {billingPlanSummary(record) && <p>{billingPlanSummary(record)}</p>}
+          {periodText(record) && <p>{periodText(record)}</p>}
         </div>
         <div className="billing-actions">
           {record.cancel_at_period_end
@@ -457,7 +476,13 @@ function periodText(record: ChildAccess): string {
   if (record.cancel_at_period_end && record.current_period_ends_at) return `Access pauses after ${new Date(record.current_period_ends_at).toLocaleDateString()}`;
   if (record.trial_ends_at) return `Trial ends ${new Date(record.trial_ends_at).toLocaleDateString()}`;
   if (record.current_period_ends_at) return `Current period ends ${new Date(record.current_period_ends_at).toLocaleDateString()}`;
-  return 'No paid plan selected.';
+  return '';
+}
+
+function billingPlanSummary(record: ChildAccess): string {
+  const planName = (record.plan_name || '').trim();
+  if (!planName || planName.toLowerCase() === 'no paid plan selected') return '';
+  return `${record.grade_level} - ${planName}`;
 }
 
 function planButtonText(plan: BillingPlan): string {

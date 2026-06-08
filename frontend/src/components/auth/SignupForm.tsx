@@ -63,7 +63,7 @@ export function SignupForm({ onSubmit, onLogin }: { onSubmit: (values: SignupFor
           checked={values.coppa_parent_consent_accepted}
           onChange={e => setValues({ ...values, coppa_parent_consent_accepted: e.target.checked })}
         />
-        <span>I confirm that I am the parent or legal guardian of the child I am enrolling and I consent to the collection and use of my child's information for MsAlisia learning services.</span>
+        <span>I confirm that I am the parent or legal guardian of the child or children I am enrolling and I consent to the collection and use of my child's information for MsAlisia learning services.</span>
       </label>
       {error && <p className="error-note">{error}</p>}
       <button className="primary-button" onClick={submit} disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</button>
