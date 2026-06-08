@@ -780,25 +780,24 @@ class BillingService:
 
     async def _handle_invoice_payment_failed(self, invoice: dict) -> None:
         now = datetime.now(UTC)
-        grace_ends = now + timedelta(days=1)
         subscription_id = self._stripe_id(invoice.get('subscription'))
         if subscription_id:
             await self.supabase.update('billing_subscriptions', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
                 'subscription_status': 'past_due',
                 'stripe_latest_invoice_id': self._stripe_id(invoice.get('id')),
                 'stripe_latest_payment_intent_id': self._stripe_id(invoice.get('payment_intent')),
-                'grace_period_started_at': now.isoformat(),
-                'grace_period_ends_at': grace_ends.isoformat(),
+                'grace_period_started_at': None,
+                'grace_period_ends_at': None,
                 'updated_at': now.isoformat(),
             })
             await self.supabase.update('child_access', {'stripe_subscription_id': f'eq.{subscription_id}'}, {
-                'access_status': 'active',
+                'access_status': 'inactive',
                 'latest_invoice_id': self._stripe_id(invoice.get('id')),
                 'latest_payment_intent_id': self._stripe_id(invoice.get('payment_intent')),
-                'grace_period_started_at': now.isoformat(),
-                'grace_period_ends_at': grace_ends.isoformat(),
+                'grace_period_started_at': None,
+                'grace_period_ends_at': None,
                 'cancel_at_period_end': False,
-                'access_paused_reason': None,
+                'access_paused_reason': 'payment_failed',
                 'updated_at': now.isoformat(),
             })
         await self._queue_payment_failed_email(invoice)

@@ -59,6 +59,14 @@ export type BillingStatus = {
   coupon_redemptions?: CouponRedemption[];
 };
 
+export type StartTrialResponse = {
+  child: ChildAccess;
+  trial_started_at: string;
+  trial_ends_at: string;
+  trial_available: boolean;
+  message: string;
+};
+
 export type BillingPlan = {
   plan_key: BillingPlanKey;
   plan_type: BillingPlanType;

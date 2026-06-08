@@ -316,8 +316,16 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .billing-plan-action .secondary-button { min-width: 220px; min-height: 40px; white-space: normal; line-height: 1.25; }
 .subscription-management-note { display: grid; gap: 5px; max-width: 520px; padding: 13px 16px; border: 1px solid #d5efde; border-radius: 18px; background: #eaf8f0; color: var(--success); text-align: left; }
 .subscription-management-note span { color: var(--muted); font-weight: 800; line-height: 1.35; }
+.subscription-management-note.muted { border-color: var(--border); background: #faf7ff; color: var(--purple-dark); }
 .pause-access-link { border: 0; background: transparent; color: #7c7288; padding: 4px 0; font: inherit; font-size: 12px; font-weight: 900; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .pause-access-link:disabled { opacity: .55; cursor: not-allowed; }
+.new-child-access-card { display: grid; gap: 18px; border-color: #d8c5fb; background: linear-gradient(135deg, #fff, #f7f1ff); }
+.new-child-access-card p { margin: 0; }
+.student-login-proof { display: grid; grid-template-columns: minmax(260px, 1.5fr) minmax(140px, .7fr) minmax(120px, .55fr); gap: 12px; align-items: end; }
+.student-login-proof label { min-width: 0; }
+.student-login-proof input { width: 100%; background: #fff; color: var(--purple-dark); font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+.checkout-plan-picker { margin: 16px 0; max-width: 520px; }
+.checkout-plan-picker select { min-height: 54px; }
 .compact-list { gap: 16px; }
 .subscribe-child-row { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 0.9fr); align-items: center; gap: 18px; }
 .subscribe-child-row.subscribed { background: #fcfbff; }
@@ -329,8 +337,9 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .billing-selection-copy small { display: block; color: var(--muted); font-weight: 800; line-height: 1.35; }
 .subscribe-child-row select { width: 100%; min-height: 54px; }
 .subscription-covered-note { justify-self: stretch; display: inline-flex; align-items: center; justify-content: center; min-height: 54px; border: 1px solid #d5efdE; border-radius: 18px; background: #eaf8f0; color: var(--success); font-weight: 900; text-align: center; padding: 10px 14px; }
-.billing-checkout-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.billing-checkout-footer { display: flex; align-items: flex-end; justify-content: flex-end; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .billing-checkout-footer .primary-button { min-width: 180px; }
+.compact-coupon { flex: 1 1 220px; max-width: 280px; margin: 0; }
 .access-status { display: inline-flex; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 900; background: #f5f2fa; color: var(--muted); }
 .access-status.active { color: var(--success); background: #eaf8f0; }
 .access-status.trial { color: #8a6310; background: var(--gold-soft); }
@@ -582,6 +591,9 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .billing-child-card { align-items: stretch; flex-direction: column; }
   .billing-actions { justify-content: flex-start; }
   .annual-pricing-context-grid { grid-template-columns: 1fr; }
+  .student-login-proof { grid-template-columns: 1fr; }
+  .billing-checkout-footer { align-items: stretch; flex-direction: column; }
+  .compact-coupon { max-width: none; width: 100%; }
   .thread-sidebar, .learning-context-panel { position: static; max-height: none; }
   .chat-workspace { min-height: 620px; grid-template-rows: auto minmax(420px, 1fr) auto auto; }
   .chat-topbar { align-items: flex-start; flex-direction: column; }

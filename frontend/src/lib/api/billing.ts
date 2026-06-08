@@ -1,5 +1,5 @@
 import { apiGet, apiPatch, apiPost } from '../api';
-import { BillingPlan, BillingPlanKey, BillingStatus, ChildAccess, ChildAccessStatus, CheckoutChildPlan } from '../../types/billing';
+import { BillingPlan, BillingPlanKey, BillingStatus, ChildAccess, ChildAccessStatus, CheckoutChildPlan, StartTrialResponse } from '../../types/billing';
 
 function authHeaders(accessToken: string): Record<string, string> {
   return { Authorization: `Bearer ${accessToken}` };
@@ -23,6 +23,13 @@ export async function updateChildAccess(accessToken: string, childId: string, ac
   return apiPatch<ChildAccess>(`/billing/children/${childId}`, {
     access_status: accessStatus,
     plan_name: 'Phase 1 MVP',
+  }, authHeaders(accessToken));
+}
+
+export async function startTrial(accessToken: string, childId: string, planKey: BillingPlanKey = 'text_monthly'): Promise<StartTrialResponse> {
+  return apiPost<StartTrialResponse>('/billing/trial/start', {
+    child_id: childId,
+    plan_key: planKey,
   }, authHeaders(accessToken));
 }
 

@@ -706,7 +706,11 @@ export function App() {
           childId={selectedChildId}
           studentSession={false}
         />}
-        {parentView === 'billing' && <BillingView accessToken={session.access_token || ''} />}
+        {parentView === 'billing' && <BillingView accessToken={session.access_token || ''} onCheckoutComplete={(childId) => {
+          if (childId) setSelectedChildId(childId);
+          setParentView('home');
+          navigate('/dashboard');
+        }} />}
       </ParentOnly>
     </ParentShell>
   );

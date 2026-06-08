@@ -11,6 +11,7 @@ import { ChildProfile, ChildProfileFormValues, ChildSubject } from '../types/chi
 import { StudentAccess } from '../types/studentAccess';
 
 const BILLING_TARGET_CHILD_KEY = 'msalisia_billing_target_child';
+const NEW_CHILD_LOGIN_HANDOFF_KEY = 'msalisia_new_child_login_handoff';
 
 export function ManageChildrenView({
   accessToken,
@@ -80,6 +81,12 @@ export function ManageChildrenView({
         pin,
         is_active: true,
       });
+      sessionStorage.setItem(NEW_CHILD_LOGIN_HANDOFF_KEY, JSON.stringify({
+        childId: child.id,
+        childName: child.name,
+        username: studentAccess.username,
+        pin,
+      }));
       setStudentAccessByChildId(prev => ({ ...prev, [child.id]: studentAccess }));
       onChildrenChanged([...children, child], child.id);
       setAdding(false);
