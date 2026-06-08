@@ -2,13 +2,45 @@ import { FormEvent, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { BookOpenText, CalendarCheck, ChartNoAxesColumnIncreasing, Check, CircleDollarSign, HeartHandshake, LockKeyhole, Mail, ShieldCheck, Sparkles, UserPlus, WandSparkles } from 'lucide-react';
 import { submitDataDeletionRequest } from '../lib/api/dataDeletion';
+import { joinWaitlist } from '../lib/api/waitlist';
 
 type ComplianceType = 'privacy' | 'terms' | 'ai-disclosure' | 'data-deletion' | 'support';
 
+function validEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: string) => void }) {
+  const [waitlistEmail, setWaitlistEmail] = useState('');
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
+  const [waitlistMessage, setWaitlistMessage] = useState('');
+  const [waitlistError, setWaitlistError] = useState('');
+
   function go(path: string) {
     if (onNavigate) onNavigate(path);
     else window.location.assign(path);
+  }
+
+  async function submitWaitlist(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedEmail = waitlistEmail.trim().toLowerCase();
+    if (!validEmail(normalizedEmail)) {
+      setWaitlistError('Please enter a valid email address.');
+      setWaitlistMessage('');
+      return;
+    }
+    setWaitlistLoading(true);
+    setWaitlistError('');
+    setWaitlistMessage('');
+    try {
+      const response = await joinWaitlist({ email: normalizedEmail });
+      setWaitlistMessage(response.message || "You're on the waitlist. Access is scheduled to open on June 15.");
+      setWaitlistEmail('');
+    } catch {
+      setWaitlistError('We could not join the waitlist right now. Please try again.');
+    } finally {
+      setWaitlistLoading(false);
+    }
   }
 
   return <main className="prelaunch-page">
@@ -34,6 +66,18 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
         </div>
         <p className="prelaunch-hero-note">No credit card required. Every family starts with a free 7-day trial. Cancel anytime.</p>
         <p className="prelaunch-proof">“Designed by an educator and a real parent — because every child deserves a brilliant tutor, and every parent deserves a break.”</p>
+        <form className="landing-waitlist-form" onSubmit={submitWaitlist}>
+          <div>
+            <Mail aria-hidden="true" />
+            <strong>Join the waitlist</strong>
+            <span>Enter your email and we will keep you updated.</span>
+          </div>
+          <label className="sr-only" htmlFor="waitlist-email">Email address</label>
+          <input id="waitlist-email" type="email" inputMode="email" autoComplete="email" value={waitlistEmail} onChange={event => setWaitlistEmail(event.target.value)} placeholder="Email address" disabled={waitlistLoading} required />
+          <button className="secondary-button" type="submit" disabled={waitlistLoading}>{waitlistLoading ? 'Joining...' : 'Join Waitlist'}</button>
+          {waitlistMessage && <p className="landing-waitlist-message success">{waitlistMessage}</p>}
+          {waitlistError && <p className="landing-waitlist-message error">{waitlistError}</p>}
+        </form>
       </div>
 
       <div className="prelaunch-visual" aria-label="A happy child learning at a screen">

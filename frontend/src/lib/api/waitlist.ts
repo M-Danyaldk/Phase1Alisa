@@ -6,7 +6,7 @@ export type WaitlistSignupResponse = {
 };
 
 export type WaitlistSignupPayload = {
-  parent_name: string;
+  parent_name?: string;
   email: string;
   child_grade?: string;
   interest_note?: string;
