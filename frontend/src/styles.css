@@ -523,8 +523,8 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .landing-waitlist-message { grid-column: 1 / -1; margin: 0; border-radius: 8px; padding: 10px 12px; font-weight: 800; line-height: 1.45; }
 .landing-waitlist-message.success { color: #2d704d; background: #eaf8f0; border: 1px solid #c9ead8; }
 .landing-waitlist-message.error { color: #a43c3c; background: #fff0f0; border: 1px solid #ffd2d2; }
-.prelaunch-visual { min-height: clamp(430px, 52vw, 640px); border-radius: 8px; overflow: hidden; border: 1px solid rgba(234,223,241,.92); box-shadow: 0 24px 70px rgba(73, 40, 96, .18); background: #fff; }
-.prelaunch-visual img { width: 100%; height: 100%; min-height: inherit; display: block; object-fit: cover; object-position: center; }
+.prelaunch-visual { aspect-ratio: 16 / 10; min-height: 0; border-radius: 8px; overflow: hidden; border: 1px solid rgba(234,223,241,.92); box-shadow: 0 24px 70px rgba(73, 40, 96, .18); background: #fff; }
+.prelaunch-visual img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: center; }
 .landing-section { width: min(1180px, calc(100% - 36px)); margin: 0 auto; padding: clamp(44px, 7vw, 80px) 0; border-top: 1px solid rgba(234,223,241,.9); }
 .landing-section-heading h2 { margin: 0; color: var(--landing-purple-dark); font-size: clamp(28px, 4vw, 46px); line-height: 1.1; letter-spacing: 0; }
 .landing-feature-grid, .landing-pricing-grid, .landing-faq-grid, .landing-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
@@ -721,7 +721,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .prelaunch-nav { display: none; }
   .prelaunch-hero, .landing-feature-grid, .landing-feature-grid.four, .landing-pricing-grid, .landing-faq-grid, .landing-steps, .landing-safety-list, .landing-origin { grid-template-columns: 1fr; }
   .prelaunch-hero { padding: 42px 0; }
-  .prelaunch-visual { min-height: 420px; }
+  .prelaunch-visual { aspect-ratio: 16 / 10; }
   .prelaunch-copy { max-width: none; padding: 0; }
   .prelaunch-form { margin-top: 0; }
   .prelaunch-footer { grid-template-columns: 1fr; align-items: flex-start; }
@@ -739,7 +739,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .landing-waitlist-form button { width: 100%; }
   .prelaunch-form { padding: 18px; }
   .prelaunch-form .primary-button, .prelaunch-cta-row .primary-button, .prelaunch-cta-row .secondary-button { width: 100%; min-height: 48px; }
-  .prelaunch-visual { min-height: 330px; }
+  .prelaunch-visual { aspect-ratio: 4 / 3; }
   .landing-section { padding: 36px 0; }
   .landing-section-heading h2 { font-size: 29px; }
   .landing-feature-card, .landing-price-card, .landing-step, .landing-faq-grid details, .landing-safety-list li { padding: 18px; }
