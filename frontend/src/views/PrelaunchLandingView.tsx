@@ -1,63 +1,11 @@
 import { FormEvent, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Brain, CheckCircle2, ClipboardList, FileText, Headphones, HeartHandshake, LockKeyhole, Mail, Mic, ShieldCheck, Sparkles, UploadCloud } from 'lucide-react';
+import { BookOpenText, CalendarCheck, ChartNoAxesColumnIncreasing, Check, CircleDollarSign, HeartHandshake, LockKeyhole, Mail, ShieldCheck, Sparkles, UserPlus, WandSparkles } from 'lucide-react';
 import { submitDataDeletionRequest } from '../lib/api/dataDeletion';
-import { joinWaitlist } from '../lib/api/waitlist';
 
-const waitlistOpenDate = import.meta.env.VITE_WAITLIST_OPEN_DATE || '2026-06-14';
-const publicAccessDateLabel = 'June 15';
-const successMessage = `You're on the waitlist. Access opens ${publicAccessDateLabel}. We'll reach out when it's your family's turn.`;
-
-function validEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-}
+type ComplianceType = 'privacy' | 'terms' | 'ai-disclosure' | 'data-deletion' | 'support';
 
 export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: string) => void }) {
-  const [parentName, setParentName] = useState('');
-  const [email, setEmail] = useState('');
-  const [childGrade, setChildGrade] = useState('');
-  const [interestNote, setInterestNote] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const accessOpen = Number.isFinite(new Date(`${waitlistOpenDate}T00:00:00`).getTime())
-    && new Date() >= new Date(`${waitlistOpenDate}T00:00:00`);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!parentName.trim()) {
-      setError('Please enter your name.');
-      setMessage('');
-      return;
-    }
-    if (!validEmail(normalizedEmail)) {
-      setError('Please enter a valid email address.');
-      setMessage('');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    setMessage('');
-    try {
-      const response = await joinWaitlist({
-        parent_name: parentName.trim(),
-        email: normalizedEmail,
-        child_grade: childGrade.trim() || undefined,
-        interest_note: interestNote.trim() || undefined,
-      });
-      setMessage(response.message || successMessage);
-      setParentName('');
-      setEmail('');
-      setChildGrade('');
-      setInterestNote('');
-    } catch {
-      setError('We could not join the waitlist right now. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function go(path: string) {
     if (onNavigate) onNavigate(path);
     else window.location.assign(path);
@@ -70,90 +18,88 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
         <span>MsAlisia</span>
       </button>
       <nav className="prelaunch-nav" aria-label="Landing navigation">
-        <a href="#features">Features</a>
-        <a href="#faq">FAQ</a>
+        <a href="#how-it-works">See How It Works</a>
+        <a className="prelaunch-nav-cta" href="/signup">Start Free 7-Day Trial</a>
       </nav>
     </header>
 
     <section className="prelaunch-hero" aria-labelledby="prelaunch-title">
       <div className="prelaunch-copy">
-        <span className="prelaunch-eyebrow">{accessOpen ? 'Access is open' : 'Now accepting waitlist sign-ups.'}</span>
-        <h1 id="prelaunch-title">Best Teacher. Best Mentor. Best Future.</h1>
-        <p>MsAlisia is an AI tutor for Grades 3-6 that adapts to your child, supports Math, Reading, and Writing, and keeps parents informed without adding more work to the day.</p>
+        <h1 id="prelaunch-title">“We tried 4 tutors in 2 weeks. They were expensive, unreliable, and our child was still struggling.”</h1>
+        <p className="prelaunch-subheadline">“So we built Ms. Alisia — a patient, brilliant AI tutor available every day, for less than the cost of a few tutoring sessions a month. Named after a real mom who needed real help. Built from real frustration.”</p>
+        <p>Your child gets personalized learning that adapts to how they think. You get weekly progress reports and peace of mind — without the scheduling, the cancellations, or the hourly bills.</p>
         <div className="prelaunch-cta-row">
-          <a className="primary-button" href={accessOpen ? '/signup' : '#waitlist'}>{accessOpen ? 'Create Parent Account' : 'Join Waitlist'}</a>
+          <a className="primary-button" href="/signup">Start Free 7-Day Trial</a>
           <a className="secondary-button" href="#how-it-works">See How It Works</a>
         </div>
-        {!accessOpen && <p className="prelaunch-hero-note">Start with 7 days free when we launch.</p>}
+        <p className="prelaunch-hero-note">No credit card required. Every family starts with a free 7-day trial. Cancel anytime.</p>
+        <p className="prelaunch-proof">“Designed by an educator and a real parent — because every child deserves a brilliant tutor, and every parent deserves a break.”</p>
       </div>
 
-      <form className="prelaunch-form" id="waitlist" onSubmit={submit}>
-        <h2>{accessOpen ? 'Access is open' : 'Join the waitlist'}</h2>
-        <p>{accessOpen ? 'Create your parent account when you are ready to begin.' : "Access opens June 15 — join the waitlist and we'll reach out when it's your family's turn."}</p>
-        <label>Parent name
-          <input value={parentName} onChange={event => setParentName(event.target.value)} autoComplete="name" disabled={loading} required />
-        </label>
-        <label>Email
-          <input type="email" inputMode="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" disabled={loading} required />
-        </label>
-        <label>Child grade <span>Optional</span>
-          <input value={childGrade} onChange={event => setChildGrade(event.target.value)} placeholder="Example: Grade 5" disabled={loading} />
-        </label>
-        <label>Interest note <span>Optional</span>
-          <textarea value={interestNote} onChange={event => setInterestNote(event.target.value)} placeholder="Tell us what support would help most." disabled={loading} />
-        </label>
-        <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Joining...' : 'Join Waitlist'}</button>
-        {accessOpen && <button className="secondary-button" type="button" onClick={() => go('/signup')}>Create Parent Account</button>}
-        <p className="prelaunch-form-note">{accessOpen ? 'No payment information required. You can also create a parent account now.' : 'No payment information required. Every new family starts with a free 7-day trial. Access opens June 15.'}</p>
-        {message && <p className="prelaunch-success"><CheckCircle2 aria-hidden="true" />{message}</p>}
-        {error && <p className="prelaunch-error">{error}</p>}
-      </form>
+      <div className="prelaunch-visual" aria-label="A happy child learning at a screen">
+        <img src="/landing-hero.png" alt="A happy child engaged at a screen" />
+      </div>
     </section>
 
-    <section className="landing-section" id="features">
-      <div className="landing-section-heading">
-        <span>Launch features</span>
-        <h2>Focused tutoring with parent visibility.</h2>
-      </div>
-      <div className="landing-feature-grid">
-        <LandingFeature icon={<Sparkles />} title="AI tutoring" text="Step-by-step help that adapts to each child's current level." />
-        <LandingFeature icon={<ClipboardList />} title="Assessment engine" text="Learning checks help MsAlisia understand strengths and gaps." />
-        <LandingFeature icon={<FileText />} title="Parent reports" text="Parents can see progress without needing to sit beside every lesson." />
-        <LandingFeature icon={<Mic />} title="Voice learning" text="Voice learning is available on the Voice Plan — your child can speak with Ms. Alisia and hear responses aloud." />
-        <LandingFeature icon={<Brain />} title="Brain Break" text="Healthy rest reminders support long learning sessions." />
-        <LandingFeature icon={<UploadCloud />} title="Homework upload" text="Students can upload work for guided support." />
+    <section className="landing-section" id="value" aria-label="Value proposition">
+      <div className="landing-feature-grid four">
+        <LandingFeature icon={<CircleDollarSign />} title="Affordable" text="For less than the cost of a few tutoring sessions, your child gets a full month of personalized, on-demand learning. Available every single day." />
+        <LandingFeature icon={<CalendarCheck />} title="Always there" text="Ms. Alisia never cancels, never runs late, and never has a bad day. Homework help at 9pm. Test prep on Sunday morning. Always ready." />
+        <LandingFeature icon={<WandSparkles />} title="Adapts to your child" text="Ms. Alisia learns how your child thinks, adjusts to their level, and builds on what they already know — every session, every time." />
+        <LandingFeature icon={<ChartNoAxesColumnIncreasing />} title="Parents stay informed" text="Weekly progress reports delivered straight to you. You see everything without sitting beside every lesson. Peace of mind, not more work." />
       </div>
     </section>
 
     <section className="landing-section landing-split" id="how-it-works">
       <div className="landing-section-heading">
-        <span>How it works</span>
-        <h2>Three simple steps.</h2>
+        <h2>How It Works</h2>
       </div>
       <div className="landing-steps">
-        <Step number="1" title="Join the waitlist" text="Tell us where to send access details." />
-        <Step number="2" title="Create profiles" text="When access opens, create the parent account and child profile." />
-        <Step number="3" title="Start learning" text="Your child logs in separately and learns with Ms. Alisia." />
+        <Step number="1" icon={<UserPlus />} text="Create your free account — takes less than 2 minutes." />
+        <Step number="2" icon={<BookOpenText />} text="Set up your child’s profile — grade, subjects, and learning goals." />
+        <Step number="3" icon={<Sparkles />} text="Your child logs in and starts learning — Ms. Alisia takes it from there." />
       </div>
+    </section>
+
+    <section className="landing-section landing-origin">
+      <div className="landing-origin-copy">
+        <h2>Ms. Alisia is named after a real mom.</h2>
+        <p>It started with a conversation between a grandmother, her daughter Alisia, and a friend who was exhausted. Four tutors in two weeks. Cancellations. No-shows. One fell asleep. The bills kept coming and the child was still struggling. They knew this wasn’t just one family’s problem. So a grandmother and her daughter built the tutor they wished existed. Patient. Brilliant. Always available. Never cancels. Ms. Alisia is real because the frustration was real — and every parent dealing with it deserves better.</p>
+      </div>
+    </section>
+
+    <section className="landing-section landing-subjects">
+      <p>Math, Reading, and Writing for Grades 3–6.</p>
+      <p>Expanding to K–12 soon.</p>
+    </section>
+
+    <section className="landing-section" id="pricing">
+      <div className="landing-section-heading">
+        <h2>Simple, transparent pricing. No surprises.</h2>
+      </div>
+      <div className="landing-pricing-grid">
+        <PricingCard title="Chat Plan" price="$129/month or $1,419/year — includes 1 month free" />
+        <PricingCard title="Voice Plan" price="$159/month or $1,749/year — includes 1 month free" />
+      </div>
+      <p className="landing-inline-note">Family discount: 5% off for 2 or more children automatically applied at checkout.</p>
+      <p className="landing-inline-note">Every new family starts with a free 7-day trial. No credit card required.</p>
     </section>
 
     <section className="landing-section landing-trust">
       <div className="landing-section-heading">
-        <span>Trust and safety</span>
-        <h2>Built so your child is supported and you stay informed.</h2>
+        <h2>Built around your child’s safety and your peace of mind.</h2>
       </div>
-      <div className="landing-feature-grid">
-        <LandingFeature icon={<ShieldCheck />} title="Child-safe tutoring" text="Student-facing guidance stays encouraging and age-aware." />
-        <LandingFeature icon={<HeartHandshake />} title="Parent visibility" text="Parents can review progress, reports, and access status." />
-        <LandingFeature icon={<LockKeyhole />} title="Privacy-first data handling" text="Child data is not sold for advertising, and parents can request deletion." />
-        <LandingFeature icon={<Headphones />} title="AI disclosure" text="MsAlisia is an AI tutor, not a human tutor." />
-      </div>
+      <ul className="landing-safety-list">
+        <li><ShieldCheck aria-hidden="true" /><span>Child-safe tutoring — age-appropriate content only, always.</span></li>
+        <li><HeartHandshake aria-hidden="true" /><span>Parent visibility — weekly reports keep you informed without extra work.</span></li>
+        <li><LockKeyhole aria-hidden="true" /><span>Privacy-first — your child’s data is never sold or shared.</span></li>
+        <li><Sparkles aria-hidden="true" /><span>AI transparency — Ms. Alisia is an AI tutor, not a human tutor. Full disclosure available on our AI Disclosure page.</span></li>
+      </ul>
     </section>
 
     <section className="landing-section" id="faq">
       <div className="landing-section-heading">
-        <span>FAQ</span>
-        <h2>Questions parents ask first.</h2>
+        <h2>FAQ</h2>
       </div>
       <div className="landing-faq-grid">
         {faqItems.map(item => <details key={item.question}>
@@ -167,15 +113,19 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
       <strong>MsAlisia</strong>
       <div>
         <button type="button" onClick={() => go('/privacy')}>Privacy Policy</button>
+        <span>·</span>
+        <button type="button" onClick={() => go('/terms')}>Terms of Service</button>
+        <span>·</span>
         <button type="button" onClick={() => go('/ai-disclosure')}>AI Disclosure</button>
-        <button type="button" onClick={() => go('/data-deletion')}>Data Deletion Request</button>
-        <button type="button" onClick={() => go('/support')}>Contact / Support</button>
+        <span>·</span>
+        <button type="button" onClick={() => go('/support')}>Contact</button>
       </div>
+      <a href="mailto:francesca@msalisia.com">francesca@msalisia.com</a>
     </footer>
   </main>;
 }
 
-export function CompliancePage({ type, onNavigate }: { type: 'privacy' | 'ai-disclosure' | 'data-deletion' | 'support'; onNavigate: (path: string) => void }) {
+export function CompliancePage({ type, onNavigate }: { type: ComplianceType; onNavigate: (path: string) => void }) {
   const content = useMemo(() => complianceContent[type], [type]);
   return <main className="legal-page">
     <section className="legal-card">
@@ -263,28 +213,32 @@ function LandingFeature({ icon, title, text }: { icon: ReactNode; title: string;
   </article>;
 }
 
-function Step({ number, title, text }: { number: string; title: string; text: string }) {
+function Step({ number, icon, text }: { number: string; icon: ReactNode; text: string }) {
   return <article className="landing-step">
     <span>{number}</span>
-    <h3>{title}</h3>
+    <div>{icon}</div>
     <p>{text}</p>
   </article>;
 }
 
+function PricingCard({ title, price }: { title: string; price: string }) {
+  return <article className="landing-price-card">
+    <Check aria-hidden="true" />
+    <h3>{title}</h3>
+    <strong>{price}</strong>
+  </article>;
+}
+
 const faqItems = [
-  { question: 'What grades are supported?', answer: 'MsAlisia launches with Grades 3-6.' },
-  { question: 'Is there a free trial?', answer: 'Yes. Every new family starts with a free 7-day trial. No payment is required to begin.' },
-  { question: 'What subjects are available?', answer: 'Launch subjects are Math, Reading, and Writing.' },
-  { question: 'How does the waitlist work?', answer: 'Join the waitlist and we will contact you when access is ready for your family.' },
-  { question: 'Is MsAlisia an AI tutor?', answer: 'Yes. MsAlisia is an AI tutor, not a human tutor.' },
-  { question: 'Can parents see progress?', answer: 'Yes. Parents can view reports, assessment summaries, and child profile progress.' },
-  { question: 'How does billing work after launch?', answer: 'Billing is handled securely through Stripe when a family chooses access.' },
-  { question: 'What is the difference between Text Plan and Voice Plan?', answer: 'Text Plan supports chat tutoring. Voice Plan adds audio learning features.' },
-  { question: 'Is homework upload supported?', answer: 'Yes. Homework upload is part of the planned launch feature set.' },
-  { question: 'What happens during Brain Break?', answer: 'Brain Break gives children a positive rest reminder after long tutoring sessions. It supports healthy learning habits.' },
+  { question: 'What grades does MsAlisia support?', answer: 'MsAlisia currently supports Grades 3–6 across Math, Reading, and Writing.' },
+  { question: 'Is there a free trial?', answer: 'Yes. Every new family starts with a free 7-day trial. No credit card required. The trial begins when your first child enters the classroom for the first time.' },
+  { question: 'How does billing work?', answer: 'Choose a monthly or annual plan. Annual plans include one month free. Billing is handled securely through Stripe.' },
+  { question: 'Is my child’s information safe?', answer: 'Yes. We never sell or share your child’s data. All information is stored securely and used only to personalize your child’s learning experience.' },
+  { question: 'Can I cancel anytime?', answer: 'Yes. You can cancel at any time. Your access continues until the end of your current billing period.' },
+  { question: 'How is Ms. Alisia different from other tutoring apps?', answer: 'Ms. Alisia was built by an educator and a real parent who experienced the tutoring struggle firsthand. It adapts to how your child thinks, keeps parents informed, and costs a fraction of private tutoring — with no scheduling, no cancellations, and no bad days.' },
 ];
 
-const complianceContent = {
+const complianceContent: Record<ComplianceType, { eyebrow: string; title: string; sections: { title: string; text: string }[] }> = {
   privacy: {
     eyebrow: 'Privacy Policy',
     title: 'Privacy-first learning support',
@@ -293,6 +247,15 @@ const complianceContent = {
       { title: 'Service providers', text: 'Billing is handled by Stripe. Emails are handled by Resend. AI tutoring is powered by Anthropic. Voice responses are powered by OpenAI.' },
       { title: 'Advertising', text: 'We do not sell student data for advertising.' },
       { title: 'Deletion requests', text: 'Parents can request deletion of parent and child data by contacting privacy@msalisia.com.' },
+    ],
+  },
+  terms: {
+    eyebrow: 'Terms of Service',
+    title: 'Terms of Service',
+    sections: [
+      { title: 'Use of MsAlisia', text: 'MsAlisia provides AI tutoring support for families. Parents are responsible for creating accounts, setting up child profiles, and managing subscriptions.' },
+      { title: 'Billing', text: 'Billing is handled securely through Stripe. You can cancel at any time, and access continues until the end of your current billing period.' },
+      { title: 'Contact', text: 'For questions about these terms, contact francesca@msalisia.com.' },
     ],
   },
   'ai-disclosure': {
@@ -315,7 +278,7 @@ const complianceContent = {
     eyebrow: 'Support',
     title: 'Contact MsAlisia',
     sections: [
-      { title: 'Support', text: 'For product or account help, email support@msalisia.com.' },
+      { title: 'Contact', text: 'For product or account help, email francesca@msalisia.com.' },
       { title: 'Privacy', text: 'For privacy or deletion requests, email privacy@msalisia.com.' },
     ],
   },

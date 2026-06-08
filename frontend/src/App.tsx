@@ -432,8 +432,8 @@ export function App() {
     return <PrelaunchLandingView onNavigate={navigate} />;
   }
 
-  if (pathname === '/privacy' || pathname === '/ai-disclosure' || pathname === '/data-deletion' || pathname === '/support') {
-    const type = pathname.slice(1) as 'privacy' | 'ai-disclosure' | 'data-deletion' | 'support';
+  if (pathname === '/privacy' || pathname === '/terms' || pathname === '/ai-disclosure' || pathname === '/data-deletion' || pathname === '/support') {
+    const type = pathname.slice(1) as 'privacy' | 'terms' | 'ai-disclosure' | 'data-deletion' | 'support';
     return <CompliancePage type={type} onNavigate={navigate} />;
   }
 

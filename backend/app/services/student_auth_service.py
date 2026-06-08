@@ -103,16 +103,18 @@ class StudentAuthService:
         token = generate_session_token()
         expires_at = datetime.now(UTC) + timedelta(hours=SESSION_HOURS)
         token_hash = hash_session_token(token)
+        now = datetime.now(UTC)
         try:
-            await self.supabase.insert('student_sessions', {
+            await self._revoke_existing_sessions(access['id'])
+            await self._insert_student_session({
                 'parent_id': access['parent_id'],
                 'child_id': access['child_id'],
                 'student_access_id': access['id'],
                 'token_hash': token_hash,
                 'expires_at': expires_at.isoformat(),
             })
-            await self.supabase.update('family_classroom_links', {'id': f'eq.{family_link["id"]}'}, {'last_used_at': datetime.now(UTC).isoformat()})
-            await self.supabase.update('student_access', {'id': f'eq.{access["id"]}'}, {'last_login_at': datetime.now(UTC).isoformat()})
+            await self.supabase.update('family_classroom_links', {'id': f'eq.{family_link["id"]}'}, {'last_used_at': now.isoformat()})
+            await self.supabase.update('student_access', {'id': f'eq.{access["id"]}'}, {'last_login_at': now.isoformat()})
         except SupabaseClientError as exc:
             if self._missing_student_access(exc):
                 raise HTTPException(status_code=503, detail='Student access tables are not set up yet. Please run the Supabase migration first.') from exc
@@ -195,6 +197,30 @@ class StudentAuthService:
         if records:
             return records[0]
         return {**session, 'expires_at': next_expires_at.isoformat()}
+
+    async def _insert_student_session(self, payload: dict) -> None:
+        try:
+            await self.supabase.insert('student_sessions', payload)
+        except SupabaseClientError as exc:
+            if not self._active_session_conflict(exc):
+                raise
+            await self._revoke_existing_sessions(payload['student_access_id'])
+            await self.supabase.insert('student_sessions', payload)
+
+    async def _revoke_existing_sessions(self, student_access_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self.supabase.update(
+            'student_sessions',
+            {
+                'student_access_id': f'eq.{student_access_id}',
+                'revoked_at': 'is.null',
+            },
+            {'revoked_at': now},
+        )
+
+    def _active_session_conflict(self, exc: SupabaseClientError) -> bool:
+        message = str(exc).lower()
+        return 'student_sessions_one_active_per_access_idx' in message or 'duplicate' in message or 'unique' in message
 
     def normalize_username(self, username: str) -> str:
         value = username.strip().lower()
