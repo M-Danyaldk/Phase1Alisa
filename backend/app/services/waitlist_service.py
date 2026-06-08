@@ -7,7 +7,7 @@ import httpx
 from email_validator import EmailNotValidError, validate_email
 from fastapi import HTTPException
 
-from ..config import get_settings
+from ..config import DEFAULT_EMAIL_LOGO_URL, get_settings
 from ..database import execute, fetch_all
 from .supabase_client import SupabaseClient, SupabaseClientError
 
@@ -154,12 +154,10 @@ class WaitlistService:
                 return 'June 15'
 
     def _waitlist_confirmation_html(self) -> str:
-        logo_url = self.settings.email_logo_url.strip()
+        logo_url = self.settings.email_logo_url.strip() or DEFAULT_EMAIL_LOGO_URL
         safe_logo_url = escape(logo_url, quote=True)
         logo_html = (
             f'<img src="{safe_logo_url}" alt="MsAlisia" width="64" height="64" style="display:block;border-radius:18px;background:#ffffff;object-fit:cover;" />'
-            if safe_logo_url
-            else '<div style="width:64px;height:64px;border-radius:18px;background:#ffffff;color:#5e3ca0;font-size:22px;line-height:64px;text-align:center;font-weight:900;">MA</div>'
         )
         open_date = escape(self._open_date_label())
         return f'''<!doctype html>

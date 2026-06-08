@@ -3,6 +3,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ENV_FILE = Path(__file__).resolve().parents[1] / '.env'
+DEFAULT_EMAIL_LOGO_URL = 'https://www.msalisia.com/logo.jpeg?v=20260606'
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=BACKEND_ENV_FILE, extra='ignore')
@@ -55,7 +56,7 @@ class Settings(BaseSettings):
     resend_api_key: str = ''
     resend_from_email: str = 'francesca@msalisia.com'
     weekly_progress_from_email: str = 'francesca@msalisia.com'
-    email_logo_url: str = ''
+    email_logo_url: str = DEFAULT_EMAIL_LOGO_URL
     waitlist_notify_email: str = 'enrol@msalisia.com'
     waitlist_open_date: str = '2026-06-15'
     internal_cron_secret: str = ''
