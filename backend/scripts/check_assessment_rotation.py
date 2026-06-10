@@ -29,6 +29,10 @@ def main() -> None:
                 if len(selection.question_ids) != 3:
                     failures.append(f'{subject} grade {grade} attempt {attempt_number} returned {len(selection.question_ids)} questions.')
 
+                prompts = [question.question for question in selection.assessment_version.questions]
+                if len(prompts) != 3 or any(not prompt.strip() for prompt in prompts):
+                    failures.append(f'{subject} grade {grade} attempt {attempt_number} returned invalid question prompts.')
+
                 if attempt_number > 1 and selected_versions[-1] == selected_versions[-2]:
                     failures.append(f'{subject} grade {grade} repeated version {selection.version_number} immediately on attempt {attempt_number}.')
 
@@ -68,6 +72,7 @@ def main() -> None:
     print(f'- Simulated attempts per grade/subject: {SIMULATED_ATTEMPTS}')
     print(f'- First {EXPECTED_VERSION_COUNT} attempts cover all versions without repeats.')
     print('- No immediate version repeat during safe rotation.')
+    print('- Selected versions include renderable question prompts.')
     print('- Saved assessment history parser works for assessment_version rows.')
 
 

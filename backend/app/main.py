@@ -319,9 +319,9 @@ async def next_assessment(payload: AssessmentNextRequest, authorization: str = H
     grade = _grade_number(child.get('grade_level')) or 4
     previous_assessments = await AppDataService().list_assessments_for_child(student_access['child_id'], limit=100)
     previous_versions = previous_versions_from_assessments(previous_assessments, subject=payload.subject, grade=grade)
-    selection = select_next_assessment_version(payload.subject, grade, previous_versions)
+    selection = select_next_assessment_version(payload.subject, grade, previous_versions, child_id=student_access['child_id'])
     questions = [
-        {'id': question.id, 'prompt': question.prompt}
+        {'id': question.id, 'prompt': question.question}
         for question in selection.assessment_version.questions
     ]
     return AssessmentSelectionResponse(
