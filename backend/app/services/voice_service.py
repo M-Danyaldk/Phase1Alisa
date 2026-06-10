@@ -287,14 +287,16 @@ class VoiceService:
                 'correctness_status': answer_check.status,
                 'expected_answer': answer_check.expected_answer or next_state.expected_answer,
                 'hint_given': answer_check.is_wrong and next_state.attempt_count == 1,
-                'answer_revealed': answer_check.is_wrong and next_state.attempt_count >= 2,
+                'answer_revealed': answer_check.is_wrong and next_state.attempt_count >= 3,
             })
             if answer_check.is_correct:
                 directives.append('Backend answer check: correct. Praise briefly, then give one small next step or one new same-topic question.')
             elif next_state.attempt_count == 1:
                 directives.append('Backend answer check: wrong or unclear on first attempt. Give one helpful hint only. Do not reveal the final answer. Ask the student to try the same question again.')
+            elif next_state.attempt_count == 2:
+                directives.append('Backend answer check: wrong or unclear on second attempt. Give a stronger hint or one worked sub-step. Do not reveal the final answer. Ask the student to try once more.')
             else:
-                directives.append('Backend answer check: wrong or unclear on second attempt. Give the correct answer, explain it simply, then give one similar new practice question. Do not ask the same question again.')
+                directives.append('Backend answer check: wrong or unclear on third attempt. Give the correct answer, explain it simply, then give one similar new practice question. Do not ask the same question again.')
                 if answer_check.expected_answer:
                     directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
             if answer_check.feedback_note:

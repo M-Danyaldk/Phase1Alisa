@@ -63,7 +63,11 @@ def detect_definition_intent(message: str) -> bool:
 
 
 def detect_math_expression(message: str) -> bool:
-    return any(char.isdigit() for char in message) and any(symbol in message for symbol in ['+', '-', '*', '/', '=', '×', '÷'])
+    if not any(char.isdigit() for char in message):
+        return False
+    if re.search(r'\d\s*[xX]\s*\d', message):
+        return True
+    return any(symbol in message for symbol in ['+', '-', '*', '/', '=', '×', '÷'])
 
 
 def detect_action_intent(message: str) -> str:
@@ -217,7 +221,11 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
             directives.append('The student asked a real question. Solve or explain that question first in short easy steps.')
             directives.append('Do not turn the student’s main question into a quiz before helping.')
             if math_expression:
-                directives.append('For a fresh math problem, give the first correct worked step before you ask the student to try anything.')
+                if direct_help:
+                    directives.append('For step-by-step math help, give only the first useful worked step before asking the student to try the next small step.')
+                    directives.append('Do not finish the whole problem in the first reply unless the student directly asks for the final answer.')
+                else:
+                    directives.append('For a fresh math problem, give the first correct worked step before you ask the student to try anything.')
                 directives.append('After that first worked step, ask one tiny next-step question so the student can practice with guidance.')
         elif confused:
             directives.append('The student is confused. Help with one simple next step right away.')
@@ -253,13 +261,13 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     elif attempt_count == 2:
         directives.append('This is the second attempt for the current question.')
         directives.append('If the answer is correct, praise briefly and continue.')
-        directives.append('If it is still wrong or the student says "I don’t know", now give the correct answer.')
-        directives.append('After giving the answer, explain it in 1 or 2 short lines, then give one new similar same-topic question.')
+        directives.append('If it is still wrong, do not give the correct answer yet.')
+        directives.append('Give a stronger hint or one worked sub-step, but do not reveal the final answer yet. Ask the student to try once more.')
     else:
-        directives.append('The answer should already have been revealed. Do not keep asking the same question.')
-        directives.append('Move to one new similar same-topic question or the next small step.')
+        directives.append('This is the third attempt or later for the current question.')
+        directives.append('If the answer is still wrong, give the correct answer, explain it in 1 or 2 short lines, then give one new similar same-topic question.')
 
-    if confused and attempt_count < 2:
+    if confused and attempt_count < 3:
         directives.append('The student seems unsure. Keep your hint very simple and kind.')
 
     next_state = TutoringState(
@@ -270,7 +278,7 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
         skill=skill,
         step_number=state.step_number,
         attempt_count=attempt_count,
-        answer_revealed=attempt_count >= 2,
+        answer_revealed=attempt_count >= 3,
         mode=mode,
         status=status,
         memory_note=state.memory_note,

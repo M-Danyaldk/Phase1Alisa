@@ -10,7 +10,7 @@ from .config import get_settings
 from .curriculum import curriculum_payload
 from .database import init_db
 from .assessment_selector import previous_versions_from_assessments, select_next_assessment_version
-from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile
+from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
 from .prompts import compact_chat_system_prompt
 from .routers.chat_history import router as chat_history_router
 from .routes.admin import router as admin_router
@@ -177,16 +177,25 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     answer_checker = TutorAnswerChecker()
     direct_answer_check = answer_checker.check_direct_math_statement(payload.message) if payload.subject == 'Math' else None
     if direct_answer_check and direct_answer_check.status != 'unclear':
+        direct_attempt_count = _direct_math_attempt_count(payload.tutoring_state, direct_answer_check)
         tutoring_state = tutoring_state.model_copy(update={
             'current_subject': payload.subject,
+            'current_step': direct_answer_check.checked_expression,
+            'current_question': direct_answer_check.checked_expression,
             'student_answer': payload.message,
             'correctness_status': direct_answer_check.status,
             'expected_answer': direct_answer_check.expected_answer,
-            'hint_given': direct_answer_check.is_wrong,
-            'answer_revealed': direct_answer_check.is_wrong,
+            'attempt_count': direct_attempt_count,
+            'hint_given': direct_answer_check.is_wrong and direct_attempt_count < 3,
+            'answer_revealed': direct_answer_check.is_wrong and direct_attempt_count >= 3,
+            'mode': 'practice' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.mode,
+            'status': 'waiting_for_student' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.status,
         })
-        formatted_reply = _direct_math_check_reply(direct_answer_check)
-        next_state = update_tutoring_state_after_reply(tutoring_state, payload.message, formatted_reply)
+        formatted_reply = _direct_math_check_reply(direct_answer_check, direct_attempt_count)
+        if direct_answer_check.is_wrong and direct_attempt_count < 3:
+            next_state = tutoring_state
+        else:
+            next_state = update_tutoring_state_after_reply(tutoring_state, payload.message, formatted_reply)
         if chat_store and chat_user_id and chat_thread_id:
             try:
                 await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
@@ -257,14 +266,16 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'correctness_status': answer_check.status,
             'expected_answer': answer_check.expected_answer or tutoring_state.expected_answer,
             'hint_given': answer_check.is_wrong and tutoring_state.attempt_count == 1,
-            'answer_revealed': answer_check.is_wrong and tutoring_state.attempt_count >= 2,
+            'answer_revealed': answer_check.is_wrong and tutoring_state.attempt_count >= 3,
         })
         if answer_check.is_correct:
             directives.append('Backend answer check: correct. Praise briefly, then give one small next step or one new same-topic question.')
         elif tutoring_state.attempt_count == 1:
             directives.append('Backend answer check: wrong or unclear on first attempt. Give one helpful hint only. Do not reveal the final answer. Ask the student to try the same question again.')
+        elif tutoring_state.attempt_count == 2:
+            directives.append('Backend answer check: wrong or unclear on second attempt. Give a stronger hint or one worked sub-step. Do not reveal the final answer. Ask the student to try once more.')
         else:
-            directives.append('Backend answer check: wrong or unclear on second attempt. Give the correct answer, explain it simply, then give one similar new practice question. Do not ask the same question again.')
+            directives.append('Backend answer check: wrong or unclear on third attempt. Give the correct answer, explain it simply, then give one similar new practice question. Do not ask the same question again.')
             if answer_check.expected_answer:
                 directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
         if answer_check.feedback_note:
@@ -494,7 +505,17 @@ def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> 
     return student.model_copy(update={'name': child_name, 'grade': grade})
 
 
-def _direct_math_check_reply(answer_check) -> str:
+def _direct_math_attempt_count(state: TutoringState, answer_check) -> int:
+    previous_question = (state.current_question or state.current_step or '').strip()
+    current_question = (answer_check.checked_expression or '').strip()
+    if answer_check.is_correct:
+        return state.attempt_count
+    if previous_question and current_question and previous_question == current_question:
+        return min(state.attempt_count + 1, 3)
+    return 1
+
+
+def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
     expression = answer_check.checked_expression or 'That problem'
     expected = answer_check.expected_answer or 'the correct answer'
     if answer_check.is_correct:
@@ -503,10 +524,45 @@ def _direct_math_check_reply(answer_check) -> str:
             f"{expression} = {expected}.\n\n"
             "Nice work. Want to try one more? What is 45 × 4?"
         )
+    if attempt_count <= 1:
+        first_hint, _ = _direct_math_hint_steps(expression)
+        return (
+            "Not quite yet. Let's try one small hint.\n\n"
+            f"{first_hint}"
+        )
+    if attempt_count == 2:
+        _, stronger_hint = _direct_math_hint_steps(expression)
+        return (
+            "You're close. Here is a stronger hint.\n\n"
+            f"{stronger_hint}"
+        )
     return (
-        "Not quite yet. Let's fix it together.\n\n"
+        "Nice effort. Let's finish it together.\n\n"
         f"{expression} = {expected}.\n\n"
         "Try one similar problem: what is 45 × 4?"
+    )
+
+
+def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
+    multiplication_match = re.match(r'^\s*(\d+)\s*×\s*(\d+)\s*$', expression)
+    if multiplication_match:
+        left = int(multiplication_match.group(1))
+        right = int(multiplication_match.group(2))
+        base = (left // 10) * 10
+        remainder = left - base
+        if base > 0 and remainder > 0:
+            base_product = base * right
+            remainder_product = remainder * right
+            return (
+                f"Break {expression} into easier parts. Start with {base} × {right}.\n\n"
+                f"What is {base} × {right}?",
+                f"{base} × {right} = {base_product}, and {remainder} × {right} = {remainder_product}.\n\n"
+                f"Now try adding {base_product} + {remainder_product}.",
+            )
+
+    return (
+        f"Look at {expression} one operation at a time.\n\nWhat operation should we do first?",
+        f"Use the operation in {expression} carefully, then compare your result to your answer.\n\nTry the calculation one more time.",
     )
 
 

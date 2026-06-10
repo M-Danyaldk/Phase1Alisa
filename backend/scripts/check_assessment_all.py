@@ -11,6 +11,7 @@ CHECK_MODULES = [
     'backend.scripts.check_assessment_validation',
     'backend.scripts.check_assessment_question_results',
     'backend.scripts.check_assessment_score_feedback',
+    'backend.scripts.check_tutoring_ladder',
 ]
 
 COMPILE_TARGETS = [
@@ -29,6 +30,7 @@ COMPILE_TARGETS = [
     'backend/scripts/check_assessment_validation.py',
     'backend/scripts/check_assessment_question_results.py',
     'backend/scripts/check_assessment_score_feedback.py',
+    'backend/scripts/check_tutoring_ladder.py',
 ]
 
 
