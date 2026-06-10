@@ -10,4 +10,4 @@ class WaitlistSignupRequest(BaseModel):
 
 class WaitlistSignupResponse(BaseModel):
     success: bool = True
-    message: str = "You're on the waitlist. Access is scheduled to open on June 15."
+    message: str = "You're on the waitlist. Access is scheduled to open on July 3."

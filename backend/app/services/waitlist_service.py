@@ -12,7 +12,7 @@ from ..database import execute, fetch_all
 from .supabase_client import SupabaseClient, SupabaseClientError
 
 logger = logging.getLogger(__name__)
-WAITLIST_SUCCESS_MESSAGE = "You're on the waitlist. Access is scheduled to open on June 15."
+WAITLIST_SUCCESS_MESSAGE = "You're on the waitlist. Access is scheduled to open on July 3."
 
 
 class WaitlistService:
@@ -142,7 +142,7 @@ class WaitlistService:
         return f"You're on the waitlist. Access is scheduled to open on {self._open_date_label()}."
 
     def _open_date_label(self) -> str:
-        raw_date = self.settings.waitlist_open_date.strip() or '2026-06-15'
+        raw_date = self.settings.waitlist_open_date.strip() or '2026-07-03'
         try:
             parsed = datetime.fromisoformat(raw_date)
             return f'{parsed.strftime("%B")} {parsed.day}'
@@ -151,7 +151,7 @@ class WaitlistService:
                 parsed = datetime.strptime(raw_date, '%Y-%m-%d')
                 return f'{parsed.strftime("%B")} {parsed.day}'
             except Exception:
-                return 'June 15'
+                return 'July 3'
 
     def _waitlist_confirmation_html(self) -> str:
         logo_url = self.settings.email_logo_url.strip() or DEFAULT_EMAIL_LOGO_URL

@@ -113,12 +113,10 @@ export function App() {
     if (pathname.startsWith('/ref/')) {
       const code = pathname.split('/')[2]?.trim();
       if (code) localStorage.setItem(REFERRAL_CODE_KEY, code);
-      setAuthView('signup');
-      navigate('/signup');
+      navigate('/');
       return;
     }
     if (pathname === '/login') setAuthView('login');
-    if (pathname === '/signup') setAuthView('signup');
     if (pathname === '/verify') setAuthView('verify');
   }, [pathname]);
 
@@ -599,7 +597,7 @@ export function App() {
     </ChildShell>;
   }
 
-  const authPath = pathname === '/login' || pathname === '/signup' || pathname === '/verify';
+  const authPath = pathname === '/login';
   if (!session) {
     if (!authPath) {
       return <PrelaunchLandingView onNavigate={navigate} />;

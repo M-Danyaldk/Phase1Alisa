@@ -34,7 +34,7 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
     setWaitlistMessage('');
     try {
       const response = await joinWaitlist({ email: normalizedEmail });
-      setWaitlistMessage(response.message || "You're on the waitlist. Access is scheduled to open on June 15.");
+      setWaitlistMessage(response.message || "You're on the waitlist. Access is scheduled to open on July 3.");
       setWaitlistEmail('');
     } catch {
       setWaitlistError('We could not join the waitlist right now. Please try again.');
@@ -51,7 +51,7 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
       </button>
       <nav className="prelaunch-nav" aria-label="Landing navigation">
         <a href="#how-it-works">See How It Works</a>
-        <a className="prelaunch-nav-cta" href="/signup">Start Free 7-Day Trial</a>
+        <a className="prelaunch-nav-cta" href="#waitlist">Launching July 3 — Join the Waitlist</a>
       </nav>
     </header>
 
@@ -61,12 +61,12 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
         <p className="prelaunch-subheadline">“So we built Ms. Alisia — a patient, brilliant AI tutor available every day, for less than the cost of a few tutoring sessions a month. Named after a real mom who needed real help. Built from real frustration.”</p>
         <p>Your child gets personalized learning that adapts to how they think. You get weekly progress reports and peace of mind — without the scheduling, the cancellations, or the hourly bills.</p>
         <div className="prelaunch-cta-row">
-          <a className="primary-button" href="/signup">Start Free 7-Day Trial</a>
+          <a className="primary-button" href="#waitlist">Launching July 3 — Join the Waitlist</a>
           <a className="secondary-button" href="#how-it-works">See How It Works</a>
         </div>
         <p className="prelaunch-hero-note">No credit card required. Every family starts with a free 7-day trial. Cancel anytime.</p>
         <p className="prelaunch-proof">“Designed by an educator and a real parent — because every child deserves a brilliant tutor, and every parent deserves a break.”</p>
-        <form className="landing-waitlist-form" onSubmit={submitWaitlist}>
+        <form className="landing-waitlist-form" id="waitlist" onSubmit={submitWaitlist}>
           <div>
             <Mail aria-hidden="true" />
             <strong>Join the waitlist</strong>
