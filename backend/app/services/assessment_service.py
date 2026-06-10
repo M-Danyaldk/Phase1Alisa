@@ -2,6 +2,7 @@ import json
 import re
 import logging
 from fastapi import HTTPException
+from ..assessment_result_items import build_question_results, summarize_question_results
 from ..models import AssessmentRequest, AssessmentResult
 from ..prompts import assessment_prompt
 from ..services.llm.router import LLMRouter
@@ -27,6 +28,8 @@ def _list(value: object) -> list[str]:
 
 async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None = None) -> AssessmentResult:
     router = LLMRouter()
+    question_results = build_question_results(payload)
+    question_summary = summarize_question_results(question_results)
     prompt = assessment_prompt(payload.student, payload.subject, payload.grade, payload.questions, payload.answers)
     try:
         result = await router.generate(system=prompt, user='Evaluate this assessment and return only JSON.', purpose='assessment')
@@ -48,6 +51,11 @@ async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None 
     assessment = AssessmentResult(
         subject=payload.subject,
         enrolled_grade=payload.grade,
+        assessment_version=payload.assessment_version,
+        assessment_question_ids=question_summary['question_ids'],
+        question_results=question_results,
+        correct_count=question_summary['correct_count'],
+        total_questions=question_summary['total_questions'],
         estimated_level=parsed.get('estimated_level', 'Needs review'),
         score_label=parsed.get('score_label', 'Evaluated'),
         strengths=_list(parsed.get('strengths'))[:5],
@@ -65,6 +73,11 @@ async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None 
         'subject': payload.subject,
         'assessment_type': 'subject_check',
         'enrolled_grade': payload.grade,
+        'assessment_version': payload.assessment_version,
+        'assessment_question_ids': assessment.assessment_question_ids,
+        'assessment_question_results': [item.model_dump() for item in assessment.question_results],
+        'correct_count': assessment.correct_count,
+        'total_questions': assessment.total_questions,
         'estimated_level': assessment.estimated_level,
         'score_label': assessment.score_label,
         'result_summary': assessment.parent_summary,

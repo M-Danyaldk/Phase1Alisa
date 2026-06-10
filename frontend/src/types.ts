@@ -45,6 +45,11 @@ export type TutoringState = {
 export type AssessmentResult = {
   subject: Subject;
   enrolled_grade: number;
+  assessment_version?: number | null;
+  assessment_question_ids?: string[];
+  question_results?: AssessmentQuestionResult[];
+  correct_count?: number;
+  total_questions?: number;
   estimated_level: string;
   score_label: string;
   strengths: string[];
@@ -54,9 +59,29 @@ export type AssessmentResult = {
   parent_summary: string;
 };
 
+export type AssessmentQuestionResult = {
+  question_id: string;
+  position: number;
+  skill: string;
+  question: string;
+  student_answer: string;
+  expected_answer: string;
+  status: string;
+  validation_type: string;
+  confidence: string;
+  feedback_note: string;
+  child_feedback: string;
+  next_topic_if_incorrect: string;
+};
+
 export type ChildAssessmentResult = {
   subject: Subject;
   child_message: string;
+  assessment_version?: number | null;
+  assessment_question_ids?: string[];
+  question_results?: AssessmentQuestionResult[];
+  correct_count?: number;
+  total_questions?: number;
   estimated_level: string;
   score_label: string;
   strengths: string[];

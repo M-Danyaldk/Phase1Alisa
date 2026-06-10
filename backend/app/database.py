@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS assessment_results (
   learning_gaps TEXT,
   recommended_progression TEXT,
   recommended_next_topics TEXT,
+  assessment_version INTEGER,
+  assessment_question_ids TEXT,
+  assessment_question_results TEXT,
+  correct_count INTEGER,
+  total_questions INTEGER,
   parent_summary TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -77,6 +82,16 @@ def init_db() -> None:
             conn.execute('ALTER TABLE assessment_results ADD COLUMN child_id TEXT')
         if 'recommended_next_topics' not in columns:
             conn.execute('ALTER TABLE assessment_results ADD COLUMN recommended_next_topics TEXT')
+        if 'assessment_version' not in columns:
+            conn.execute('ALTER TABLE assessment_results ADD COLUMN assessment_version INTEGER')
+        if 'assessment_question_ids' not in columns:
+            conn.execute('ALTER TABLE assessment_results ADD COLUMN assessment_question_ids TEXT')
+        if 'assessment_question_results' not in columns:
+            conn.execute('ALTER TABLE assessment_results ADD COLUMN assessment_question_results TEXT')
+        if 'correct_count' not in columns:
+            conn.execute('ALTER TABLE assessment_results ADD COLUMN correct_count INTEGER')
+        if 'total_questions' not in columns:
+            conn.execute('ALTER TABLE assessment_results ADD COLUMN total_questions INTEGER')
         waitlist_columns = [row['name'] for row in conn.execute('PRAGMA table_info(waitlist)').fetchall()]
         if 'metadata' not in waitlist_columns:
             conn.execute('ALTER TABLE waitlist ADD COLUMN metadata TEXT')

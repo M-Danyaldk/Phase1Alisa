@@ -427,18 +427,25 @@ def _practice_focus_label(value: object) -> str:
 
 def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentResult:
     subject = _subject_label(result.subject)
-    performance_label = _child_safe_performance_label(result.score_label)
-    strengths = _child_safe_strengths(result.strengths, subject)
     practice_next = _child_safe_next_step(result)
-    score_summary = f'Next focus: {practice_next}'
-    celebration_title = 'Check-in complete'
-    celebration_message = f'You completed your {subject} check-in.'
-    next_step_message = f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.'
-    encouragement = "Glad you completed it. We'll work on this together one step at a time."
+    feedback = _child_score_feedback(result, subject, practice_next)
+    performance_label = feedback['performance_label']
+    strengths = _child_safe_strengths(result.strengths, subject)
+    score_summary = feedback['score_summary']
+    celebration_title = feedback['celebration_title']
+    celebration_message = feedback['celebration_message']
+    next_step_message = feedback['next_step_message']
+    encouragement = feedback['encouragement']
+    badge_label = feedback['badge_label']
     message = f'{celebration_message} {encouragement}'
     return ChildAssessmentResult(
         subject=result.subject,
         child_message=message,
+        assessment_version=result.assessment_version,
+        assessment_question_ids=result.assessment_question_ids,
+        question_results=result.question_results,
+        correct_count=result.correct_count,
+        total_questions=result.total_questions,
         estimated_level='Learning path ready',
         score_label=performance_label,
         strengths=strengths,
@@ -453,7 +460,7 @@ def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentRe
         strengths_for_child=strengths,
         practice_next=practice_next,
         next_step_message=next_step_message,
-        badge_label='Check-in Complete',
+        badge_label=badge_label,
         encouragement=encouragement,
     )
 
@@ -474,6 +481,81 @@ def _child_safe_performance_label(score_label: str | None) -> str:
     if any(word in lower for word in ('progress', 'develop', 'practice', 'review', 'emerging')):
         return 'Ready for Practice'
     return 'Learning Path Ready'
+
+
+def _child_score_feedback(result: AssessmentResult, subject: str, practice_next: str) -> dict[str, str]:
+    total = result.total_questions or len(result.question_results)
+    correct = result.correct_count
+    if total <= 0:
+        performance_label = _child_safe_performance_label(result.score_label)
+        return {
+            'performance_label': performance_label,
+            'score_summary': f'Next focus: {practice_next}',
+            'celebration_title': 'Check-in complete',
+            'celebration_message': f'You completed your {subject} check-in.',
+            'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+            'encouragement': 'Thank you for completing it. Ms. Alisia will choose a helpful next step.',
+            'badge_label': 'Check-in Complete',
+        }
+
+    review_count = len([item for item in result.question_results if item.status == 'needs_review'])
+    incorrect_count = len([item for item in result.question_results if item.status == 'incorrect'])
+    partial_count = len([item for item in result.question_results if item.status == 'partially_correct'])
+    score_text = f'{correct}/{total} correct'
+
+    if correct == total:
+        return {
+            'performance_label': 'Ready for the Next Step',
+            'score_summary': f'Score: {score_text}',
+            'celebration_title': 'Excellent work',
+            'celebration_message': f'You got all {total} {subject} questions correct.',
+            'next_step_message': f'Next, Ms. Alisia will give you a new {subject} practice step.',
+            'encouragement': 'Great job. You were accurate on every question in this check-in.',
+            'badge_label': 'All Correct',
+        }
+
+    if review_count and not incorrect_count and not partial_count:
+        return {
+            'performance_label': 'Ready for Review',
+            'score_summary': f'{review_count}/{total} answer{"s" if review_count != 1 else ""} ready for review',
+            'celebration_title': 'Check-in complete',
+            'celebration_message': f'You completed your {subject} check-in.',
+            'next_step_message': f'Next, Ms. Alisia will review your work and help with {practice_next}.',
+            'encouragement': 'Nice effort. Some answers need careful review, so Ms. Alisia will look at them gently.',
+            'badge_label': 'Review Ready',
+        }
+
+    if correct >= max(1, total - 1):
+        return {
+            'performance_label': 'Strong Start',
+            'score_summary': f'Score: {score_text}',
+            'celebration_title': 'Nice work',
+            'celebration_message': f'You got {correct} out of {total} {subject} questions correct.',
+            'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+            'encouragement': 'You did well. We found one skill to practice next.',
+            'badge_label': 'Strong Work',
+        }
+
+    if correct > 0:
+        return {
+            'performance_label': 'Ready for Practice',
+            'score_summary': f'Score: {score_text}',
+            'celebration_title': 'Good effort',
+            'celebration_message': f'You got {correct} out of {total} {subject} questions correct.',
+            'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+            'encouragement': 'You have a good starting point. We will build the next skill together.',
+            'badge_label': 'Practice Ready',
+        }
+
+    return {
+        'performance_label': 'Ready for Practice',
+        'score_summary': f'Score: {score_text}',
+        'celebration_title': 'Good effort',
+        'celebration_message': f'You completed your {subject} check-in.',
+        'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+        'encouragement': 'This gives us a clear place to start. Ms. Alisia will help one small step at a time.',
+        'badge_label': 'Practice Ready',
+    }
 
 
 def _child_safe_strengths(strengths: list[str], subject: str) -> list[str]:

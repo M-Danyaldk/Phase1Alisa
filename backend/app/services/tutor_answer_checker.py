@@ -1,10 +1,9 @@
-import ast
 import json
-import operator
 import re
 from dataclasses import dataclass
 from fractions import Fraction
 
+from ..assessment_validation import extract_math_expression, extract_numeric_value, format_fraction, safe_eval_expression
 from ..services.llm.router import LLMRouter
 
 
@@ -64,63 +63,13 @@ class TutorAnswerChecker:
         return self._safe_eval_expression(expression)
 
     def _extract_student_math_value(self, answer: str) -> Fraction | None:
-        expression = self._extract_math_expression(answer)
-        if expression:
-            value = self._safe_eval_expression(expression)
-            if value is not None:
-                return value
-        mixed = re.search(r'(-?\d+)\s+(\d+)\s*/\s*(\d+)', answer)
-        if mixed:
-            whole = int(mixed.group(1))
-            numerator = int(mixed.group(2))
-            denominator = int(mixed.group(3))
-            sign = -1 if whole < 0 else 1
-            return Fraction(whole, 1) + sign * Fraction(numerator, denominator)
-        fraction = re.search(r'-?\d+\s*/\s*-?\d+', answer)
-        if fraction:
-            try:
-                return Fraction(fraction.group(0).replace(' ', ''))
-            except ZeroDivisionError:
-                return None
-        decimal = re.search(r'-?\d+(?:\.\d+)?', answer)
-        if decimal:
-            return Fraction(decimal.group(0))
-        return None
+        return extract_numeric_value(answer)
 
     def _extract_math_expression(self, text: str) -> str:
-        normalized = (
-            text.replace('×', '*')
-            .replace('Ã—', '*')
-            .replace('÷', '/')
-            .replace('Ã·', '/')
-            .replace('−', '-')
-            .replace('âˆ’', '-')
-        )
-        candidates = re.findall(r'[\d\s\+\-\*/\(\)\.]+', normalized)
-        candidates = [candidate.strip() for candidate in candidates if any(op in candidate for op in ['+', '-', '*', '/'])]
-        return max(candidates, key=len) if candidates else ''
+        return extract_math_expression(text)
 
     def _safe_eval_expression(self, expression: str) -> Fraction | None:
-        try:
-            tree = ast.parse(expression, mode='eval')
-            return self._eval_node(tree.body)
-        except Exception:
-            return None
-
-    def _eval_node(self, node: ast.AST) -> Fraction:
-        operators = {
-            ast.Add: operator.add,
-            ast.Sub: operator.sub,
-            ast.Mult: operator.mul,
-            ast.Div: operator.truediv,
-        }
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return Fraction(str(node.value))
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-            return -self._eval_node(node.operand)
-        if isinstance(node, ast.BinOp) and type(node.op) in operators:
-            return operators[type(node.op)](self._eval_node(node.left), self._eval_node(node.right))
-        raise ValueError('Unsupported math expression')
+        return safe_eval_expression(expression)
 
     def _check_text_against_expected(self, student_answer: str, expected_answer: str) -> AnswerCheckResult:
         student_words = self._keyword_set(student_answer)
@@ -181,6 +130,4 @@ class TutorAnswerChecker:
         return {word for word in re.findall(r'[a-zA-Z]+', text.lower()) if word not in stop and len(word) > 2}
 
     def _format_fraction(self, value: Fraction) -> str:
-        if value.denominator == 1:
-            return str(value.numerator)
-        return f'{value.numerator}/{value.denominator}'
+        return format_fraction(value)

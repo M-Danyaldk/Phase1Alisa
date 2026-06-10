@@ -77,10 +77,32 @@ class AssessmentRequest(BaseModel):
     grade: int = Field(default=4, ge=min(LAUNCH_GRADES), le=max(LAUNCH_GRADES))
     questions: list[str]
     answers: list[str]
+    question_ids: list[str] = Field(default_factory=list)
+    assessment_version: Optional[int] = None
+
+
+class AssessmentQuestionResult(BaseModel):
+    question_id: str = ''
+    position: int
+    skill: str = ''
+    question: str
+    student_answer: str
+    expected_answer: str = ''
+    status: str = 'needs_review'
+    validation_type: str = 'needs_review'
+    confidence: str = 'low'
+    feedback_note: str = ''
+    child_feedback: str = ''
+    next_topic_if_incorrect: str = ''
 
 class AssessmentResult(BaseModel):
     subject: Subject
     enrolled_grade: int
+    assessment_version: Optional[int] = None
+    assessment_question_ids: list[str] = Field(default_factory=list)
+    question_results: list[AssessmentQuestionResult] = Field(default_factory=list)
+    correct_count: int = 0
+    total_questions: int = 0
     estimated_level: str
     score_label: str
     strengths: list[str]
@@ -95,6 +117,11 @@ class AssessmentResult(BaseModel):
 class ChildAssessmentResult(BaseModel):
     subject: Subject
     child_message: str
+    assessment_version: Optional[int] = None
+    assessment_question_ids: list[str] = Field(default_factory=list)
+    question_results: list[AssessmentQuestionResult] = Field(default_factory=list)
+    correct_count: int = 0
+    total_questions: int = 0
     estimated_level: str = 'Learning path ready'
     score_label: str = 'Learning path ready'
     strengths: list[str] = Field(default_factory=list)

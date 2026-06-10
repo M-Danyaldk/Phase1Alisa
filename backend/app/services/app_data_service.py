@@ -59,7 +59,7 @@ class AppDataService:
             if last_error:
                 raise last_error
         assessment_id = execute(
-            'INSERT INTO assessment_results(child_id, student_name, subject, estimated_level, learning_gaps, recommended_progression, recommended_next_topics, parent_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO assessment_results(child_id, student_name, subject, estimated_level, learning_gaps, recommended_progression, recommended_next_topics, assessment_version, assessment_question_ids, assessment_question_results, correct_count, total_questions, parent_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 payload.get('child_id'),
                 payload.get('student_name'),
@@ -68,6 +68,11 @@ class AppDataService:
                 self._json_text(payload.get('learning_gaps')),
                 self._json_text(payload.get('recommended_progression')),
                 self._json_text(payload.get('recommended_next_topics')),
+                payload.get('assessment_version'),
+                self._json_text(payload.get('assessment_question_ids')),
+                self._json_text(payload.get('assessment_question_results')),
+                payload.get('correct_count'),
+                payload.get('total_questions'),
                 payload.get('parent_summary'),
             ),
         )
@@ -79,6 +84,11 @@ class AppDataService:
             'assessment_type',
             'result_summary',
             'growth_areas',
+            'assessment_version',
+            'assessment_question_ids',
+            'assessment_question_results',
+            'correct_count',
+            'total_questions',
         }
         candidates = [dict(payload)]
         without_optional = {key: value for key, value in payload.items() if key not in optional_columns}
@@ -91,7 +101,18 @@ class AppDataService:
 
     def _compatible_assessment_schema_error(self, exc: SupabaseClientError) -> bool:
         message = str(exc).lower()
-        optional_columns = ['parent_id', 'assessment_type', 'result_summary', 'growth_areas', 'recommended_next_topics']
+        optional_columns = [
+            'parent_id',
+            'assessment_type',
+            'result_summary',
+            'growth_areas',
+            'recommended_next_topics',
+            'assessment_version',
+            'assessment_question_ids',
+            'assessment_question_results',
+            'correct_count',
+            'total_questions',
+        ]
         return any(column in message for column in optional_columns) and (
             'schema cache' in message or 'column' in message or 'could not find' in message
         )
