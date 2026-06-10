@@ -120,6 +120,12 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
   }, []);
 
   useEffect(() => {
+    if (!window.location.pathname.includes('/billing/cancel')) return;
+    sessionStorage.removeItem(PENDING_CHECKOUT_KEY);
+    setMessage('Checkout was canceled. You can review billing options below when you are ready.');
+  }, []);
+
+  useEffect(() => {
     if (!accessToken || !completedCheckout) return;
     getStudentAccess(accessToken, completedCheckout.childId)
       .then(setCompletedCheckoutAccess)

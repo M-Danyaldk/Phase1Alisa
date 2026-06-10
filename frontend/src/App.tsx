@@ -47,6 +47,7 @@ const PARENT_VIEW_PATHS: Record<ParentView, string> = {
   billing: '/billing',
   future: '/future',
 };
+const BILLING_RETURN_PATHS = new Set(['/billing/success', '/billing/cancel']);
 
 function readStoredJson<T>(key: string): T | null {
   const stored = localStorage.getItem(key);
@@ -117,7 +118,9 @@ export function App() {
       return;
     }
     if (pathname === '/login') setAuthView('login');
+    if (pathname === '/signup') setAuthView('signup');
     if (pathname === '/verify') setAuthView('verify');
+    if (isBillingReturnPath(pathname)) setAuthView('login');
   }, [pathname]);
 
   useEffect(() => {
@@ -275,12 +278,13 @@ export function App() {
     }
     const paidCheckoutRequired = nextSession.paid_checkout_required === true;
     const redirectView = parentRedirectViewFromLocation();
+    const billingReturnView = isBillingReturnPath(pathname) ? 'billing' : null;
     const targetChildId = targetChildIdFromLocation();
     if (targetChildId && loadedChildren.some(child => child.id === targetChildId)) {
       setSelectedChildId(targetChildId);
       setStudent(childToStudent(loadedChildren.find(child => child.id === targetChildId)!));
     }
-    const nextParentView = paidCheckoutRequired && loadedChildren.length ? 'billing' : redirectView || 'home';
+    const nextParentView = paidCheckoutRequired && loadedChildren.length ? 'billing' : billingReturnView || redirectView || 'home';
     setPaidCheckoutRequiredAfterSignup(paidCheckoutRequired);
     setSession(nextSession);
     setPendingVerification(null);
@@ -289,7 +293,7 @@ export function App() {
     setChildView('home');
     setProfileLoading(false);
     setChildrenLoading(false);
-    navigate(parentPathForView(nextParentView));
+    navigate(billingReturnView ? pathname : parentPathForView(nextParentView));
   }
 
   function logout() {
@@ -597,7 +601,8 @@ export function App() {
     </ChildShell>;
   }
 
-  const authPath = pathname === '/login';
+  const billingReturnPath = isBillingReturnPath(pathname);
+  const authPath = pathname === '/login' || pathname === '/signup' || pathname === '/verify' || billingReturnPath;
   if (!session) {
     if (!authPath) {
       return <PrelaunchLandingView onNavigate={navigate} />;
@@ -607,6 +612,11 @@ export function App() {
         <img src="/logo.jpeg" alt="MsAlisia logo" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
         <span>MsAlisia</span>
       </div>
+      {billingReturnPath && <p className="success-note auth-error">
+        {pathname === '/billing/success'
+          ? 'Payment complete. Log in to open your billing overview.'
+          : 'Checkout was canceled. Log in to open your billing overview.'}
+      </p>}
       {authView === 'login' && <Login onLoggedIn={completeAuth} onSignup={() => { setAuthView('signup'); navigate('/signup'); }} />}
       {authView === 'signup' && <Signup onLogin={() => { setAuthView('login'); navigate('/login'); }} onPendingVerification={(pending) => {
         setPendingVerification(pending);
@@ -732,6 +742,10 @@ function parentViewFromPath(pathname: string): ParentView | null {
   const match = (Object.entries(PARENT_VIEW_PATHS) as [ParentView, string][])
     .find(([, path]) => path === pathname);
   return match?.[0] || null;
+}
+
+function isBillingReturnPath(pathname: string): boolean {
+  return BILLING_RETURN_PATHS.has(pathname);
 }
 
 function adminSectionFromPath(pathname: string): AdminSection {
