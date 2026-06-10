@@ -324,7 +324,7 @@ def _ela_versions(grade: int) -> list[AssessmentVersion]:
                 version=version,
                 position=1,
                 skill='vocabulary in context',
-                question=f'Read this sentence: The student {vocab_word} during the activity. What does "{vocab_word}" mean?',
+                question=f'Read this word from a passage: "{vocab_word}". What does "{vocab_word}" mean?',
                 validation_type='keyword_text',
                 expected_answer=vocab_meaning,
                 accepted_answers=_text_acceptance(vocab_meaning),
