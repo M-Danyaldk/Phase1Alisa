@@ -495,18 +495,18 @@ def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> 
 
 
 def _direct_math_check_reply(answer_check) -> str:
-    expression = (answer_check.checked_expression or 'That problem').replace('×', 'x').replace('÷', '/')
+    expression = answer_check.checked_expression or 'That problem'
     expected = answer_check.expected_answer or 'the correct answer'
     if answer_check.is_correct:
         return (
-            f"Yes, that's correct.\n\n"
+            f"Yes, that's correct!\n\n"
             f"{expression} = {expected}.\n\n"
-            "Nice work. Try one more: what is 45 x 4?"
+            "Nice work. Want to try one more? What is 45 × 4?"
         )
     return (
-        "Not quite. Let's fix it together.\n\n"
+        "Not quite yet. Let's fix it together.\n\n"
         f"{expression} = {expected}.\n\n"
-        "Try one similar problem: what is 45 x 4?"
+        "Try one similar problem: what is 45 × 4?"
     )
 
 
