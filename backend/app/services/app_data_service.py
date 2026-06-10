@@ -79,11 +79,13 @@ class AppDataService:
         return {**payload, 'id': assessment_id}
 
     def _assessment_payload_candidates(self, payload: dict) -> list[dict]:
-        optional_columns = {
+        legacy_optional_columns = {
             'parent_id',
             'assessment_type',
             'result_summary',
             'growth_areas',
+        }
+        tracking_columns = {
             'assessment_version',
             'assessment_question_ids',
             'assessment_question_results',
@@ -91,12 +93,19 @@ class AppDataService:
             'total_questions',
         }
         candidates = [dict(payload)]
-        without_optional = {key: value for key, value in payload.items() if key not in optional_columns}
-        if without_optional != candidates[0]:
-            candidates.append(without_optional)
-        without_next_topics = {key: value for key, value in without_optional.items() if key != 'recommended_next_topics'}
+
+        without_legacy_optional = {key: value for key, value in payload.items() if key not in legacy_optional_columns}
+        if without_legacy_optional != candidates[-1]:
+            candidates.append(without_legacy_optional)
+
+        without_next_topics = {key: value for key, value in without_legacy_optional.items() if key != 'recommended_next_topics'}
         if without_next_topics != candidates[-1]:
             candidates.append(without_next_topics)
+
+        without_tracking = {key: value for key, value in without_next_topics.items() if key not in tracking_columns}
+        if without_tracking != candidates[-1]:
+            candidates.append(without_tracking)
+
         return candidates
 
     def _compatible_assessment_schema_error(self, exc: SupabaseClientError) -> bool:

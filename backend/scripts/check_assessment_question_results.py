@@ -2,6 +2,7 @@ from backend.app.assessment_bank import all_assessment_versions, version_for
 from backend.app.assessment_result_items import build_question_results, summarize_question_results
 from backend.app.database import get_connection, init_db
 from backend.app.models import AssessmentRequest, StudentProfile
+from backend.app.services.app_data_service import AppDataService
 
 
 def main() -> None:
@@ -90,6 +91,29 @@ def main() -> None:
         if required not in columns:
             failures.append(f'Local assessment_results table is missing {required}.')
 
+    candidate_payload = {
+        'parent_id': 'parent',
+        'assessment_type': 'subject_check',
+        'result_summary': 'summary',
+        'growth_areas': [],
+        'recommended_next_topics': ['fractions'],
+        'assessment_version': 7,
+        'assessment_question_ids': ['math-g4-v07-q1'],
+        'assessment_question_results': [{'question_id': 'math-g4-v07-q1'}],
+        'correct_count': 1,
+        'total_questions': 3,
+        'subject': 'Math',
+    }
+    candidates = AppDataService()._assessment_payload_candidates(candidate_payload)
+    if len(candidates) < 3:
+        failures.append('Assessment save compatibility candidates were not generated.')
+    elif candidates[1].get('assessment_version') != 7:
+        failures.append('Assessment save fallback dropped assessment_version with legacy optional columns.')
+    elif 'recommended_next_topics' in candidates[2] or candidates[2].get('assessment_version') != 7:
+        failures.append('Assessment save fallback did not preserve tracking fields after removing recommended_next_topics.')
+    elif candidates[-1].get('assessment_version') is not None:
+        failures.append('Final legacy assessment save fallback should remove tracking fields only as the last resort.')
+
     if failures:
         print('Assessment question result check failed:')
         for failure in failures:
@@ -102,6 +126,7 @@ def main() -> None:
     print('- Unmatched questions remain visible as needs_review.')
     print(f'- Checked all bank versions: {checked_versions}.')
     print('- Local DB has item-result persistence columns.')
+    print('- Supabase compatibility fallback preserves tracking columns before last-resort legacy save.')
 
 
 if __name__ == '__main__':
