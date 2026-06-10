@@ -1,6 +1,6 @@
 from backend.app.models import ChatHistoryItem, TutoringState
 from backend.app.tutoring_logic import build_chat_directives
-from backend.app.main import _direct_math_attempt_count, _direct_math_check_reply
+from backend.app.main import _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply
 from backend.app.services.tutor_answer_checker import TutorAnswerChecker
 
 
@@ -42,6 +42,20 @@ def main() -> None:
         failures.append(f'Direct reading help after opener was treated as answer attempt: attempt={reading_state.attempt_count} current={reading_state.current_question!r}.')
     if 'new direct question' not in reading_text or 'real question' not in reading_text:
         failures.append('Direct reading help after opener did not override the previous quick question.')
+
+    help_expression = _direct_math_help_expression('I do not know how to solve 34 x 3. Please help me step by step.')
+    help_reply = _direct_math_help_reply(help_expression)
+    if help_expression != '34 × 3':
+        failures.append(f'Direct math help expression was {help_expression!r}, expected 34 × 3.')
+    if '102' in help_reply or '30 × 3' not in help_reply or 'What is 30 × 3?' not in help_reply:
+        failures.append('Direct math help reply did not give only the first useful step for 34 × 3.')
+
+    other_help_expression = _direct_math_help_expression('Please explain 26 x 4 step by step.')
+    other_help_reply = _direct_math_help_reply(other_help_expression)
+    if other_help_expression != '26 × 4':
+        failures.append(f'Direct math help expression was {other_help_expression!r}, expected 26 × 4.')
+    if '104' in other_help_reply or '20 × 4' not in other_help_reply or 'What is 20 × 4?' not in other_help_reply:
+        failures.append('Direct math help reply did not adapt the first step for another multiplication question.')
 
     _, _, _, first_state = build_chat_directives('100', history, TutoringState(current_question='What is 90 + 12?'))
     if first_state.attempt_count != 1 or first_state.answer_revealed:
@@ -100,6 +114,7 @@ def main() -> None:
     print('- Third wrong try reveals, explains, and gives similar practice.')
     print('- Direct "my answer is ..." math checks follow the same ladder.')
     print('- New direct questions override the opening quick question.')
+    print('- Direct multiplication help is deterministic and does not reveal too early.')
 
 
 if __name__ == '__main__':

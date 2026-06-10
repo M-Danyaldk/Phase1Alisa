@@ -252,6 +252,80 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
         )
+    direct_help_expression = _direct_math_help_expression(payload.message) if payload.subject == 'Math' else ''
+    if direct_help_expression:
+        tutoring_state = tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'active_problem': direct_help_expression,
+            'current_step': direct_help_expression,
+            'current_question': direct_help_expression,
+            'student_answer': payload.message,
+            'correctness_status': '',
+            'expected_answer': '',
+            'attempt_count': 0,
+            'hint_given': True,
+            'answer_revealed': False,
+            'mode': 'practice',
+            'status': 'waiting_for_student',
+        })
+        formatted_reply = _direct_math_help_reply(direct_help_expression)
+        next_state = tutoring_state
+        if chat_store and chat_user_id and chat_thread_id:
+            try:
+                await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
+                    thread_id=chat_thread_id,
+                    child_id=payload.child_id,
+                    role='msalisia',
+                    content=formatted_reply,
+                    subject=payload.subject,
+                    topic=resolved_topic,
+                    provider='local',
+                    model='deterministic-math-help',
+                    tutoring_state=next_state.model_dump(),
+                ))
+                history_saved = True
+            except Exception as exc:
+                logger.warning('Chat history save failed after deterministic math help: %s', exc)
+                history_error = str(exc)
+        if payload.child_id:
+            await SessionActivityService().exchange_complete(
+                child_user['id'],
+                payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+            )
+            await learning_memory_service.record_exchange_summary(
+                parent_id=child_user['id'],
+                child_id=payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+                grade_level=f'Grade {prompt_student.grade}',
+                working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
+                student_message=payload.message,
+                assistant_text=formatted_reply,
+                tutoring_state=next_state,
+                thread_id=chat_thread_id,
+                source='session',
+                metadata={
+                    'provider': 'local',
+                    'model': 'deterministic-math-help',
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
+                },
+            )
+        return ChatResponse(
+            reply=formatted_reply,
+            provider='local',
+            model='deterministic-math-help',
+            fallback_used=False,
+            tutoring_state=next_state,
+            thread_id=chat_thread_id,
+            history_saved=history_saved,
+            history_error=history_error,
+            resolved_topic=resolved_topic,
+            topic_source=topic_resolution['source'],
+            assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+        )
     answer_check = None
     if tutoring_state.attempt_count > 0 and (tutoring_state.current_question or current_step):
         answer_check = await answer_checker.check(
@@ -540,6 +614,35 @@ def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
         "Nice effort. Let's finish it together.\n\n"
         f"{expression} = {expected}.\n\n"
         "Try one similar problem: what is 45 × 4?"
+    )
+
+
+def _direct_math_help_expression(message: str) -> str:
+    text = message.lower()
+    help_markers = (
+        'help me',
+        'step by step',
+        'show me',
+        'explain',
+        'solve',
+        'i do not know',
+        "i don't know",
+        'i dont know',
+        'stuck',
+    )
+    if not any(marker in text for marker in help_markers):
+        return ''
+    match = re.search(r'(\d+)\s*[xX×*]\s*(\d+)', message)
+    if not match:
+        return ''
+    return f'{int(match.group(1))} × {int(match.group(2))}'
+
+
+def _direct_math_help_reply(expression: str) -> str:
+    first_hint, _ = _direct_math_hint_steps(expression)
+    return (
+        f"Let's solve {expression} together step by step.\n\n"
+        f"{first_hint}"
     )
 
 
