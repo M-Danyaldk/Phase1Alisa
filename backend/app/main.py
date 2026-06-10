@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .curriculum import curriculum_payload
 from .database import init_db
-from .models import AssessmentRequest, AssessmentResult, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile
+from .assessment_selector import previous_versions_from_assessments, select_next_assessment_version
+from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile
 from .prompts import compact_chat_system_prompt
 from .routers.chat_history import router as chat_history_router
 from .routes.admin import router as admin_router
@@ -309,6 +310,27 @@ async def assessments(payload: AssessmentRequest, authorization: str = Header(de
     })
     result = await evaluate_assessment(sanitized_payload, parent_id=student_access['id'])
     return _child_safe_assessment_result(result)
+
+
+@app.post('/api/assessments/next', response_model=AssessmentSelectionResponse)
+async def next_assessment(payload: AssessmentNextRequest, authorization: str = Header(default='')) -> AssessmentSelectionResponse:
+    student_access = await require_student_child_access(authorization, payload.child_id)
+    child = student_access.get('child') or {}
+    grade = _grade_number(child.get('grade_level')) or 4
+    previous_assessments = await AppDataService().list_assessments_for_child(student_access['child_id'], limit=100)
+    previous_versions = previous_versions_from_assessments(previous_assessments, subject=payload.subject, grade=grade)
+    selection = select_next_assessment_version(payload.subject, grade, previous_versions)
+    questions = [
+        {'id': question.id, 'prompt': question.prompt}
+        for question in selection.assessment_version.questions
+    ]
+    return AssessmentSelectionResponse(
+        subject=payload.subject,
+        grade=grade,
+        assessment_version=selection.assessment_version.version,
+        question_ids=list(selection.question_ids),
+        questions=questions,
+    )
 
 
 @app.post('/api/homework/lightweight-feedback', response_model=HomeworkFeedbackResponse)

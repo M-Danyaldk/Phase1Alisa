@@ -81,6 +81,24 @@ class AssessmentRequest(BaseModel):
     assessment_version: Optional[int] = None
 
 
+class AssessmentNextRequest(BaseModel):
+    child_id: str
+    subject: Subject
+
+
+class AssessmentQuestionPrompt(BaseModel):
+    id: str
+    prompt: str
+
+
+class AssessmentSelectionResponse(BaseModel):
+    subject: Subject
+    grade: int
+    assessment_version: int
+    question_ids: list[str]
+    questions: list[AssessmentQuestionPrompt]
+
+
 class AssessmentQuestionResult(BaseModel):
     question_id: str = ''
     position: int

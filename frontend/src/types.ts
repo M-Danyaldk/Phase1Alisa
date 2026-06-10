@@ -74,6 +74,19 @@ export type AssessmentQuestionResult = {
   next_topic_if_incorrect: string;
 };
 
+export type AssessmentQuestionPrompt = {
+  id: string;
+  prompt: string;
+};
+
+export type AssessmentSelection = {
+  subject: Subject;
+  grade: number;
+  assessment_version: number;
+  question_ids: string[];
+  questions: AssessmentQuestionPrompt[];
+};
+
 export type ChildAssessmentResult = {
   subject: Subject;
   child_message: string;
