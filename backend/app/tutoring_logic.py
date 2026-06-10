@@ -180,7 +180,6 @@ def _base_directives() -> list[str]:
 def build_chat_directives(message: str, history: list[ChatHistoryItem], state: TutoringState | None = None) -> tuple[list[str], str, str, TutoringState]:
     state = state or TutoringState()
     directives = _base_directives()
-    answering_tutor_question = is_answering_tutor_question(history)
     active_problem = infer_active_problem(message, history, state)
     current_step = state.current_step.strip() or _extract_last_assistant_question(history)
     current_question = state.current_question.strip() or current_step
@@ -191,6 +190,8 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     math_expression = detect_math_expression(message)
     action_intent = detect_action_intent(message)
     skill = state.skill or infer_skill('', '', active_problem or message)
+    direct_question_override = new_problem or definition or (direct_help and math_expression)
+    answering_tutor_question = is_answering_tutor_question(history) and not direct_question_override
 
     attempt_count = state.attempt_count + 1 if answering_tutor_question else 0
     mode = state.mode if state.mode else 'solve'
@@ -218,6 +219,8 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
         mode = 'solve'
         status = 'solving'
         if new_problem or direct_help:
+            if direct_question_override and current_step:
+                directives.append('The student asked a new direct question, so answer that question before returning to any earlier quick question.')
             directives.append('The student asked a real question. Solve or explain that question first in short easy steps.')
             directives.append('Do not turn the student’s main question into a quiz before helping.')
             if math_expression:

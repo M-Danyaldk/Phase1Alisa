@@ -19,6 +19,30 @@ def main() -> None:
     if direct_state.attempt_count != 0 or direct_state.answer_revealed:
         failures.append(f'Direct help state was attempt={direct_state.attempt_count} revealed={direct_state.answer_revealed}.')
 
+    opening_math_history = [ChatHistoryItem(role='msalisia', content='Let us start with one quick question: what is 6 × 7?')]
+    directives, _, _, override_state = build_chat_directives(
+        'I do not know how to solve 34 x 3. Please help me step by step.',
+        opening_math_history,
+        TutoringState(current_question='what is 6 × 7?'),
+    )
+    override_text = ' '.join(directives).lower()
+    if override_state.attempt_count != 0 or override_state.current_question:
+        failures.append(f'Direct math help after opener was treated as answer attempt: attempt={override_state.attempt_count} current={override_state.current_question!r}.')
+    if 'new direct question' not in override_text or '34 x 3' not in override_text:
+        failures.append('Direct math help after opener did not override the previous quick question.')
+
+    opening_reading_history = [ChatHistoryItem(role='msalisia', content='What does sprinted mean?')]
+    directives, _, _, reading_state = build_chat_directives(
+        'Can you help me understand what main idea means? Give me one small example.',
+        opening_reading_history,
+        TutoringState(current_question='What does sprinted mean?'),
+    )
+    reading_text = ' '.join(directives).lower()
+    if reading_state.attempt_count != 0 or reading_state.current_question:
+        failures.append(f'Direct reading help after opener was treated as answer attempt: attempt={reading_state.attempt_count} current={reading_state.current_question!r}.')
+    if 'new direct question' not in reading_text or 'real question' not in reading_text:
+        failures.append('Direct reading help after opener did not override the previous quick question.')
+
     _, _, _, first_state = build_chat_directives('100', history, TutoringState(current_question='What is 90 + 12?'))
     if first_state.attempt_count != 1 or first_state.answer_revealed:
         failures.append(f'First wrong attempt state was attempt={first_state.attempt_count} revealed={first_state.answer_revealed}.')
@@ -75,6 +99,7 @@ def main() -> None:
     print('- Second wrong try gives a stronger hint without revealing.')
     print('- Third wrong try reveals, explains, and gives similar practice.')
     print('- Direct "my answer is ..." math checks follow the same ladder.')
+    print('- New direct questions override the opening quick question.')
 
 
 if __name__ == '__main__':
