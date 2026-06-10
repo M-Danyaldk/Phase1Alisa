@@ -174,9 +174,78 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     directives, active_task, current_step, tutoring_state = build_chat_directives(payload.message, payload.history, payload.tutoring_state)
     tutoring_state = tutoring_state.model_copy(update={'current_subject': payload.subject})
     tutoring_state = update_multi_step_progress(payload.message, tutoring_state)
+    answer_checker = TutorAnswerChecker()
+    direct_answer_check = answer_checker.check_direct_math_statement(payload.message) if payload.subject == 'Math' else None
+    if direct_answer_check and direct_answer_check.status != 'unclear':
+        tutoring_state = tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'student_answer': payload.message,
+            'correctness_status': direct_answer_check.status,
+            'expected_answer': direct_answer_check.expected_answer,
+            'hint_given': direct_answer_check.is_wrong,
+            'answer_revealed': direct_answer_check.is_wrong,
+        })
+        formatted_reply = _direct_math_check_reply(direct_answer_check)
+        next_state = update_tutoring_state_after_reply(tutoring_state, payload.message, formatted_reply)
+        if chat_store and chat_user_id and chat_thread_id:
+            try:
+                await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
+                    thread_id=chat_thread_id,
+                    child_id=payload.child_id,
+                    role='msalisia',
+                    content=formatted_reply,
+                    subject=payload.subject,
+                    topic=resolved_topic,
+                    provider='local',
+                    model='deterministic-math-check',
+                    tutoring_state=next_state.model_dump(),
+                ))
+                history_saved = True
+            except Exception as exc:
+                logger.warning('Chat history save failed after deterministic answer check: %s', exc)
+                history_error = str(exc)
+        if payload.child_id:
+            await SessionActivityService().exchange_complete(
+                child_user['id'],
+                payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+            )
+            await learning_memory_service.record_exchange_summary(
+                parent_id=child_user['id'],
+                child_id=payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+                grade_level=f'Grade {prompt_student.grade}',
+                working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
+                student_message=payload.message,
+                assistant_text=formatted_reply,
+                tutoring_state=next_state,
+                thread_id=chat_thread_id,
+                source='session',
+                metadata={
+                    'provider': 'local',
+                    'model': 'deterministic-math-check',
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
+                },
+            )
+        return ChatResponse(
+            reply=formatted_reply,
+            provider='local',
+            model='deterministic-math-check',
+            fallback_used=False,
+            tutoring_state=next_state,
+            thread_id=chat_thread_id,
+            history_saved=history_saved,
+            history_error=history_error,
+            resolved_topic=resolved_topic,
+            topic_source=topic_resolution['source'],
+            assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+        )
     answer_check = None
     if tutoring_state.attempt_count > 0 and (tutoring_state.current_question or current_step):
-        answer_check = await TutorAnswerChecker().check(
+        answer_check = await answer_checker.check(
             subject=payload.subject,
             question=tutoring_state.current_question or current_step,
             student_answer=payload.message,
@@ -423,6 +492,22 @@ def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> 
     child_name = child.get('name') or student.name
     grade = _grade_number(child.get('grade_level')) or student.grade
     return student.model_copy(update={'name': child_name, 'grade': grade})
+
+
+def _direct_math_check_reply(answer_check) -> str:
+    expression = (answer_check.checked_expression or 'That problem').replace('×', 'x').replace('÷', '/')
+    expected = answer_check.expected_answer or 'the correct answer'
+    if answer_check.is_correct:
+        return (
+            f"Yes, that's correct.\n\n"
+            f"{expression} = {expected}.\n\n"
+            "Nice work. Try one more: what is 45 x 4?"
+        )
+    return (
+        "Not quite. Let's fix it together.\n\n"
+        f"{expression} = {expected}.\n\n"
+        "Try one similar problem: what is 45 x 4?"
+    )
 
 
 def _grade_number(value: object) -> int | None:

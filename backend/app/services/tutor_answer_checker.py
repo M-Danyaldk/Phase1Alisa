@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from fractions import Fraction
 
-from ..assessment_validation import extract_math_expression, extract_numeric_value, format_fraction, safe_eval_expression
+from ..assessment_validation import extract_math_expression, extract_numeric_value, format_fraction, normalize_math_text, safe_eval_expression
 from ..services.llm.router import LLMRouter
 
 
@@ -12,6 +12,7 @@ class AnswerCheckResult:
     status: str = 'unclear'
     expected_answer: str = ''
     feedback_note: str = ''
+    checked_expression: str = ''
 
     @property
     def is_wrong(self) -> bool:
@@ -38,6 +39,33 @@ class TutorAnswerChecker:
             if text_result.status != 'unclear':
                 return text_result
         return await self._classify_with_llm(subject, question, student_answer, expected_answer)
+
+    def check_direct_math_statement(self, message: str) -> AnswerCheckResult:
+        expression = self._extract_direct_expression(message)
+        stated_answer = self._extract_stated_answer(message)
+        if not expression or not stated_answer:
+            return AnswerCheckResult()
+
+        expected_value = self._safe_eval_expression(expression)
+        student_value = self._extract_student_math_value(stated_answer)
+        if expected_value is None or student_value is None:
+            return AnswerCheckResult()
+
+        expected_answer = self._format_fraction(expected_value)
+        display_expression = self._display_expression(expression)
+        if expected_value == student_value:
+            return AnswerCheckResult(
+                status='correct',
+                expected_answer=expected_answer,
+                checked_expression=display_expression,
+                feedback_note='Direct math answer checked deterministically.',
+            )
+        return AnswerCheckResult(
+            status='incorrect',
+            expected_answer=expected_answer,
+            checked_expression=display_expression,
+            feedback_note='Direct math answer does not match the expression value.',
+        )
 
     def _check_math(self, question: str, student_answer: str, expected_answer: str) -> AnswerCheckResult:
         expected_value = self._extract_expected_math_value(question, expected_answer)
@@ -67,6 +95,28 @@ class TutorAnswerChecker:
 
     def _extract_math_expression(self, text: str) -> str:
         return extract_math_expression(text)
+
+    def _extract_direct_expression(self, text: str) -> str:
+        normalized = normalize_math_text(text)
+        match = re.search(r'(-?\d+(?:\.\d+)?)\s*([x\*\+/\-])\s*(-?\d+(?:\.\d+)?)', normalized)
+        if not match:
+            return ''
+        operator = '*' if match.group(2) == 'x' else match.group(2)
+        return f'{match.group(1)} {operator} {match.group(3)}'
+
+    def _extract_stated_answer(self, text: str) -> str:
+        normalized = normalize_math_text(text)
+        answer_match = re.search(
+            r'(?:my\s+answer|answer|i\s+got|i\s+think\s+it\s+is|it\s+is|equals?)\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?(?:\s*/\s*-?\d+)?)',
+            normalized,
+        )
+        if answer_match:
+            return answer_match.group(1)
+        numbers = re.findall(r'-?\d+(?:\.\d+)?(?:\s*/\s*-?\d+)?', normalized)
+        return numbers[-1] if len(numbers) >= 3 else ''
+
+    def _display_expression(self, expression: str) -> str:
+        return expression.replace('*', '×').replace('/', '÷')
 
     def _safe_eval_expression(self, expression: str) -> Fraction | None:
         return safe_eval_expression(expression)

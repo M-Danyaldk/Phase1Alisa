@@ -42,6 +42,14 @@ async def main() -> None:
         if result.status != 'correct':
             failures.append(f'Tutor checker failed {question!r} -> {answer!r}: {result.status}, expected {result.expected_answer}.')
 
+    direct_result = tutor_checker.check_direct_math_statement('The problem is 34 x 3. My answer is 102. Is that correct?')
+    if direct_result.status != 'correct' or direct_result.expected_answer != '102':
+        failures.append(f'Direct tutor answer check returned {direct_result.status}, expected {direct_result.expected_answer}.')
+
+    direct_wrong = tutor_checker.check_direct_math_statement('The problem is 34 x 3. My answer is 100. Is that correct?')
+    if direct_wrong.status != 'incorrect' or direct_wrong.expected_answer != '102':
+        failures.append(f'Direct tutor wrong-answer check returned {direct_wrong.status}, expected {direct_wrong.expected_answer}.')
+
     fraction_question = math_g4_v1.questions[1]
     fraction_result = validate_assessment_answer(fraction_question, '3/4')
     if fraction_result.status != 'correct':
@@ -92,6 +100,7 @@ async def main() -> None:
 
     print('Assessment validation check passed.')
     print('- Reported 34 x / multiplication symbol case is deterministic.')
+    print('- Direct tutor answer checks handle "my answer is ..." math messages.')
     print('- Reported Mia pages question accepts 6, 6 days, six, and six days.')
     print('- Wrong known-answer math returns incorrect.')
     print('- Reading vocabulary and grammar deterministic checks pass.')
