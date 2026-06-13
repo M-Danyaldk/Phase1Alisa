@@ -13,7 +13,7 @@ export function ResultPanel({
 }) {
   if (!result) return <div className="result-card empty"><Brain /><h3>Your results will appear here</h3><p>Ms. Alisia will use this to choose a helpful next step.</p></div>;
   const displaySubject = subjectLabel(result.subject);
-  const title = result.celebration_title || 'Great work!';
+  const title = 'Great work!';
   const message = result.celebration_message || result.child_message || `You just finished your ${displaySubject} check-in!`;
   const performance = result.performance_label || result.score_label || 'Learning Path Ready';
   const scoreSummary = result.score_summary || `Next focus: ${performance}`;
