@@ -120,6 +120,9 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
     if (pending) {
       setCompletedCheckout(pending);
       sessionStorage.removeItem(PENDING_CHECKOUT_KEY);
+      window.setTimeout(() => {
+        document.getElementById('checkout-confirmation-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
     }
   }, []);
 
@@ -332,6 +335,53 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
     {message && <p className="success-note">{message}</p>}
     {error && <p className="error-note">{error}</p>}
 
+    {completedCheckout && <section className="report-card" id="checkout-confirmation-card">
+      {checkoutProcessing
+        ? <>
+          <h3>We&apos;re confirming the payment now.</h3>
+          <p className="muted-copy">This usually takes a moment. If the child still shows as paused, refresh the page after Stripe finishes syncing.</p>
+        </>
+        : <>
+          <h3>Subscription active for {completedCheckout.childName}.</h3>
+          <p className="muted-copy">Share this link and login details with your child to get started.</p>
+          <div className="student-login-proof">
+            {classroomUrl && <label>Family classroom link<input readOnly value={classroomUrl} /></label>}
+            {completedCheckoutChildren.map(child => {
+              const access = completedCheckoutAccessByChild[child.childId];
+              const username = child.username || access?.username || '';
+              return <div className="student-login-proof-child" key={child.childId}>
+                <strong>{child.childName}</strong>
+                {username && <label>Username<input readOnly value={username} /></label>}
+                {child.pin
+                  ? <label>PIN<input readOnly value={child.pin} /></label>
+                  : <p className="muted-copy">PIN is hidden after setup. Use the PIN created for this child in Child Profiles.</p>}
+              </div>;
+            })}
+          </div>
+          <div className="parent-action-row">
+            {classroomUrl && <button className="primary-button" type="button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
+            <button className="secondary-button" type="button" onClick={() => onCheckoutComplete?.(completedCheckout.childId)}>Back to Dashboard</button>
+          </div>
+          {nextCheckoutChild && <>
+            <p className="muted-copy">You can also subscribe {nextCheckoutChild.child_name} without starting over.</p>
+            <div className="billing-actions">
+              {plans.map(plan => {
+                const key = `${nextCheckoutChild.child_id}:${plan.plan_key}`;
+                return <button
+                  key={plan.plan_key}
+                  className="secondary-button compact"
+                  onClick={() => beginCheckout(nextCheckoutChild.child_id, plan.plan_key)}
+                  disabled={!plan.stripe_price_configured || checkoutKey === key}
+                  title={plan.stripe_price_configured ? plan.display_name : `${plan.stripe_price_env} is not configured`}
+                >
+                  {checkoutKey === key ? 'Opening...' : planButtonText(plan)}
+                </button>;
+              })}
+            </div>
+          </>}
+        </>}
+    </section>}
+
     {newChildLogin && <section className="report-card new-child-access-card">
       <div>
         <span className="eyebrow">{newChildLogin.childName}</span>
@@ -410,53 +460,6 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
       </div>
       {checkoutError && <p className="error-note">{checkoutError}</p>}
     </section>
-
-    {completedCheckout && <section className="report-card">
-      {checkoutProcessing
-        ? <>
-          <h3>We&apos;re confirming the payment now.</h3>
-          <p className="muted-copy">This usually takes a moment. If the child still shows as paused, refresh the page after Stripe finishes syncing.</p>
-        </>
-        : <>
-          <h3>Subscription active for {completedCheckout.childName}.</h3>
-          <p className="muted-copy">Share this link and login details with your child to get started.</p>
-          <div className="student-login-proof">
-            {classroomUrl && <label>Family classroom link<input readOnly value={classroomUrl} /></label>}
-            {completedCheckoutChildren.map(child => {
-              const access = completedCheckoutAccessByChild[child.childId];
-              const username = child.username || access?.username || '';
-              return <div className="student-login-proof-child" key={child.childId}>
-                <strong>{child.childName}</strong>
-                {username && <label>Username<input readOnly value={username} /></label>}
-                {child.pin
-                  ? <label>PIN<input readOnly value={child.pin} /></label>
-                  : <p className="muted-copy">PIN is hidden after setup. Use the PIN created for this child in Child Profiles.</p>}
-              </div>;
-            })}
-          </div>
-          <div className="parent-action-row">
-            {classroomUrl && <button className="primary-button" type="button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
-            <button className="secondary-button" type="button" onClick={() => onCheckoutComplete?.(completedCheckout.childId)}>Back to Dashboard</button>
-          </div>
-          {nextCheckoutChild && <>
-            <p className="muted-copy">You can also subscribe {nextCheckoutChild.child_name} without starting over.</p>
-            <div className="billing-actions">
-              {plans.map(plan => {
-                const key = `${nextCheckoutChild.child_id}:${plan.plan_key}`;
-                return <button
-                  key={plan.plan_key}
-                  className="secondary-button compact"
-                  onClick={() => beginCheckout(nextCheckoutChild.child_id, plan.plan_key)}
-                  disabled={!plan.stripe_price_configured || checkoutKey === key}
-                  title={plan.stripe_price_configured ? plan.display_name : `${plan.stripe_price_env} is not configured`}
-                >
-                  {checkoutKey === key ? 'Opening...' : planButtonText(plan)}
-                </button>;
-              })}
-            </div>
-          </>}
-        </>}
-    </section>}
 
     <div className="billing-list">
       {loading && <p className="muted-copy">Loading child access...</p>}
