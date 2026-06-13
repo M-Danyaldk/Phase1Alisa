@@ -10,10 +10,13 @@ class StudentProfile(BaseModel):
     id: Optional[int] = None
     name: str = Field(default='Student', min_length=1)
     grade: int = Field(default=4, ge=min(LAUNCH_GRADES), le=max(LAUNCH_GRADES))
+    subjects: list[str] = Field(default_factory=lambda: ['Math', 'ELA', 'Writing'])
     math_level: str = 'Not assessed yet'
     ela_level: str = 'Not assessed yet'
     writing_level: str = 'Not assessed yet'
     confidence: str = 'Unsure yet'
+    learning_goals: str = ''
+    difficulty_level: str = ''
     focus_notes: str = ''
     parent_notes: str = ''
 
@@ -57,12 +60,31 @@ class ChatRequest(BaseModel):
     thread_id: Optional[str] = None
     child_id: Optional[str] = None
 
+class ChatOpeningRequest(BaseModel):
+    student: StudentProfile
+    child_id: Optional[str] = None
+    subject: Subject
+    topic: str = 'general practice'
+    topic_source: TopicSource = 'manual'
+
 class ChatResponse(BaseModel):
     reply: str
     provider: str
     model: str
     fallback_used: bool = False
     tutoring_state: TutoringState = Field(default_factory=TutoringState)
+    thread_id: Optional[str] = None
+    history_saved: bool = False
+    history_error: Optional[str] = None
+    resolved_topic: Optional[str] = None
+    topic_source: Optional[str] = None
+    assessed_level: Optional[str] = None
+
+class ChatOpeningResponse(BaseModel):
+    reply: str
+    provider: str
+    model: str
+    fallback_used: bool = False
     thread_id: Optional[str] = None
     history_saved: bool = False
     history_error: Optional[str] = None
@@ -147,14 +169,14 @@ class ChildAssessmentResult(BaseModel):
     recommended_progression: list[str] = Field(default_factory=list)
     recommended_next_topics: list[str] = Field(default_factory=list)
     parent_summary: str = ''
-    celebration_title: str = 'Check-in complete'
+    celebration_title: str = 'Great work!'
     celebration_message: str = ''
     performance_label: str = 'Learning Path Ready'
     score_summary: str = ''
     strengths_for_child: list[str] = Field(default_factory=list)
     practice_next: str = ''
     next_step_message: str = ''
-    badge_label: str = 'Check-in Complete'
+    badge_label: str = 'All Done!'
     encouragement: str = ''
 
 class HomeworkFeedbackResponse(BaseModel):

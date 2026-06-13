@@ -21,10 +21,13 @@ export function isLaunchGradeLevel(gradeLevel: string): boolean {
 export const initialStudent: StudentProfile = {
   name: 'Ava',
   grade: 4,
+  subjects: ['Math', 'ELA', 'Writing'],
   math_level: 'Not assessed yet',
   ela_level: 'Not assessed yet',
   writing_level: 'Not assessed yet',
   confidence: 'Sometimes needs encouragement',
+  learning_goals: 'Build confidence with short, steady practice.',
+  difficulty_level: 'At Grade Level',
   focus_notes: 'Prefers short lessons and quick check-ins',
   parent_notes: 'Keep explanations short and supportive.'
 };

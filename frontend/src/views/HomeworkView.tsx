@@ -136,7 +136,7 @@ export function HomeworkView({
       <button className="secondary-button compact" type="button" onClick={() => setView('home')}>Back to Home</button>
     </div>}
     <SectionHeader eyebrow="Homework" title={`${student.name}'s homework helper`} desc="Upload a clear photo or PDF. Ms. Alisia checks what she can see before helping one step at a time." />
-    <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
+    <p className="muted-copy ai-disclosure-inline">Ms. Alisia is an AI tutor - here to help you learn!</p>
     <div className="form-card" ref={activeUploadRef}>
       <div className="field-group">
         <strong>Homework photo or file</strong>
@@ -187,7 +187,7 @@ function HomeworkResult({ upload, onStart }: { upload: HomeworkUpload; onStart: 
     <strong>{upload.is_unclear ? 'Please try a clearer upload' : 'Ms. Alisia checked your homework'}</strong>
     <p>{upload.ai_validation_summary || 'Your homework was uploaded. Ms. Alisia will help one step at a time.'}</p>
     {upload.detected_subject && <p>Subject: {upload.detected_subject}</p>}
-    {upload.suggested_next_step && <p>Next step: {upload.suggested_next_step}</p>}
+    {upload.suggested_next_step && <p>Up next: {upload.suggested_next_step}</p>}
     {!upload.is_unclear && <button className="secondary-button compact" onClick={onStart}>Start Homework Tutoring</button>}
   </div>;
 }
@@ -243,7 +243,7 @@ function homeworkContextMessages(upload: HomeworkUpload): ChatMessage[] {
   const lines = [
     'Ms. Alisia looked at your homework.',
     upload.ai_validation_summary || 'Your homework was uploaded. We can work through it one step at a time.',
-    upload.suggested_next_step ? `Next step: ${upload.suggested_next_step}` : '',
+    upload.suggested_next_step ? `Up next: ${upload.suggested_next_step}` : '',
   ].filter(Boolean);
   return [{ role: 'msalisia', content: lines.join('\n'), subject }];
 }

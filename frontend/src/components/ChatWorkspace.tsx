@@ -40,7 +40,7 @@ type Props = {
   };
 };
 
-const CHAT_FALLBACK_MESSAGE = 'No problem — we will use chat instead!';
+const CHAT_FALLBACK_MESSAGE = 'No problem - we will use chat instead!';
 const VOICE_AUTO_STOP_MS = 2000;
 const VOICE_AUTO_STOP_MESSAGE = 'I stopped recording so we can keep things moving. If you are still there, tap Record and tell me one thing you want help with.';
 
@@ -71,7 +71,7 @@ export function ChatWorkspace({
   reportContext,
 }: Props) {
   const skill = tutoringState.skill || 'Practice';
-  const step = tutoringState.step_number && tutoringState.step_number > 0 ? `Step ${tutoringState.step_number}` : 'Getting started';
+  const step = tutoringState.step_number && tutoringState.step_number > 0 ? `Step ${tutoringState.step_number}` : 'Here we go!';
   const inputDisabled = loading || disabled || Boolean(brainBreak?.active);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -182,13 +182,13 @@ export function ChatWorkspace({
     setRecording(false);
   }
 
-  return <section className="chat-card chat-workspace" aria-label="Ms Alisia chat workspace">
+  return <section className="chat-card chat-workspace" aria-label="Ms. Alisia chat workspace">
     <div className="chat-topbar">
       <div className="tutor-identity">
         <div className="tutor-avatar">A</div>
         <div>
-          <strong>Ms Alisia</strong>
-          <span>You are chatting with an AI, not a human tutor.</span>
+          <strong>Ms. Alisia</strong>
+          <span>You&apos;re chatting with Ms. Alisia, your AI tutor!</span>
         </div>
       </div>
       <div className="lesson-progress" aria-label="Current learning progress">
@@ -200,7 +200,7 @@ export function ChatWorkspace({
         Back to Home
       </button>}
       {onNewChat && <button type="button" className="secondary-button compact chat-new-button" onClick={() => { onActivity?.(); onNewChat(); }} disabled={historyLoading || loading}>
-        New Chat
+        Start Over
       </button>}
     </div>
     {(brainBreakWarning || disabledMessage) && !brainBreak?.active && <div className="session-banner" role="status">
@@ -221,14 +221,14 @@ export function ChatWorkspace({
     </div>}
     <div className="chat-window">
       {historyLoading && <div className="chat-bubble assistant"><p>Loading this conversation...</p></div>}
-      {!historyLoading && messages.length === 0 && <div className="chat-empty-state">
+      {!historyLoading && !loading && messages.length === 0 && <div className="chat-empty-state">
         <strong>No messages yet</strong>
-        <p>Start with a question, or choose New Chat when you want a fresh activity.</p>
+        <p>Start with a question, or choose Start Over when you want a fresh activity.</p>
       </div>}
       {messages.map((message, index) => <div key={index} className={classNames('chat-bubble', message.role === 'student' ? 'student' : 'assistant')}>
         <MarkdownText text={message.content} />
       </div>)}
-      {loading && <div className="chat-bubble assistant"><p>MsAlisia is thinking...</p></div>}
+      {loading && <div className="chat-bubble assistant"><p>Ms. Alisia is thinking...</p></div>}
     </div>
     <div className="chat-action-row" aria-label="Learning helper actions">
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Give me one small hint.'); }} disabled={inputDisabled}>Hint</button>
@@ -292,7 +292,7 @@ export function ChatWorkspace({
           }
         }}
         disabled={inputDisabled}
-        aria-label="Message Ms Alisia"
+        aria-label="Message Ms. Alisia"
       />
       <button onClick={() => { onActivity?.(); onSend(); }} className="primary-button" disabled={inputDisabled || !input.trim()}>Send</button>
     </div>

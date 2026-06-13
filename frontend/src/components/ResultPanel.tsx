@@ -11,10 +11,10 @@ export function ResultPanel({
   onContinueLearning?: (result: ChildAssessmentResult) => void;
   onBackToDashboard?: () => void;
 }) {
-  if (!result) return <div className="result-card empty"><Brain /><h3>Check-in result will appear here</h3><p>Ms Alisia will use this to choose a helpful next step.</p></div>;
+  if (!result) return <div className="result-card empty"><Brain /><h3>Your results will appear here</h3><p>Ms. Alisia will use this to choose a helpful next step.</p></div>;
   const displaySubject = subjectLabel(result.subject);
-  const title = result.celebration_title || 'Check-in complete';
-  const message = result.celebration_message || result.child_message || `You completed your ${displaySubject} check-in.`;
+  const title = result.celebration_title || 'Great work!';
+  const message = result.celebration_message || result.child_message || `You just finished your ${displaySubject} check-in!`;
   const performance = result.performance_label || result.score_label || 'Learning Path Ready';
   const scoreSummary = result.score_summary || `Next focus: ${performance}`;
   const strengths = (result.strengths_for_child?.length ? result.strengths_for_child : result.strengths).slice(0, 5);
@@ -22,32 +22,32 @@ export function ResultPanel({
   const questionResults = (result.question_results || []).slice().sort((left, right) => left.position - right.position);
   return <div className="result-card assessment-celebration-card">
     <div className="celebration-icon" aria-hidden="true"><Sparkles /></div>
-    <span className="badge">{result.badge_label || 'Check-in Complete'}</span>
+    <span className="badge">{result.badge_label || 'All Done!'}</span>
     <h3>{title}</h3>
     <p className="parent-summary">{message}</p>
     <div className="performance-pill"><ThumbsUp />{scoreSummary}</div>
     <div className="report-mini-card">
-      <strong>You completed your {displaySubject} check-in.</strong>
-      <p>{result.encouragement || 'Thank you for completing it. Ms. Alisia will choose a helpful next step.'}</p>
+      <strong>You just finished your {displaySubject} check-in!</strong>
+      <p>{result.encouragement || 'Nice work. Ms. Alisia will choose a helpful next step.'}</p>
     </div>
     <div className="assessment-result-section">
-      <h4>What we noticed:</h4>
+      <h4>Here&apos;s what you did great:</h4>
       <ul>
         {(strengths.length ? strengths : ['You finished the check-in.']).map(item => <li key={item}><CheckCircle2 />{item}</li>)}
       </ul>
     </div>
     {questionResults.length > 0 && <div className="assessment-result-section">
-      <h4>Question results:</h4>
+      <h4>Your answers:</h4>
       <div className="assessment-question-results">
         {questionResults.map(item => <QuestionResultRow key={item.question_id || `${item.position}-${item.question}`} item={item} />)}
       </div>
     </div>}
     <div className="assessment-result-section">
-      <h4>Next step:</h4>
+      <h4>Up next for you:</h4>
       <p>{nextStep}</p>
     </div>
     <div className="assessment-result-actions">
-      {onContinueLearning && <button className="primary-button" type="button" onClick={() => onContinueLearning(result)}>Continue Learning</button>}
+      {onContinueLearning && <button className="primary-button" type="button" onClick={() => onContinueLearning(result)}>Keep Going!</button>}
       {onBackToDashboard && <button className="secondary-button" type="button" onClick={onBackToDashboard}>Back to Home</button>}
     </div>
   </div>;
@@ -91,7 +91,7 @@ function statusLabel(status: ReturnType<typeof normalizedStatus>): string {
   if (status === 'correct') return 'Correct';
   if (status === 'incorrect') return 'Practice';
   if (status === 'partially_correct') return 'Almost';
-  return 'Review';
+  return 'Look Again';
 }
 
 function statusIcon(status: ReturnType<typeof normalizedStatus>) {

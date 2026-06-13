@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { initialStudent } from './constants';
 import { checkHealth } from './lib/api';
 import { AdminOnly, ChildOnly, ParentOnly } from './guards/AccessGuards';
@@ -97,6 +97,7 @@ export function App() {
   const [studentSessionNotice, setStudentSessionNotice] = useState('');
   const [childDashboardNotice, setChildDashboardNotice] = useState('');
   const [studentPracticeTarget, setStudentPracticeTarget] = useState<{ subject: Subject; topic?: string } | null>(null);
+  const completingAuthRef = useRef(false);
 
   useEffect(() => {
     checkHealth().then(() => setConnected('online')).catch(() => setConnected('offline'));
@@ -239,7 +240,11 @@ export function App() {
   }
 
   async function completeAuth(nextSession: AuthSessionResponse) {
+    completingAuthRef.current = true;
     localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(nextSession));
+    setSession(nextSession);
+    setPendingVerification(null);
+    setAuthView('login');
     setProfileLoading(true);
     setChildrenLoading(true);
     setProfileError('');
@@ -251,18 +256,19 @@ export function App() {
       localStorage.removeItem(AUTH_SESSION_KEY);
       setProfileError(error instanceof Error ? error.message : 'Could not load profile. Please log in again.');
       setSession(null);
+      setCurrentProfile(null);
+      setChildren([]);
       setAuthView('login');
       setProfileLoading(false);
       setChildrenLoading(false);
+      completingAuthRef.current = false;
       return;
     }
     const isAdmin = profile.role === 'admin' || profile.role === 'super_admin';
     if (isAdmin) {
-      setSession(nextSession);
-      setPendingVerification(null);
-      setAuthView('login');
       setProfileLoading(false);
       setChildrenLoading(false);
+      completingAuthRef.current = false;
       navigate('/admin/dashboard');
       return;
     }
@@ -286,13 +292,11 @@ export function App() {
     }
     const nextParentView = paidCheckoutRequired && loadedChildren.length ? 'billing' : billingReturnView || redirectView || 'home';
     setPaidCheckoutRequiredAfterSignup(paidCheckoutRequired);
-    setSession(nextSession);
-    setPendingVerification(null);
-    setAuthView('login');
     setParentView(nextParentView);
     setChildView('home');
     setProfileLoading(false);
     setChildrenLoading(false);
+    completingAuthRef.current = false;
     navigate(billingReturnView ? pathname : parentPathForView(nextParentView));
   }
 
@@ -326,7 +330,10 @@ export function App() {
       parent_id: nextSession.parent_id,
       student_name: nextSession.student_name,
       grade_level: nextSession.grade_level,
-      subjects: ['Math', 'ELA', 'Writing'],
+      subjects: nextSession.subjects || ['Math', 'ELA', 'Writing'],
+      learning_goals: nextSession.learning_goals,
+      difficulty_level: nextSession.difficulty_level,
+      parent_notes: nextSession.parent_notes,
       learning_levels: levels,
       access_allowed: nextSession.access_allowed ?? true,
       billing_status: nextSession.billing_status,
@@ -354,7 +361,7 @@ export function App() {
   }
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || completingAuthRef.current) return;
     setProfileLoading(true);
     setChildrenLoading(true);
     setProfileError('');
@@ -513,12 +520,15 @@ export function App() {
     const sessionStudent: StudentProfile = {
       name: studentMe.student_name,
       grade: Number(studentMe.grade_level.replace(/\D/g, '')) || 4,
+      subjects: subjectList(studentMe.subjects),
       math_level: levels.Math || 'Not assessed yet',
       ela_level: levels.ELA || 'Not assessed yet',
       writing_level: levels.Writing || 'Not assessed yet',
-      confidence: 'Ready to learn',
-      focus_notes: 'Student login session',
-      parent_notes: '',
+      confidence: studentMe.difficulty_level || 'Ready to learn',
+      learning_goals: studentMe.learning_goals || '',
+      difficulty_level: studentMe.difficulty_level || '',
+      focus_notes: studentMe.learning_goals || '',
+      parent_notes: studentMe.parent_notes || '',
     };
     const sessionChild: ChildProfile = {
       id: studentMe.child_id,
@@ -526,6 +536,9 @@ export function App() {
       name: studentMe.student_name,
       grade_level: studentMe.grade_level,
       subjects: (studentMe.subjects as ChildProfile['subjects']) || ['Math', 'ELA', 'Writing'],
+      learning_goals: studentMe.learning_goals,
+      difficulty_level: studentMe.difficulty_level,
+      parent_notes: studentMe.parent_notes,
       status: 'active',
       parental_consent_accepted: true,
     };
@@ -541,7 +554,7 @@ export function App() {
       connected={connected}
       onViewChange={setChildView}
       onExit={() => logoutStudent()}
-      exitLabel="Logout"
+      exitLabel="Log Out"
     >
       <ChildOnly allowed>
         {childAccessBlocked && <div className="page-stack narrow">
@@ -632,9 +645,9 @@ export function App() {
     return <div className="auth-shell">
       <div className="auth-panel">
         <div className="auth-heading">
-          <span>Loading Profile</span>
-          <h2>Preparing your dashboard</h2>
-          <p>We are fetching your saved MsAlisia profile and child profiles.</p>
+          <span>Opening Dashboard</span>
+          <h2>Getting your family dashboard ready</h2>
+          <p>We are loading your profile and child profiles now.</p>
         </div>
       </div>
     </div>;
@@ -784,6 +797,13 @@ function childViewForSubject(subject: Subject): ChildView {
   if (subject === 'ELA') return 'practice-ela';
   if (subject === 'Writing') return 'practice-writing';
   return 'practice-math';
+}
+
+function subjectList(subjects: unknown): Subject[] {
+  if (!Array.isArray(subjects)) return ['Math', 'ELA', 'Writing'];
+  const allowed: Subject[] = ['Math', 'ELA', 'Writing'];
+  const filtered = subjects.filter((subject): subject is Subject => allowed.includes(subject as Subject));
+  return filtered.length ? filtered : allowed;
 }
 
 function cleanAssessmentTopic(value?: string | null): string | undefined {

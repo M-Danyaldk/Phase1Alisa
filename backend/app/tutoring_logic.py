@@ -30,6 +30,21 @@ CONFUSED_PHRASES = [
     'how?',
 ]
 
+HOMEWORK_SKIP_PHRASES = [
+    'homework',
+    'worksheet',
+    'assignment',
+    'uploaded',
+    'upload',
+    'skip it',
+    'skip this',
+    'skip the check',
+    'skip check',
+    'no check',
+    'straight to homework',
+    'just homework',
+]
+
 ACTION_INTENTS = {
     'hint': ['hint', 'give me a hint', 'help without answer'],
     'explain_again': ['explain again', 'say it another way', 'again', "i still don't get it", 'i still do not get it'],
@@ -49,6 +64,11 @@ def _contains_any(text: str, phrases: list[str]) -> bool:
 
 def detect_direct_help_intent(message: str) -> bool:
     return _contains_any(message, DIRECT_HELP_PHRASES)
+
+
+def detect_homework_or_skip_intent(message: str) -> bool:
+    normalized = _normalized(message)
+    return normalized == 'skip' or any(phrase in normalized for phrase in HOMEWORK_SKIP_PHRASES)
 
 
 def detect_confused_intent(message: str) -> bool:
@@ -151,6 +171,47 @@ def is_answering_tutor_question(history: list[ChatHistoryItem]) -> bool:
     return previous.role == 'msalisia' and '?' in previous.content
 
 
+def _is_opening_human_moment_question(content: str) -> bool:
+    text = _normalized(content)
+    mood_markers = (
+        'how are you',
+        'how are you doing',
+        'how are you feeling',
+        'how do you feel',
+        'how is your day',
+        "how's your day",
+        "how's it going",
+        "what's going on",
+        'what is going on',
+        'tell me how you are',
+        'tell me how you feel',
+    )
+    learning_markers = (
+        'before we start',
+        'before we get going',
+        'then we can',
+        'after you check in',
+        'one small learning step',
+        'good to see you',
+        'glad you are here',
+        'hoping i would see you',
+    )
+    if not any(marker in text for marker in mood_markers):
+        return False
+    if any(marker in text for marker in learning_markers):
+        return True
+    task_markers = ('solve ', 'what is ', 'what are ', 'answer ', 'calculate ', 'explain ')
+    return len(text) <= 260 and not any(marker in text for marker in task_markers)
+
+
+def _is_opening_followup(history: list[ChatHistoryItem], state: TutoringState) -> bool:
+    if not is_answering_tutor_question(history):
+        return False
+    if state.current_question.strip() or state.current_step.strip():
+        return False
+    return _is_opening_human_moment_question(history[-1].content)
+
+
 def infer_active_problem(message: str, history: list[ChatHistoryItem], state: TutoringState | None = None) -> str:
     if _looks_like_new_problem(message):
         return message.strip()
@@ -164,8 +225,8 @@ def infer_active_problem(message: str, history: list[ChatHistoryItem], state: Tu
 
 def _base_directives() -> list[str]:
     return [
-        'Keep the reply short and appropriate for Grades 3 to 6.',
-        'Use the assessed working level for the active subject when available; otherwise use enrolled grade.',
+        'Keep the reply short and appropriate for Grades 3 through 6.',
+        'Use the practice focus for the active subject when available; otherwise use enrolled grade.',
         'Use easy words and keep most replies to 3 short sentences or less.',
         'If you show steps, keep each step very short.',
         'Use short paragraphs and clear spacing.',
@@ -188,10 +249,12 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     definition = detect_definition_intent(message)
     new_problem = _looks_like_new_problem(message)
     math_expression = detect_math_expression(message)
+    homework_or_skip = detect_homework_or_skip_intent(message)
     action_intent = detect_action_intent(message)
     skill = state.skill or infer_skill('', '', active_problem or message)
-    direct_question_override = new_problem or definition or (direct_help and math_expression)
-    answering_tutor_question = is_answering_tutor_question(history) and not direct_question_override
+    opening_followup = _is_opening_followup(history, state)
+    direct_question_override = new_problem or definition or homework_or_skip or (direct_help and math_expression)
+    answering_tutor_question = is_answering_tutor_question(history) and not opening_followup and not direct_question_override
 
     attempt_count = state.attempt_count + 1 if answering_tutor_question else 0
     mode = state.mode if state.mode else 'solve'
@@ -201,6 +264,41 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
         directives.append(f'Keep helping with this problem or task: {active_problem}')
     if state.memory_note.strip():
         directives.append(f'Remember this from the session: {state.memory_note.strip()}')
+
+    if opening_followup:
+        directives.append('The student is answering the opening human moment. Respond to how they feel before any learning content.')
+        if homework_or_skip or new_problem or direct_help:
+            directives.append('The student is asking to skip the conversational check-in, go to homework, or get direct help. Respect that immediately and do not force a check-in question.')
+            directives.append('Move straight into the requested task with one warm, useful next step.')
+        else:
+            directives.append('After the mood response, transition into a conversational Quick Check-In inside the chat.')
+            directives.append('Ask exactly one tiny subject question that helps you learn what the student knows today.')
+            directives.append('Make it feel like a friendly conversation, not a test. Do not use the words assessment, evaluation, skill check, or test.')
+            directives.append('Use recent check-in context, parent profile notes, or the current practice focus when available; otherwise use one small enrolled-grade subject question.')
+            directives.append('If the student seems tired, stressed, upset, or frustrated, make the question extra small and low-pressure.')
+        next_state = TutoringState(
+            active_problem='',
+            current_subject=state.current_subject,
+            full_problem=state.full_problem,
+            completed_steps=state.completed_steps,
+            current_expression=state.current_expression,
+            remaining_steps=state.remaining_steps,
+            current_step='',
+            current_question='',
+            expected_answer='',
+            student_answer=message,
+            correctness_status='',
+            skill=skill,
+            step_number=state.step_number,
+            attempt_count=0,
+            hint_given=False,
+            answer_revealed=False,
+            next_similar_question='',
+            mode='opening_checkin',
+            status='ready_for_mini_checkin',
+            memory_note=state.memory_note,
+        )
+        return directives, '', '', next_state
 
     if definition:
         directives.append('Give a short direct definition first. Then connect it back to the student’s active problem if there is one.')
@@ -232,6 +330,8 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
                 directives.append('After that first worked step, ask one tiny next-step question so the student can practice with guidance.')
         elif confused:
             directives.append('The student is confused. Help with one simple next step right away.')
+        elif homework_or_skip:
+            directives.append('The student wants to skip the conversational check-in or go to homework. Do not force a check-in; move into one useful learning or homework step.')
         directives.append('After the main problem is helped enough, you may ask one tiny same-topic practice question.')
         next_state = TutoringState(
             active_problem=active_problem,
@@ -290,10 +390,9 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
 
 
 def extract_followup_step(reply: str) -> str:
-    parts = [part.strip() for part in re.split(r'(?<=[?])', reply) if part.strip()]
-    for part in reversed(parts):
-        if '?' in part:
-            return part.strip()
+    questions = [part.strip() for part in re.findall(r'[^.!?]*\?', reply) if part.strip()]
+    if questions:
+        return questions[-1]
     return ''
 
 
@@ -326,7 +425,8 @@ def update_tutoring_state_after_reply(
     user_message: str,
     reply: str,
 ) -> TutoringState:
-    active_problem = state.active_problem or user_message.strip()
+    opening_checkin_turn = state.mode == 'opening_checkin' or state.status == 'ready_for_mini_checkin'
+    active_problem = state.active_problem or ('' if opening_checkin_turn else user_message.strip())
     next_step = extract_followup_step(reply)
     current_question = state.current_question or state.current_step
     same_question = bool(next_step and current_question and _same_question(next_step, current_question))

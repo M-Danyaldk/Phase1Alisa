@@ -128,6 +128,10 @@ class StudentAuthService:
             'parent_id': child['parent_id'],
             'student_name': child['name'],
             'grade_level': child['grade_level'],
+            'subjects': self._subjects(child),
+            'learning_goals': child.get('learning_goals') or '',
+            'difficulty_level': child.get('difficulty_level') or '',
+            'parent_notes': child.get('parent_notes') or '',
             'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
             **access_state,
             'expires_at': expires_at.isoformat(),
@@ -144,7 +148,10 @@ class StudentAuthService:
             'parent_id': child['parent_id'],
             'student_name': child['name'],
             'grade_level': child['grade_level'],
-            'subjects': child.get('subjects') or [],
+            'subjects': self._subjects(child),
+            'learning_goals': child.get('learning_goals') or '',
+            'difficulty_level': child.get('difficulty_level') or '',
+            'parent_notes': child.get('parent_notes') or '',
             'learning_levels': await LearningProfileService().subject_levels_for_child(child['id']),
             **access_state,
             'session_expires_at': session['expires_at'],
@@ -293,6 +300,14 @@ class StudentAuthService:
 
     def _public_access(self, record: dict) -> dict:
         return {key: value for key, value in record.items() if key != 'pin_hash'}
+
+    def _subjects(self, child: dict) -> list[str]:
+        subjects = child.get('subjects') or []
+        if isinstance(subjects, list):
+            return [str(subject) for subject in subjects if subject]
+        if isinstance(subjects, str):
+            return [subject for subject in ['Math', 'ELA', 'Writing'] if subject in subjects] or ['Math', 'ELA', 'Writing']
+        return ['Math', 'ELA', 'Writing']
 
     def _public_family_link(self, record: dict) -> dict:
         return {

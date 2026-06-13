@@ -296,7 +296,7 @@ class VoiceService:
             elif next_state.attempt_count == 2:
                 directives.append('Backend answer check: wrong or unclear on second attempt. Give a stronger hint or one worked sub-step. Do not reveal the final answer. Ask the student to try once more.')
             else:
-                directives.append('Backend answer check: wrong or unclear on third attempt. Give the correct answer, explain it simply, then give one similar new practice question. Do not ask the same question again.')
+                directives.append('Backend answer check: wrong or unclear on third attempt. Reveal the answer warmly, explain it simply, then give one similar new practice question. Do not ask the same question again.')
                 if answer_check.expected_answer:
                     directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
             if answer_check.feedback_note:
@@ -305,9 +305,9 @@ class VoiceService:
         directives = [
             f'The currently selected subject is {subject}. Stay in this subject unless the student clearly asks to switch to another subject.',
             'This message came from voice input. Reply naturally for spoken audio: warm, calm, and concise.',
-            'Lead the spoken activity with one clear next step. Do not ask broad questions when assessment, homework, or current task context is available.',
+            'Lead the spoken activity with one clear next step. Do not ask broad questions when recent check-in results, homework, or current task context is available.',
             'Ask only one question at a time. Do not include multiple open-ended questions in one spoken reply.',
-            'Use assessment results when available: start from the assessed working level, recommended topic, or recommended next step before starting unrelated practice.',
+            'Use recent check-in results when available: start from the practice focus, recommended topic, or recommended next step before starting unrelated practice.',
             'After the current problem is finished, you may end with one short same-subject practice question or mini-check when helpful. Do not add a new practice question before the current step is settled.',
             'Use compact tutor chat: 5-7 short lines maximum for normal help.',
             'For direct math questions, include the main step, calculation, and **Final answer:**.',
@@ -326,7 +326,7 @@ class VoiceService:
             f"Correctness: {next_state.correctness_status or 'not checked'}; "
             f"Memory: {next_state.memory_note or 'none'}"
         )
-        user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nRespond as Ms Alisia using the required tutoring method."
+        user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nRespond as Ms. Alisia using the required tutoring method."
         result = await LLMRouter().generate(system=system, user=user, purpose='chat')
         formatted_reply = format_student_reply(result.text)
         if looks_incomplete_response(formatted_reply, transcript):
@@ -432,6 +432,12 @@ class VoiceService:
         return student.model_copy(update={
             'name': child.get('name') or student.name,
             'grade': self._grade_number(child.get('grade_level')) or student.grade,
+            'subjects': self._subjects(child) or student.subjects,
+            'learning_goals': child.get('learning_goals') or student.learning_goals,
+            'difficulty_level': child.get('difficulty_level') or student.difficulty_level,
+            'parent_notes': child.get('parent_notes') or student.parent_notes,
+            'confidence': child.get('difficulty_level') or student.confidence,
+            'focus_notes': child.get('learning_goals') or student.focus_notes,
         })
 
     def _student_with_assessed_level(self, student: StudentProfile, subject: str, assessment_context: dict | None) -> StudentProfile:
@@ -466,6 +472,14 @@ class VoiceService:
             return None
         grade = int(digits)
         return grade if 3 <= grade <= 12 else None
+
+    def _subjects(self, child: dict) -> list[str]:
+        subjects = child.get('subjects') or []
+        if isinstance(subjects, list):
+            return [str(subject) for subject in subjects if subject]
+        if isinstance(subjects, str):
+            return [subject for subject in ['Math', 'ELA', 'Writing'] if subject in subjects]
+        return []
 
 
 def parse_voice_json(value: str, fallback: Any) -> Any:

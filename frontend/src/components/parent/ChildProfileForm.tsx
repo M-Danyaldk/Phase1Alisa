@@ -78,7 +78,7 @@ export function ChildProfileForm({
   }
 
   return <div className="child-form">
-    {fixedDetailsLocked && <p className="muted-copy locked-profile-note">Name and date of birth are locked after setup. To correct fixed profile details, deactivate this profile and create a new one. You can still update grade level and subjects.</p>}
+    {fixedDetailsLocked && <p className="muted-copy locked-profile-note">Name and date of birth are locked after setup. To correct fixed profile details, deactivate this profile and create a new one. You can still update grade level, subjects, and learning settings.</p>}
     <label>Child name
       <input value={values.name} onChange={event => setValues(prev => ({ ...prev, name: event.target.value }))} disabled={fixedDetailsLocked} />
     </label>
@@ -100,15 +100,15 @@ export function ChildProfileForm({
       </div>
     </div>
     <label>Learning goals
-      <textarea value={values.learning_goals} onChange={event => setValues(prev => ({ ...prev, learning_goals: event.target.value }))} placeholder="Example: Build confidence with fractions." disabled={fixedDetailsLocked} />
+      <textarea value={values.learning_goals} onChange={event => setValues(prev => ({ ...prev, learning_goals: event.target.value }))} placeholder="Example: Build confidence with fractions." />
     </label>
     <label>Current difficulty level
-      <select value={values.difficulty_level} onChange={event => setValues(prev => ({ ...prev, difficulty_level: event.target.value }))} disabled={fixedDetailsLocked}>
+      <select value={values.difficulty_level} onChange={event => setValues(prev => ({ ...prev, difficulty_level: event.target.value }))}>
         {difficultyOptions.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
     </label>
     <label>Parent notes
-      <textarea value={values.parent_notes} onChange={event => setValues(prev => ({ ...prev, parent_notes: event.target.value }))} placeholder="Anything Ms Alisia should know later." disabled={fixedDetailsLocked} />
+      <textarea value={values.parent_notes} onChange={event => setValues(prev => ({ ...prev, parent_notes: event.target.value }))} placeholder="Anything Ms. Alisia should know later." />
     </label>
     {extraFields}
     {error && <p className="error-note">{error}</p>}

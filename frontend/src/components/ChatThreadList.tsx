@@ -33,7 +33,7 @@ export function ChatThreadList({ threads, activeThreadId, loading, error, notice
         <span>Chats</span>
         <strong>Previous chats</strong>
       </div>
-      <button className="secondary-button compact" onClick={onNewChat} disabled={loading} aria-label="Start a new chat">New Chat</button>
+      <button className="secondary-button compact" onClick={onNewChat} disabled={loading} aria-label="Start over with a new chat">Start Over</button>
     </div>
     <label className="thread-search">Search
       <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a chat" aria-label="Search previous chats" />

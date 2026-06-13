@@ -71,7 +71,7 @@ export function AssessmentView({
 
   async function submit() {
     if (!studentSession) {
-      setError('Assessments open from the student classroom. Please log in with a Username and PIN.');
+      setError('Quick Check-Ins open from the student classroom. Please log in with a Username and PIN.');
       setResult(null);
       return;
     }
@@ -110,19 +110,19 @@ export function AssessmentView({
     {studentSession && onBackToDashboard && <div className="student-view-actions">
       <button className="secondary-button compact" type="button" onClick={onBackToDashboard}>Back to Home</button>
     </div>}
-    <SectionHeader eyebrow="Assessment center" title="Learning check-in" desc="Complete a short check-in so MsAlisia can choose helpful next steps." />
-    <p className="muted-copy ai-disclosure-inline">You are interacting with an AI tutor, not a human tutor.</p>
+    <SectionHeader eyebrow="Check-In" title="Quick Check-In" desc="Answer a few quick questions so I know the best way to help you!" />
+    <p className="muted-copy ai-disclosure-inline">Ms. Alisia is an AI tutor - here to help you learn!</p>
     <div className="tabs">
       {launchSubjects.map(s => <button key={s} className={subject === s ? 'selected' : ''} onClick={() => { setSubject(s); setResult(null); setError(''); }}>{subjectLabel(s)}</button>)}
     </div>
-    {!studentSession && <p className="error-note">Assessments are only available from the student classroom.</p>}
+    {!studentSession && <p className="error-note">Quick Check-Ins are only available from the student classroom.</p>}
     {error && <p className="error-note">{error}</p>}
     <div className="assessment-grid">
       <div className="form-card">
-        <h3>{subjectLabel(subject)} quick check</h3>
+        <h3>{subjectLabel(subject)} Quick Check-In</h3>
         {loadingQuestions && <p className="muted-copy">Loading check-in...</p>}
-        {!loadingQuestions && questions.map((q, idx) => <label key={selection?.questions[idx]?.id || q}>{q}<textarea value={answers[idx] || ''} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Student answer..." disabled={assessmentComplete} /></label>)}
-        <button className="primary-button" onClick={submit} disabled={loading || loadingQuestions || !studentSession || assessmentComplete || !questions.length}>{loading ? 'Evaluating...' : assessmentComplete ? 'Assessment Complete' : studentSession ? 'Evaluate Assessment' : 'Login Required'}</button>
+        {!loadingQuestions && questions.map((q, idx) => <label key={selection?.questions[idx]?.id || q}>{q}<textarea value={answers[idx] || ''} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Type your answer..." disabled={assessmentComplete} /></label>)}
+        <button className="primary-button" onClick={submit} disabled={loading || loadingQuestions || !studentSession || assessmentComplete || !questions.length}>{loading ? 'Getting results...' : assessmentComplete ? 'All Done!' : studentSession ? 'Show My Results' : 'Log In First'}</button>
         <ProblemReportButton
           accessToken={accessToken}
           childId={childId}

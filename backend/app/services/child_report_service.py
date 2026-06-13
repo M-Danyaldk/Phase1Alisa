@@ -193,7 +193,9 @@ class ChildReportService:
             working_level = override_level or assessed_level
             level = self._display_subject_level(enrolled_grade, working_level, bool(override_level), bool(assessed_level))
             working_level_source = 'parent_override' if override_level else ('assessment' if assessed_level else 'enrolled_grade')
-            gaps = self._json_list(assessment_rows[0].get('learning_gaps')) if assessment_rows else []
+            gaps = self._safe_learning_focus_list(
+                self._json_list(assessment_rows[0].get('learning_gaps'))
+            ) if assessment_rows else []
             last_activity = None
             if thread_rows:
                 last_activity = thread_rows[0].get('updated_at')
@@ -227,10 +229,10 @@ class ChildReportService:
             subject=row.get('subject') or 'Unknown',
             estimated_level=row.get('estimated_level') or 'Not assessed yet',
             score_label=row.get('score_label'),
-            strengths=self._json_list(row.get('strengths')),
-            learning_gaps=self._json_list(row.get('learning_gaps')),
-            recommended_progression=self._json_list(row.get('recommended_progression')),
-            recommended_next_topics=self._json_list(row.get('recommended_next_topics')),
+            strengths=self._safe_parent_text_list(self._json_list(row.get('strengths'))),
+            learning_gaps=self._safe_learning_focus_list(self._json_list(row.get('learning_gaps'))),
+            recommended_progression=self._safe_learning_focus_list(self._json_list(row.get('recommended_progression'))),
+            recommended_next_topics=self._safe_learning_focus_list(self._json_list(row.get('recommended_next_topics'))),
             parent_summary=row.get('parent_summary'),
             created_at=row.get('created_at'),
         )
@@ -516,14 +518,14 @@ class ChildReportService:
 
     def _strong_area(self, subject: str, message_count: int, assessments: list[dict]) -> str:
         if assessments:
-            return f'{subject} assessment work is recorded.'
+            return f'{subject} check-in work is recorded.'
         if message_count >= 4:
             return f'{subject} practice consistency is building.'
         return 'More activity is needed to identify a strong area.'
 
     def _recent_improvement(self, subject: str, message_count: int, assessment_count: int) -> str:
         if assessment_count and message_count:
-            return f'{subject} has both assessment and tutoring activity.'
+            return f'{subject} has both check-in and tutoring activity.'
         if message_count:
             return f'{subject} tutoring practice has started.'
         return 'No recent improvement data yet.'
@@ -555,10 +557,61 @@ class ChildReportService:
                 return safe
         return ''
 
+    def _safe_parent_text_list(self, values: list[str] | None) -> list[str]:
+        safe_values: list[str] = []
+        for value in values or []:
+            safe = self._safe_parent_text(value)
+            if safe:
+                safe_values.append(safe)
+        return safe_values
+
+    def _safe_learning_focus_list(self, values: list[str] | None) -> list[str]:
+        safe_values: list[str] = []
+        for value in values or []:
+            safe = self._safe_learning_focus(value)
+            if safe and safe not in safe_values:
+                safe_values.append(safe)
+        return safe_values
+
+    def _safe_learning_focus(self, value: object) -> str:
+        text = self._safe_parent_text(value)
+        if not text:
+            return ''
+        text = self._strip_internal_validation_details(text)
+        text = re.sub(
+            r'\s*(?:[-:;,.]\s*)?student answer.*',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r'\s+', ' ', text).strip(' .,:;-')
+
+    def _strip_internal_validation_details(self, text: str) -> str:
+        text = re.sub(
+            r'\s*\((?=[^)]*(?:calculation shows|correct answer|expected|actual|validation|deterministic|incorrect|error|should be))[^)]*\)',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r'\s+\d+(?:\.\d+)?\s*(?:x|\u00d7|\*|/|\u00f7|\+|-)\s*\d+(?:\.\d+)?\s+should be.*',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r'\s*(?:[-:;,.]\s*)?(?:but\s+)?(?:calculation shows|expected(?: answer| value)?|actual(?: answer| value)?|instead of correct answer|instead of the correct answer|correct answer is|the correct answer is|validation shows|deterministic).*',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+        return text
+
     def _safe_parent_text(self, value: object) -> str:
         text = str(value or '').strip()
         if not text:
             return ''
+        text = self._strip_internal_validation_details(text)
         text = re.sub(r'[*_`#>\[\]()]', '', text)
         text = re.sub(r'\s+', ' ', text).strip(' .,:;-')
         if not text:

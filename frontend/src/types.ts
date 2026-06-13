@@ -7,10 +7,13 @@ export type StudentProfile = {
   id?: number | string;
   name: string;
   grade: number;
+  subjects: Subject[];
   math_level: string;
   ela_level: string;
   writing_level: string;
   confidence: string;
+  learning_goals: string;
+  difficulty_level: string;
   focus_notes: string;
   parent_notes: string;
   created_at?: string;

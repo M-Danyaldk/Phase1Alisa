@@ -57,6 +57,8 @@ class LLMRouter:
     def _max_tokens_for_purpose(self, purpose: str) -> int:
         if purpose == 'chat':
             return min(self.settings.chat_max_output_tokens, 800)
+        if purpose == 'opening':
+            return min(self.settings.chat_max_output_tokens, 220)
         if purpose == 'assessment':
             return min(self.settings.assessment_max_output_tokens, 1600)
         if purpose == 'report':
@@ -76,6 +78,7 @@ class LLMRouter:
     def _local_fallback(self, purpose: str, fallback_used: bool) -> LLMResult:
         templates = {
             'chat': 'No worries, I will help. Let us do one small step at a time, and I will show the next part clearly.',
+            'opening': 'Hi! I am glad you are here. Before we start, how are you feeling today? Then I can ask one quick thing so I know how to help.',
             'assessment': '{"estimated_level":"Needs live LLM evaluation","score_label":"Local fallback","strengths":["Student attempted the task"],"learning_gaps":["Connect Claude or Groq to evaluate accurately"],"recommended_progression":["Review one concept at a time with Ms Alisia"],"parent_summary":"The assessment was received, but live LLM evaluation is not connected yet."}',
             'homework': 'Nice try. Your file was received in Phase 1, but detailed worksheet and handwriting analysis will be added in the next phase. For now, I can help from your note and suggest one small next step.'
         }

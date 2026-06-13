@@ -11,12 +11,12 @@ export function StudentNextActions({
 
   return <section className="report-card">
     <div className="section-row">
-      <h3>Recommended Next Actions</h3>
+      <h3>What to try next</h3>
     </div>
     <div className="form-actions">
-      <button className="secondary-button compact" type="button" onClick={() => setView('learn')}>Start Practice</button>
-      <button className="secondary-button compact" type="button" onClick={() => setView('assessments')}>Take your assessment</button>
-      <button className="secondary-button compact" type="button" onClick={() => setView('homework')}>Upload Homework</button>
+      <button className="secondary-button compact" type="button" onClick={() => setView('learn')}>Start Learning</button>
+      <button className="secondary-button compact" type="button" onClick={() => setView('assessments')}>Quick Check-In</button>
+      <button className="secondary-button compact" type="button" onClick={() => setView('homework')}>Homework Help</button>
     </div>
   </section>;
 }

@@ -92,7 +92,7 @@ def main() -> None:
         failures.append('Direct wrong-answer first attempt revealed the final answer.')
     if '102' in second_direct_reply or '90 + 12' not in second_direct_reply:
         failures.append('Direct wrong-answer second attempt did not give a stronger non-reveal hint.')
-    if '34 × 3 = 102' not in third_direct_reply or '45 × 4' not in third_direct_reply:
+    if '34 × 3 = 102' not in third_direct_reply or 'Try one similar problem' not in third_direct_reply or '35 × 3' not in third_direct_reply:
         failures.append('Direct wrong-answer third attempt did not reveal and give similar practice.')
     direct_attempt = _direct_math_attempt_count(
         TutoringState(current_question='34 × 3', attempt_count=1),

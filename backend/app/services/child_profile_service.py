@@ -64,6 +64,9 @@ class ChildProfileService:
             }, {
                 'grade_level': payload.grade_level,
                 'subjects': payload.subjects,
+                'learning_goals': payload.learning_goals.strip(),
+                'difficulty_level': payload.difficulty_level.strip(),
+                'parent_notes': payload.parent_notes.strip(),
                 'updated_at': datetime.now(UTC).isoformat(),
             })
         except SupabaseClientError as exc:

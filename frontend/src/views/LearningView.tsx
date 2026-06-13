@@ -25,13 +25,21 @@ const subjectDefaults: Record<Subject, string> = {
   Writing: 'sentence structure'
 };
 
-function subjectGreeting(student: StudentProfile, subject: Subject): string {
-  const labels: Record<Subject, string> = {
-    Math: 'math',
-    ELA: 'reading',
-    Writing: 'writing'
-  };
-  return `Hi ${student.name}! I am Ms Alisia. We are working on Grade ${student.grade} ${labels[subject]} now. ${openingActivity(subject)}`;
+type ChatOpeningData = {
+  reply: string;
+  provider: string;
+  model: string;
+  fallback_used: boolean;
+  thread_id?: string | null;
+  history_saved?: boolean;
+  history_error?: string | null;
+  resolved_topic?: string | null;
+  topic_source?: TopicSource | null;
+  assessed_level?: string | null;
+};
+
+function openingFallback(student: StudentProfile): string {
+  return `Hi ${student.name || 'there'}, I am glad you are here. Before we start, how are you feeling today? Then I can ask one quick thing so I know how to help.`;
 }
 
 function subjectSwitchMessage(subject: Subject): string {
@@ -56,12 +64,6 @@ function detectSubjectFromMessage(message: string): Subject | null {
   return null;
 }
 
-function openingActivity(subject: Subject): string {
-  if (subject === 'Math') return 'Let us start with one quick question: what is 6 × 7?';
-  if (subject === 'ELA') return 'Let us start with one quick reading question: in "Mia sprinted to the bus," what does sprinted mean?';
-  return 'Let us start with one quick writing task: write one strong sentence about your favorite place.';
-}
-
 export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', initialTopic, studentSession = false, voiceAllowed = false, onBackHome, onInactivePause, onRequireRelogin }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; initialTopic?: string; studentSession?: boolean; voiceAllowed?: boolean; onBackHome?: () => void; onInactivePause?: (message: string) => void; onRequireRelogin?: (message: string) => void }) {
   const initialTutoringState: TutoringState = { active_problem: '', current_step: '', attempt_count: 0, answer_revealed: false, mode: 'solve', status: 'idle', memory_note: '' };
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
@@ -69,9 +71,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const [topic, setTopic] = useState(initialTopic || subjectDefaults[initialSubject]);
   const [topicSource, setTopicSource] = useState<TopicSource>(initialTopic ? 'assessment' : 'default');
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'msalisia', content: subjectGreeting(student, initialSubject), subject: initialSubject }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -94,6 +94,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const nudgeAudioPlayedRef = useRef(false);
   const pauseRecordedRef = useRef(false);
   const brainBreakWasActiveRef = useRef(false);
+  const openingRequestRef = useRef(0);
   const trackingEnabled = Boolean(studentSession && accessToken && childId);
   const sessionId = sessionStatus?.session_id || null;
   const brainBreakActive = Boolean(sessionStatus?.brain_break_active);
@@ -101,7 +102,58 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const voiceAvailable = Boolean(studentSession && voiceAllowed && accessToken && childId);
 
   function greetingFor(nextSubject: Subject) {
-    return [{ role: 'msalisia' as const, content: subjectGreeting(student, nextSubject), subject: nextSubject }];
+    return [{ role: 'msalisia' as const, content: openingFallback(student), subject: nextSubject }];
+  }
+
+  async function loadOpening(nextSubject: Subject, nextTopic = subjectDefaults[nextSubject], nextTopicSource: TopicSource = 'default') {
+    const requestId = openingRequestRef.current + 1;
+    openingRequestRef.current = requestId;
+    setMessages([]);
+    setLoading(true);
+    setThreadError('');
+    const fallback = greetingFor(nextSubject);
+    if (!accessToken || !childId) {
+      setMessages(fallback);
+      setLoading(false);
+      return;
+    }
+    try {
+      const headers = { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) };
+      const data = await apiPost<ChatOpeningData>('/api/chat/opening', {
+        student,
+        child_id: childId,
+        subject: nextSubject,
+        topic: nextTopic,
+        topic_source: nextTopicSource,
+      }, headers);
+      if (openingRequestRef.current !== requestId) return;
+      const nextResolvedTopic = data.resolved_topic || nextTopic;
+      setMessages([{ role: 'msalisia', content: data.reply || openingFallback(student), provider: data.provider, subject: nextSubject }]);
+      setTopic(nextResolvedTopic);
+      setTopicSource((data.topic_source as TopicSource) || nextTopicSource);
+      setHistorySetupPending(data.history_saved === false);
+      if (data.thread_id) {
+        setActiveThread({
+          id: data.thread_id,
+          user_id: '',
+          child_id: childId || null,
+          subject: nextSubject,
+          topic: nextResolvedTopic,
+          title: `${nextSubject} Practice - ${nextResolvedTopic}`.slice(0, 72),
+        });
+      }
+    } catch (error) {
+      if (openingRequestRef.current !== requestId) return;
+      setMessages(fallback);
+      if (isChatSetupPending(error)) {
+        setHistorySetupPending(true);
+        setThreadError('');
+      } else {
+        setThreadError(error instanceof Error ? error.message : 'Ms. Alisia could not start this chat right now.');
+      }
+    } finally {
+      if (openingRequestRef.current === requestId) setLoading(false);
+    }
   }
 
   async function refreshThreads() {
@@ -122,14 +174,15 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }
 
   useEffect(() => {
+    const nextTopic = initialTopic || subjectDefaults[initialSubject];
     setThreadError('');
     setActiveThread(null);
     setTutoringState(initialTutoringState);
     setSubject(initialSubject);
-    setTopic(initialTopic || subjectDefaults[initialSubject]);
+    setTopic(nextTopic);
     setTopicSource(initialTopic ? 'assessment' : 'default');
     setLastAnnouncedSubject(initialSubject);
-    setMessages(greetingFor(initialSubject));
+    loadOpening(initialSubject, nextTopic, initialTopic ? 'assessment' : 'default');
     setInput('');
     refreshThreads();
     setSessionStatus(null);
@@ -244,13 +297,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
 
   useEffect(() => {
     setTopic(prev => prev === subjectDefaults.Math || prev === subjectDefaults.ELA || prev === subjectDefaults.Writing ? subjectDefaults[subject] : prev);
-    setMessages(prev => {
-      if (prev.length === 1 && prev[0].role === 'msalisia') {
-        return [{ role: 'msalisia', content: subjectGreeting(student, subject), subject }];
-      }
-      return prev;
-    });
-  }, [student.name, subject]);
+  }, [subject]);
 
   useEffect(() => {
     if (subject === lastAnnouncedSubject) return;
@@ -265,15 +312,16 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }
 
   async function startNewChat(nextSubject = subject) {
+    const nextTopic = subjectDefaults[nextSubject];
     setThreadError('');
     setActiveThread(null);
     setTutoringState(initialTutoringState);
-    setMessages(greetingFor(nextSubject));
     setInput('');
     setLastAnnouncedSubject(nextSubject);
     setSubject(nextSubject);
-    setTopic(subjectDefaults[nextSubject]);
+    setTopic(nextTopic);
     setTopicSource('default');
+    await loadOpening(nextSubject, nextTopic, 'default');
   }
 
   async function openThread(thread: ChatThread) {
@@ -293,7 +341,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         content: message.content,
         provider: message.provider || undefined,
         subject: message.subject || nextSubject,
-      })) : greetingFor(nextSubject));
+      })) : []);
       setInput('');
       const latestState = [...history].reverse().find(message => message.tutoring_state)?.tutoring_state;
       setTutoringState(latestState || initialTutoringState);
@@ -372,12 +420,12 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
 
   async function submitVoice(audio: Blob) {
     if (!voiceAvailable) {
-      setVoiceNotice('No problem — we will use chat instead!');
+      setVoiceNotice('No problem - we will use chat instead!');
       return;
     }
     if (tutorDisabled) {
       setSessionNotice(sessionStatus?.message || DEFAULT_BRAIN_BREAK_MESSAGE);
-      setVoiceNotice('No problem — we will use chat instead!');
+      setVoiceNotice('No problem - we will use chat instead!');
       return;
     }
     setVoiceProcessing(true);
@@ -427,7 +475,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       if (data.assistant_audio_base64 && data.audio_mime_type) {
         playAssistantAudio(data.assistant_audio_base64, data.audio_mime_type);
       }
-      setVoiceNotice(data.error_message || (data.fallback_to_chat ? 'No problem — we will use chat instead!' : ''));
+      setVoiceNotice(data.error_message || (data.fallback_to_chat ? 'No problem - we will use chat instead!' : ''));
       if (data.history_saved !== false) {
         await refreshThreads();
       }
@@ -511,7 +559,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }
 
   return <div className="page-stack">
-    <SectionHeader eyebrow="Learning with Ms Alisia" title="Short, guided tutoring by subject" desc="Ms. Alisia gives step-by-step support that adapts to your learning needs and helps build confidence over time." />
+    <SectionHeader title="Learning with Ms. Alisia" desc="I'm here to help you figure it out - one step at a time!" />
     <div className={`learning-layout${studentSession ? ' student-learning-layout' : ''}`}>
       {!studentSession && <ChatThreadList
         threads={threads}
@@ -603,7 +651,7 @@ function childFriendlyVoiceMessage(error: unknown): string {
   if (lower.includes('payment') || lower.includes('billing') || lower.includes('subscription') || lower.includes('access')) {
     return 'There is something your parent needs to take care of before learning can continue.';
   }
-  return 'No problem — we will use chat instead!';
+  return 'No problem - we will use chat instead!';
 }
 
 function warningMessage(warnings: string[]): string {

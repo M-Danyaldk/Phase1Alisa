@@ -32,7 +32,7 @@ async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None 
     question_summary = summarize_question_results(question_results)
     prompt = assessment_prompt(payload.student, payload.subject, payload.grade, payload.questions, payload.answers)
     try:
-        result = await router.generate(system=prompt, user='Evaluate this assessment and return only JSON.', purpose='assessment')
+        result = await router.generate(system=prompt, user='Review this check-in and return only JSON.', purpose='assessment')
     except Exception as exc:
         logger.warning('Assessment LLM evaluation failed for child %s subject %s: %s', payload.child_id, payload.subject, exc)
         raise HTTPException(status_code=503, detail='Ms. Alisia could not finish this check-in right now. Please try again in a little while.') from exc
@@ -42,11 +42,11 @@ async def evaluate_assessment(payload: AssessmentRequest, parent_id: str | None 
         parsed = {
             'estimated_level': 'Needs review',
             'score_label': 'Needs manual review',
-            'strengths': ['Student submitted assessment responses'],
+            'strengths': ['Student submitted check-in responses'],
             'learning_gaps': ['The response could not be parsed as JSON. Check model output.'],
             'recommended_progression': ['Start with one short guided review session'],
             'recommended_next_topics': [],
-            'parent_summary': 'Ms Alisia received the assessment. A detailed evaluation can be generated after model output is corrected.'
+            'parent_summary': 'Ms. Alisia received the check-in. A detailed review can be generated after model output is corrected.'
         }
     assessment = AssessmentResult(
         subject=payload.subject,

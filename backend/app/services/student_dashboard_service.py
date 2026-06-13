@@ -33,7 +33,7 @@ class StudentDashboardService:
                 status='active',
                 weekly_focus=weekly_focus,
             ),
-            assessment_status=report.assessment_status,
+            assessment_status=self._child_check_in_status(report.assessment_status),
             homework_status='No homework upload reviewed yet',
             weekly_focus=weekly_focus,
             weekly_rhythm=weekly_rhythm,
@@ -90,7 +90,7 @@ class StudentDashboardService:
             progress_percentage=item.progress_percentage,
             current_focus=item.current_topic or item.needs_review or 'Start with a short placement check',
             next_step=self._next_step_for_subject(item),
-            status='Learning path started' if item.assessment_count or item.chat_count else 'Assessment needed',
+            status='Learning path started' if item.assessment_count or item.chat_count else 'Check-In ready',
         )
 
     def _recent_activity(self, report: ChildReportResponse) -> list[StudentActivityItem]:
@@ -118,7 +118,7 @@ class StudentDashboardService:
         return [StudentActivityItem(
             id='empty-learning-activity',
             title='No learning activity yet',
-            detail='Start an assessment or tutoring session to unlock progress, reports, and recommendations.',
+            detail='Start a quick check-in or tutoring chat so Ms. Alisia can help you pick the next step.',
             when='Not started',
         )]
 
@@ -162,7 +162,7 @@ class StudentDashboardService:
             ),
             StudentAchievement(
                 id='first-assessment',
-                title='First Assessment',
+                title='First Check-In',
                 detail='Complete one subject check to unlock a learning path.',
                 status='earned' if assessment_count else 'in_progress',
             ),
@@ -224,7 +224,7 @@ class StudentDashboardService:
 
     def _next_step_for_subject(self, item: SubjectProgress) -> str:
         if item.assessment_count == 0:
-            return f'Complete the {self._subject_label(item.subject)} quick assessment'
+            return f'Try the {self._subject_label(item.subject)} Quick Check-In'
         if item.needs_review:
             return f'Review {item.needs_review}'
         return f'Practice one guided {self._subject_label(item.subject)} lesson with MsAlisia'
@@ -232,10 +232,26 @@ class StudentDashboardService:
     def _student_next_actions(self, report: ChildReportResponse) -> list[str]:
         missing = [item.subject for item in report.subject_progress if item.assessment_count == 0]
         if missing:
-            return [f'Take your {self._subject_label(missing[0])} assessment.', 'Start Practice', 'Upload Homework']
+            return [f'Try your {self._subject_label(missing[0])} Quick Check-In', 'Start Learning', 'Homework Help']
 
         focus_subject = self._most_recent_subject(report)
-        return [f'Start {self._subject_label(focus_subject)} Practice', 'Start Practice', 'Upload Homework']
+        return [f'Start {self._subject_label(focus_subject)} Practice', 'Start Learning', 'Homework Help']
+
+    def _child_check_in_status(self, value: str) -> str:
+        text = str(value or '').strip()
+        if not text:
+            return 'No check-ins finished yet'
+        replacements = {
+            'No assessment completed yet.': 'No check-ins finished yet.',
+            'No assessments completed yet': 'No check-ins finished yet',
+            'assessments': 'check-ins',
+            'Assessments': 'Check-Ins',
+            'assessment': 'check-in',
+            'Assessment': 'Check-In',
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return text
 
     def _session_activity_detail(self, subject: str | None, topic: str | None) -> str:
         topic_label = self._student_topic_label(subject, topic)

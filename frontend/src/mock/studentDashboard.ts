@@ -11,15 +11,15 @@ function progressForLevel(level: string): number {
 }
 
 function progressItem(subject: StudentProgressItem['subject'], level: string): StudentProgressItem {
-  const hasAssessment = !level.toLowerCase().includes('not assessed');
+  const hasCheckIn = !level.toLowerCase().includes('not assessed');
   const displaySubject = subjectLabel(subject);
   return {
     subject,
     level,
     progressPercentage: progressForLevel(level),
-    currentFocus: hasAssessment ? `${displaySubject} practice path` : 'Start with a short placement check',
-    nextStep: hasAssessment ? 'Practice one guided lesson with MsAlisia' : `Complete the ${displaySubject} quick assessment`,
-    status: hasAssessment ? 'Learning path started' : 'Assessment needed',
+    currentFocus: hasCheckIn ? `${displaySubject} practice path` : 'Start with a short check-in',
+    nextStep: hasCheckIn ? 'Practice one guided lesson with MsAlisia' : `Try the ${displaySubject} Quick Check-In`,
+    status: hasCheckIn ? 'Learning path started' : 'Check-In ready',
   };
 }
 
@@ -32,7 +32,7 @@ export function buildStudentDashboardMock(student: StudentProfile): StudentDashb
   const assessedCount = progress.filter(item => item.progressPercentage > 0).length;
 
   return {
-    assessmentStatus: assessedCount ? `${assessedCount} of 3 subjects have a starting signal` : 'No assessments completed yet',
+    assessmentStatus: assessedCount ? `${assessedCount} of 3 subjects have a starting signal` : 'No check-ins finished yet',
     homeworkStatus: 'No homework upload reviewed yet',
     weeklyFocus: student.focus_notes || 'Start with short lessons and quick check-ins',
     weeklyRhythm: {
@@ -57,14 +57,14 @@ export function buildStudentDashboardMock(student: StudentProfile): StudentDashb
       {
         id: 'next-practice',
         title: 'Next practice recommended',
-        detail: progress.find(item => item.progressPercentage > 0)?.nextStep || 'Begin with an assessment.',
+        detail: progress.find(item => item.progressPercentage > 0)?.nextStep || 'Begin with a Quick Check-In.',
         when: 'Next step',
       },
     ] : [
       {
-        id: 'empty-assessment',
+        id: 'empty-check-in',
         title: 'No learning activity yet',
-        detail: 'Start an assessment to unlock progress, reports, and recommendations.',
+        detail: 'Start a quick check-in or tutoring chat so Ms. Alisia can help you pick the next step.',
         when: 'Not started',
       },
     ],
@@ -76,8 +76,8 @@ export function buildStudentDashboardMock(student: StudentProfile): StudentDashb
         status: 'earned',
       },
       {
-        id: 'first-assessment',
-        title: 'First Assessment',
+        id: 'first-check-in',
+        title: 'First Check-In',
         detail: 'Complete one subject check to unlock a learning path.',
         status: assessedCount ? 'earned' : 'in_progress',
       },
@@ -89,9 +89,9 @@ export function buildStudentDashboardMock(student: StudentProfile): StudentDashb
       },
     ],
     recommendedNextActions: [
-      assessedCount ? 'Continue the strongest subject with a short guided lesson.' : 'Start with the assessment center.',
-      'Try one MsAlisia learning chat after the first assessment.',
-      'Upload homework when written work is ready for lightweight feedback.',
+      assessedCount ? 'Continue the strongest subject with a short guided lesson.' : 'Start with a Quick Check-In.',
+      'Try one MsAlisia learning chat after the first check-in.',
+      'Use Homework Help when written work is ready for lightweight feedback.',
     ],
   };
 }

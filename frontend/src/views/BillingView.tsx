@@ -12,11 +12,15 @@ const BILLING_TARGET_CHILD_KEY = 'msalisia_billing_target_child';
 const NEW_CHILD_LOGIN_HANDOFF_KEY = 'msalisia_new_child_login_handoff';
 const MIXED_BILLING_INTERVAL_ERROR = 'Monthly and annual plans need separate checkouts. Please checkout monthly children first, then annual children.';
 
-type PendingCheckout = {
+type PendingCheckoutChild = {
   childId: string;
   childName: string;
   username?: string;
   pin?: string;
+};
+
+type PendingCheckout = PendingCheckoutChild & {
+  children?: PendingCheckoutChild[];
 };
 
 type ChildLoginHandoff = {
@@ -37,7 +41,7 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
   const [familyLink, setFamilyLink] = useState<FamilyClassroomLink | null>(null);
   const [newChildLogin, setNewChildLogin] = useState<ChildLoginHandoff | null>(() => readChildLoginHandoff());
   const [revealedTrialHandoffId, setRevealedTrialHandoffId] = useState('');
-  const [completedCheckoutAccess, setCompletedCheckoutAccess] = useState<StudentAccess | null>(null);
+  const [completedCheckoutAccessByChild, setCompletedCheckoutAccessByChild] = useState<Record<string, StudentAccess | null>>({});
   const [loading, setLoading] = useState(false);
   const [savingChildId, setSavingChildId] = useState('');
   const [savingAccessAction, setSavingAccessAction] = useState<'pause' | 'resume' | ''>('');
@@ -127,9 +131,19 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
 
   useEffect(() => {
     if (!accessToken || !completedCheckout) return;
-    getStudentAccess(accessToken, completedCheckout.childId)
-      .then(setCompletedCheckoutAccess)
-      .catch(() => setCompletedCheckoutAccess(null));
+    let cancelled = false;
+    Promise.all(completedCheckoutChildrenFor(completedCheckout).map(async child => {
+      try {
+        return [child.childId, await getStudentAccess(accessToken, child.childId)] as const;
+      } catch {
+        return [child.childId, null] as const;
+      }
+    })).then(entries => {
+      if (!cancelled) setCompletedCheckoutAccessByChild(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [accessToken, completedCheckout]);
 
   function chooseCheckoutPlan(planKey: BillingPlanKey) {
@@ -203,13 +217,17 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
     setMessage('');
     try {
       const child = records.find(record => record.child_id === childId);
-      sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
+      const checkoutChild = {
         childId,
         childName: child?.child_name || 'this child',
         ...(newChildLogin?.childId === childId ? {
           username: newChildLogin.username,
           pin: newChildLogin.pin,
         } : {}),
+      };
+      sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
+        ...checkoutChild,
+        children: [checkoutChild],
       }));
       window.location.href = await createCheckoutSession(accessToken, childId, planKey, couponCode);
     } catch (submitError) {
@@ -244,6 +262,14 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
     setCheckoutError('');
     setMessage('');
     try {
+      const checkoutChildren = selected.map(selection => ({
+        childId: selection.child_id,
+        childName: childName(records, selection.child_id),
+        ...(newChildLogin?.childId === selection.child_id ? {
+          username: newChildLogin.username,
+          pin: newChildLogin.pin,
+        } : {}),
+      }));
       sessionStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({
         childId: selected[0].child_id,
         childName: selected.length === 1 ? childName(records, selected[0].child_id) : `${selected.length} children`,
@@ -251,6 +277,7 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
           username: newChildLogin.username,
           pin: newChildLogin.pin,
         } : {}),
+        children: checkoutChildren,
       }));
       window.location.href = await createBulkCheckoutSession(accessToken, selected, couponCode);
     } catch (submitError) {
@@ -290,8 +317,10 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
   }
 
   const checkoutSelectionCount = checkoutSelections(records, selectedPlans).length;
-  const nextCheckoutChild = completedCheckout ? nextChildForCheckout(records, completedCheckout.childId) : null;
-  const checkoutProcessing = completedCheckout && !records.find(record => record.child_id === completedCheckout.childId && record.access_status === 'active');
+  const completedCheckoutChildren = completedCheckoutChildrenFor(completedCheckout);
+  const completedCheckoutChildIds = new Set(completedCheckoutChildren.map(child => child.childId));
+  const nextCheckoutChild = completedCheckout ? nextChildForCheckout(records, completedCheckoutChildIds) : null;
+  const checkoutProcessing = completedCheckout && completedCheckoutChildren.some(child => !records.find(record => record.child_id === child.childId && record.access_status === 'active'));
   const classroomUrl = familyLink ? `${window.location.origin}${familyLink.classroom_path}` : '';
   const targetRecord = newChildLogin ? records.find(record => record.child_id === newChildLogin.childId) : null;
   const canStartTrialForNewChild = Boolean(newChildLogin && !paidCheckoutRequired && targetRecord && !childAccessAllowsLearning(targetRecord));
@@ -376,7 +405,7 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
         </label>
         <button className="secondary-button compact" onClick={openPortal} disabled={portalLoading || !records.length}>{portalLoading ? 'Opening...' : 'Update Payment Details'}</button>
         <button className="primary-button" onClick={beginBulkCheckout} disabled={!checkoutSelectionCount || checkoutKey === 'bulk'}>
-          {checkoutKey === 'bulk' ? 'Opening Checkout...' : `Checkout ${checkoutSelectionCount || ''}`.trim()}
+          {checkoutKey === 'bulk' ? 'Opening Checkout...' : 'Continue to Payment'}
         </button>
       </div>
       {checkoutError && <p className="error-note">{checkoutError}</p>}
@@ -388,10 +417,29 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
           <h3>We&apos;re confirming the payment now.</h3>
           <p className="muted-copy">This usually takes a moment. If the child still shows as paused, refresh the page after Stripe finishes syncing.</p>
         </>
-        : nextCheckoutChild
-          ? <>
-            <h3>Payment confirmed for {completedCheckout.childName}.</h3>
-            <p className="muted-copy">You can now subscribe {nextCheckoutChild.child_name} without starting over.</p>
+        : <>
+          <h3>Subscription active for {completedCheckout.childName}.</h3>
+          <p className="muted-copy">Share this link and login details with your child to get started.</p>
+          <div className="student-login-proof">
+            {classroomUrl && <label>Family classroom link<input readOnly value={classroomUrl} /></label>}
+            {completedCheckoutChildren.map(child => {
+              const access = completedCheckoutAccessByChild[child.childId];
+              const username = child.username || access?.username || '';
+              return <div className="student-login-proof-child" key={child.childId}>
+                <strong>{child.childName}</strong>
+                {username && <label>Username<input readOnly value={username} /></label>}
+                {child.pin
+                  ? <label>PIN<input readOnly value={child.pin} /></label>
+                  : <p className="muted-copy">PIN is hidden after setup. Use the PIN created for this child in Child Profiles.</p>}
+              </div>;
+            })}
+          </div>
+          <div className="parent-action-row">
+            {classroomUrl && <button className="primary-button" type="button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
+            <button className="secondary-button" type="button" onClick={() => onCheckoutComplete?.(completedCheckout.childId)}>Back to Dashboard</button>
+          </div>
+          {nextCheckoutChild && <>
+            <p className="muted-copy">You can also subscribe {nextCheckoutChild.child_name} without starting over.</p>
             <div className="billing-actions">
               {plans.map(plan => {
                 const key = `${nextCheckoutChild.child_id}:${plan.plan_key}`;
@@ -406,22 +454,8 @@ export function BillingView({ accessToken = '', onCheckoutComplete }: { accessTo
                 </button>;
               })}
             </div>
-          </>
-          : <>
-            <h3>Payment confirmed for {completedCheckout.childName}.</h3>
-            <p className="muted-copy">Use the family classroom link and student login below to help your child sign in.</p>
-            <div className="student-login-proof">
-              {classroomUrl && <label>Family classroom link<input readOnly value={classroomUrl} /></label>}
-              {(completedCheckout.username || completedCheckoutAccess?.username) && <label>Username<input readOnly value={completedCheckout.username || completedCheckoutAccess?.username || ''} /></label>}
-              {completedCheckout.pin
-                ? <label>PIN<input readOnly value={completedCheckout.pin} /></label>
-                : <p className="muted-copy">Use the PIN created for this child in Child Profiles.</p>}
-            </div>
-            <div className="parent-action-row">
-              {classroomUrl && <button className="primary-button" type="button" onClick={() => window.location.assign(classroomUrl)}>Open Classroom</button>}
-              <button className="secondary-button" type="button" onClick={() => onCheckoutComplete?.(completedCheckout.childId)}>Back to Dashboard</button>
-            </div>
           </>}
+        </>}
     </section>}
 
     <div className="billing-list">
@@ -554,17 +588,40 @@ function readPendingCheckout(): PendingCheckout | null {
     const raw = sessionStorage.getItem(PENDING_CHECKOUT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PendingCheckout;
-    if (!parsed.childId) return null;
+    const children = Array.isArray(parsed.children)
+      ? parsed.children.filter(child => child.childId).map(child => ({
+        childId: child.childId,
+        childName: child.childName || 'this child',
+        username: child.username,
+        pin: child.pin,
+      }))
+      : [];
+    const firstChild = children[0];
+    const childId = parsed.childId || firstChild?.childId;
+    if (!childId) return null;
     return {
-      childId: parsed.childId,
-      childName: parsed.childName || 'this child',
+      childId,
+      childName: parsed.childName || firstChild?.childName || 'this child',
+      username: parsed.username || firstChild?.username,
+      pin: parsed.pin || firstChild?.pin,
+      children: children.length ? children : undefined,
     };
   } catch {
     return null;
   }
 }
 
-function nextChildForCheckout(records: ChildAccess[], completedChildId: string): ChildAccess | null {
-  return records.find(record => record.child_id !== completedChildId && record.access_status !== 'active') || null;
+function completedCheckoutChildrenFor(checkout: PendingCheckout | null): PendingCheckoutChild[] {
+  if (!checkout) return [];
+  return checkout.children?.length ? checkout.children : [{
+    childId: checkout.childId,
+    childName: checkout.childName || 'this child',
+    username: checkout.username,
+    pin: checkout.pin,
+  }];
+}
+
+function nextChildForCheckout(records: ChildAccess[], completedChildIds: Set<string>): ChildAccess | null {
+  return records.find(record => !completedChildIds.has(record.child_id) && record.access_status !== 'active') || null;
 }
 

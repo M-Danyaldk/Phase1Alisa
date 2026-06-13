@@ -529,6 +529,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .prelaunch-copy h1 { margin: 0; max-width: 780px; color: var(--landing-purple-dark); font-size: clamp(32px, 5vw, 58px); line-height: 1.08; letter-spacing: 0; }
 .prelaunch-copy p { margin: 22px 0 0; color: #655a74; font-size: clamp(16px, 1.8vw, 20px); line-height: 1.65; max-width: 720px; }
 .prelaunch-copy .prelaunch-subheadline { color: #493155; font-weight: 700; }
+.prelaunch-copy .prelaunch-founding-statement { margin-top: clamp(30px, 4vw, 46px); }
 .prelaunch-hero-note { font-weight: 900; color: var(--landing-purple-dark) !important; }
 .prelaunch-proof { padding-left: 16px; border-left: 4px solid var(--landing-gold); color: #5f516a !important; font-weight: 800; }
 .prelaunch-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }

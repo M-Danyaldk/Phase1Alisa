@@ -1,13 +1,22 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 
 export function LoginForm({ onSubmit, onSignup, onForgotPassword, notice = '' }: { onSubmit: (email: string, password: string) => Promise<void>; onSignup: () => void; onForgotPassword: () => void; notice?: string }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const mountedRef = useRef(true);
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
     const formData = new FormData(event.currentTarget);
     const normalizedEmail = String(formData.get('email') || email).trim().toLowerCase();
     const nextPassword = String(formData.get('password') || password);
@@ -16,13 +25,15 @@ export function LoginForm({ onSubmit, onSignup, onForgotPassword, notice = '' }:
       return;
     }
     setError('');
+    submittingRef.current = true;
     setLoading(true);
     try {
       await onSubmit(normalizedEmail, nextPassword);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Invalid email or password.');
+      if (mountedRef.current) setError(submitError instanceof Error ? submitError.message : 'Invalid email or password.');
     } finally {
-      setLoading(false);
+      submittingRef.current = false;
+      if (mountedRef.current) setLoading(false);
     }
   }
 

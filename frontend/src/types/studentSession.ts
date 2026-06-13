@@ -6,6 +6,10 @@ export type StudentSession = {
   parent_id: string;
   student_name: string;
   grade_level: string;
+  subjects: string[];
+  learning_goals?: string | null;
+  difficulty_level?: string | null;
+  parent_notes?: string | null;
   learning_levels?: Record<string, string>;
   access_allowed?: boolean;
   billing_status?: string | null;
@@ -30,6 +34,9 @@ export type StudentMe = {
   student_name: string;
   grade_level: string;
   subjects: string[];
+  learning_goals?: string | null;
+  difficulty_level?: string | null;
+  parent_notes?: string | null;
   learning_levels?: Record<string, string>;
   access_allowed?: boolean;
   billing_status?: string | null;

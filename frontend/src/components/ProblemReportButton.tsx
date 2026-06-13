@@ -72,12 +72,12 @@ export function ProblemReportButton({
   }
 
   return <>
-    <button type="button" onClick={() => { setOpen(true); setError(''); setNotice(''); }} disabled={disabled || !accessToken || !childId}>Report a Problem</button>
+    <button type="button" onClick={() => { setOpen(true); setError(''); setNotice(''); }} disabled={disabled || !accessToken || !childId}>Something went wrong? Let us know!</button>
     {notice && <span className="muted-note report-status">{notice}</span>}
     {error && <span className="muted-note report-status error">{error}</span>}
     {open && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Report a problem">
       <div className="confirm-modal problem-report-modal">
-        <span className="modal-eyebrow">Report a Problem</span>
+        <span className="modal-eyebrow">Something went wrong?</span>
         <h3>Tell us what happened</h3>
         <p>We will review this with care. Do not include private information.</p>
         <label>

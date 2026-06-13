@@ -39,6 +39,10 @@ class StudentSessionResponse(BaseModel):
     parent_id: str
     student_name: str
     grade_level: str
+    subjects: list[str] = Field(default_factory=list)
+    learning_goals: str | None = None
+    difficulty_level: str | None = None
+    parent_notes: str | None = None
     learning_levels: dict[str, str] = Field(default_factory=dict)
     access_allowed: bool = True
     billing_status: str | None = None
@@ -56,6 +60,9 @@ class StudentMeResponse(BaseModel):
     student_name: str
     grade_level: str
     subjects: list[str]
+    learning_goals: str | None = None
+    difficulty_level: str | None = None
+    parent_notes: str | None = None
     learning_levels: dict[str, str] = Field(default_factory=dict)
     access_allowed: bool = True
     billing_status: str | None = None

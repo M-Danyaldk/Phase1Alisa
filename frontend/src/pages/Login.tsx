@@ -6,7 +6,7 @@ import { ResetPasswordForm } from '../components/auth/ResetPasswordForm';
 import { forgotPassword, login, resetPassword, verifyResetCode } from '../lib/api/auth';
 import { AuthSessionResponse } from '../types/auth';
 
-export function Login({ onLoggedIn, onSignup }: { onLoggedIn: (session: AuthSessionResponse) => void; onSignup: () => void }) {
+export function Login({ onLoggedIn, onSignup }: { onLoggedIn: (session: AuthSessionResponse) => Promise<void> | void; onSignup: () => void }) {
   const [mode, setMode] = useState<'login' | 'forgot' | 'code' | 'reset'>('login');
   const [resetEmail, setResetEmail] = useState('');
   const [resetCode, setResetCode] = useState('');
@@ -14,7 +14,7 @@ export function Login({ onLoggedIn, onSignup }: { onLoggedIn: (session: AuthSess
 
   async function submit(email: string, password: string) {
     const result = await login(email, password);
-    onLoggedIn(result);
+    await onLoggedIn(result);
   }
 
   async function submitForgot(email: string) {

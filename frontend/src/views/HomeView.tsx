@@ -23,14 +23,14 @@ export function HomeView({
   void studentSession;
 
   return <div className="page-stack student-home-page">
-    <SectionHeader title={`Hi, ${firstName(student.name)}!`} desc="Ready to learn today?" />
+    <SectionHeader title={`Hi, ${firstName(student.name)}!`} desc="What would you like to work on today?" />
     {notice && <p className="success-note dashboard-notice">{notice}</p>}
 
     <section className="student-home-actions" aria-label="Choose what to do next">
       <StudentHomeAction
         icon={<MessageCircle />}
-        title="Start Learning"
-        text="Ask Ms. Alisia for help."
+        title="Learn with Ms. Alisia"
+        text="Ask me anything - I'm here to help!"
         view="learn"
         setView={setView}
         featured
@@ -38,35 +38,35 @@ export function HomeView({
       <StudentHomeAction
         icon={<ClipboardCheck />}
         title="Quick Check-In"
-        text="Try a short skill check."
+        text="Let's see what you know today!"
         view="assessments"
         setView={setView}
       />
       <StudentHomeAction
         icon={<BookOpen />}
-        title="Practice Reading"
-        text="Read, think, and answer."
-        view="practice-ela"
+        title="Practice Math"
+        text="Let's tackle it together!"
+        view="practice-math"
         setView={setView}
       />
       <StudentHomeAction
         icon={<BookOpen />}
-        title="Practice Math"
-        text="Work one step at a time."
-        view="practice-math"
+        title="Practice Reading"
+        text="Read, think, and share what you noticed!"
+        view="practice-ela"
         setView={setView}
       />
       <StudentHomeAction
         icon={<PenTool />}
         title="Practice Writing"
-        text="Plan, write, and improve."
+        text="Let's write something great!"
         view="practice-writing"
         setView={setView}
       />
       <StudentHomeAction
         icon={<ImageUp />}
         title="Homework Help"
-        text="Upload homework for help."
+        text="Stuck on something? Upload it and I'll help!"
         view="homework"
         setView={setView}
       />

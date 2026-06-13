@@ -21,6 +21,10 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
     else window.location.assign(path);
   }
 
+  function focusWaitlistEmail() {
+    window.setTimeout(() => document.getElementById('waitlist-email')?.focus(), 0);
+  }
+
   async function submitWaitlist(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalizedEmail = waitlistEmail.trim().toLowerCase();
@@ -51,17 +55,17 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
       </button>
       <nav className="prelaunch-nav" aria-label="Landing navigation">
         <a href="#how-it-works">See How It Works</a>
-        <a className="prelaunch-nav-cta" href="#waitlist">Launching July 3 — Join the Waitlist</a>
+        <a className="prelaunch-nav-cta" href="#waitlist-email" onClick={focusWaitlistEmail}>Launching July 3 — Join the Waitlist</a>
       </nav>
     </header>
 
     <section className="prelaunch-hero" aria-labelledby="prelaunch-title">
       <div className="prelaunch-copy">
         <h1 id="prelaunch-title">“We tried 4 tutors in 2 weeks. They were expensive, unreliable, and our child was still struggling.”</h1>
-        <p className="prelaunch-subheadline">“So we built Ms. Alisia — a patient, brilliant AI tutor available every day, for less than the cost of a few tutoring sessions a month. Named after a real mom who needed real help. Built from real frustration.”</p>
+        <p className="prelaunch-subheadline prelaunch-founding-statement">So we built Ms. Alisia — a patient, brilliant AI tutor available every day, for less than the cost of a few tutoring sessions a month. Named after a real mom who needed real help. Built from real frustration.</p>
         <p>Your child gets personalized learning that adapts to how they think. You get weekly progress reports and peace of mind — without the scheduling, the cancellations, or the hourly bills.</p>
         <div className="prelaunch-cta-row">
-          <a className="primary-button" href="#waitlist">Launching July 3 — Join the Waitlist</a>
+          <a className="primary-button" href="#waitlist-email" onClick={focusWaitlistEmail}>Launching July 3 — Join the Waitlist</a>
           <a className="secondary-button" href="#how-it-works">See How It Works</a>
         </div>
         <p className="prelaunch-hero-note">No credit card required. Every family starts with a free 7-day trial. Cancel anytime.</p>
@@ -123,9 +127,9 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
       </div>
       <div className="landing-pricing-grid">
         <PricingCard title="Chat Plan" price="$129/month or $1,419/year — includes 1 month free" />
-        <PricingCard title="Voice Plan" price="$159/month or $1,749/year — includes 1 month free" />
+        <PricingCard title="Chat Plus Audio" price="$159/month or $1,749/year — includes 1 month free" />
       </div>
-      <p className="landing-inline-note">Family discount: 5% off for 2 or more children automatically applied at checkout.</p>
+      <p className="landing-inline-note">A 5% family discount is applied to all children when a second child is added.</p>
       <p className="landing-inline-note">Every new family starts with a free 7-day trial. No credit card required.</p>
     </section>
 

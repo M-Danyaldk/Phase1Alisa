@@ -347,6 +347,7 @@ class BillingService:
         await self._ensure_child_can_checkout(parent_id, child_id)
         plan = self._plan(plan_key)
         stripe_price_id = self._stripe_price_id(plan)
+        await self._ensure_usd_price(stripe, stripe_price_id, plan)
         customer_id = await self._get_or_create_stripe_customer(parent_id, email)
         family_discount = await self._family_discount_state(parent_id)
         coupon = await self._validate_coupon_code(stripe, coupon_code)
@@ -430,6 +431,8 @@ class BillingService:
         customer_id = await self._get_or_create_stripe_customer(parent_id, email)
         family_discount = await self._family_discount_state(parent_id, pending_checkout_count=len(normalized))
         coupon = await self._validate_coupon_code(stripe, coupon_code)
+        for item in normalized:
+            await self._ensure_usd_price(stripe, self._stripe_price_id(item['plan']), item['plan'])
         child_plan_map = self._encode_child_plan_map(normalized)
         child_names = ', '.join(item['child'].get('name', 'Child') for item in normalized[:5])
         if len(normalized) > 5:
@@ -1095,6 +1098,36 @@ class BillingService:
         if not stripe_price_id:
             raise HTTPException(status_code=503, detail=f'{plan["stripe_price_env"]} is not configured yet.')
         return stripe_price_id
+
+    async def _ensure_usd_price(self, stripe, stripe_price_id: str, plan: dict) -> None:
+        try:
+            price = await anyio.to_thread.run_sync(lambda: stripe.Price.retrieve(stripe_price_id))
+        except Exception as exc:
+            logger.warning('Could not verify Stripe price currency for %s: %s', plan.get('stripe_price_env'), exc)
+            raise HTTPException(
+                status_code=503,
+                detail='Could not verify Stripe price currency. Please try again or contact support.',
+            ) from exc
+        currency = str(self._stripe_value(price, 'currency') or '').lower()
+        if currency != 'usd':
+            logger.error(
+                'Stripe price %s from %s is %s, expected usd.',
+                stripe_price_id,
+                plan.get('stripe_price_env'),
+                currency or 'missing currency',
+            )
+            raise HTTPException(
+                status_code=503,
+                detail='Stripe checkout is not configured for USD yet. Please contact support.',
+            )
+
+    def _stripe_value(self, payload, key: str):
+        if isinstance(payload, dict):
+            return payload.get(key)
+        getter = getattr(payload, 'get', None)
+        if callable(getter):
+            return getter(key)
+        return getattr(payload, key, None)
 
     async def _get_or_create_stripe_customer(self, parent_id: str, email: str) -> str:
         stripe = self._stripe_module()

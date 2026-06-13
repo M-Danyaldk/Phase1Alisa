@@ -10,8 +10,8 @@ from .config import get_settings
 from .curriculum import curriculum_payload
 from .database import init_db
 from .assessment_selector import previous_versions_from_assessments, select_next_assessment_version
-from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
-from .prompts import compact_chat_system_prompt
+from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatOpeningRequest, ChatOpeningResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
+from .prompts import compact_chat_system_prompt, tutor_opening_system_prompt
 from .routers.chat_history import router as chat_history_router
 from .routes.admin import router as admin_router
 from .routes.auth import router as auth_router
@@ -109,6 +109,80 @@ async def list_students(authorization: str = Header(default=''), x_access_mode: 
     return {'students': await AppDataService().list_students(limit=50)}
 
 
+@app.post('/api/chat/opening', response_model=ChatOpeningResponse)
+async def chat_opening(payload: ChatOpeningRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatOpeningResponse:
+    child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
+    if payload.child_id:
+        await SessionActivityService().ensure_can_tutor(child_user['id'], payload.child_id)
+        await SessionActivityService().record_activity(
+            child_user['id'],
+            payload.child_id,
+            subject=payload.subject,
+            topic=payload.topic,
+            event_type='activity',
+        )
+    child_profile = child_user.get('child') or {}
+    assessment_context = await LearningProfileService().context_for_child_subject(payload.child_id, payload.subject)
+    topic_resolution = TopicResolver().resolve(
+        subject=payload.subject,
+        topic=payload.topic,
+        topic_source=payload.topic_source,
+        assessment_context=assessment_context,
+    )
+    resolved_topic = topic_resolution['topic']
+    prompt_student = _student_with_assessed_level(_student_from_child(payload.student, child_profile), payload.subject, assessment_context)
+    system = tutor_opening_system_prompt(prompt_student, payload.subject, resolved_topic, assessment_context)
+    user = (
+        'Write the first visible message for this new student tutoring session. '
+        'Ask how the child is doing before beginning learning. '
+        'You may mention that after they answer, you will ask one quick learning question to know how to help today. '
+        'Do not invent any mood, memory, homework, hobby, or prior performance.'
+    )
+    result = await LLMRouter().generate(system=system, user=user, purpose='opening')
+    opening = _safe_opening_reply(format_student_reply(result.text), prompt_student.name)
+
+    chat_thread_id: str | None = None
+    history_saved = False
+    history_error: str | None = None
+    try:
+        chat_store = ChatStore()
+        thread = await chat_store.create_thread(child_user['id'], ChatThreadCreateRequest(
+            child_id=payload.child_id,
+            subject=payload.subject,
+            topic=resolved_topic,
+            title=_session_title(payload.subject, resolved_topic),
+        ))
+        chat_thread_id = thread['id']
+        await chat_store.store_message(child_user['id'], ChatMessageCreateRequest(
+            thread_id=chat_thread_id,
+            child_id=payload.child_id,
+            role='msalisia',
+            content=opening,
+            subject=payload.subject,
+            topic=resolved_topic,
+            provider=result.provider,
+            model=result.model,
+            tutoring_state=TutoringState().model_dump(),
+        ))
+        history_saved = True
+    except Exception as exc:
+        logger.warning('Chat opening history save failed: %s', exc)
+        history_error = str(exc)
+
+    return ChatOpeningResponse(
+        reply=opening,
+        provider=result.provider,
+        model=result.model,
+        fallback_used=result.fallback_used,
+        thread_id=chat_thread_id,
+        history_saved=history_saved,
+        history_error=history_error,
+        resolved_topic=resolved_topic,
+        topic_source=topic_resolution['source'],
+        assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+    )
+
+
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
     child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
@@ -121,6 +195,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             topic=payload.topic,
             event_type='message_sent',
         )
+    child_profile = child_user.get('child') or {}
     assessment_context = await LearningProfileService().context_for_child_subject(payload.child_id, payload.subject)
     topic_resolution = TopicResolver().resolve(
         subject=payload.subject,
@@ -129,7 +204,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         assessment_context=assessment_context,
     )
     resolved_topic = topic_resolution['topic']
-    prompt_student = _student_with_assessed_level(payload.student, payload.subject, assessment_context)
+    prompt_student = _student_with_assessed_level(_student_from_child(payload.student, child_profile), payload.subject, assessment_context)
     learning_memory_service = LearningMemoryService()
     prior_memory = await learning_memory_service.relevant_for_child_subject(
         payload.child_id,
@@ -349,7 +424,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         elif tutoring_state.attempt_count == 2:
             directives.append('Backend answer check: wrong or unclear on second attempt. Give a stronger hint or one worked sub-step. Do not reveal the final answer. Ask the student to try once more.')
         else:
-            directives.append('Backend answer check: wrong or unclear on third attempt. Give the correct answer, explain it simply, then give one similar new practice question. Do not ask the same question again.')
+            directives.append('Backend answer check: wrong or unclear on third attempt. Reveal the answer warmly, explain it simply, then give one similar new practice question. Do not ask the same question again.')
             if answer_check.expected_answer:
                 directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
         if answer_check.feedback_note:
@@ -357,9 +432,9 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     homework_context_available = _homework_context_available(payload.message, payload.topic, payload.history)
     directives = [
         f'The currently selected subject is {payload.subject}. Stay in this subject unless the student clearly asks to switch to another subject.',
-        'Lead the activity with one clear next step. Do not ask broad questions like "What would you like to work on?" when assessment, homework, or current task context is available.',
+        'Lead the activity with one clear next step. Do not ask broad questions like "What would you like to work on?" when recent check-in results, homework, or current task context is available.',
         'Ask only one question at a time. Do not include multiple open-ended questions in one reply.',
-        'Use assessment results when available: start from the assessed working level, recommended topic, or recommended next step before starting unrelated practice.',
+        'Use recent check-in results when available: start from the practice focus, recommended topic, or recommended next step before starting unrelated practice.',
         *(['Homework context is present. Start from the uploaded homework summary, typed problem, or suggested next step. Do not ask the student to re-explain an already uploaded assignment.'] if homework_context_available else []),
         'After the current problem is finished, you may end with one short same-subject practice question or mini-check when helpful. Do not add a new practice question before the current step is settled.',
         'Use compact tutor chat: 5-7 short lines maximum for normal help.',
@@ -379,7 +454,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         f"Correctness: {tutoring_state.correctness_status or 'not checked'}; "
         f"Memory: {tutoring_state.memory_note or 'none'}"
     )
-    user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or payload.message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nRespond as Ms Alisia using the required tutoring method."
+    user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or payload.message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nRespond as Ms. Alisia using the required tutoring method."
     result = await router.generate(system=system, user=user, purpose='chat')
     formatted_reply = format_student_reply(result.text)
     if looks_incomplete_response(formatted_reply, payload.message):
@@ -506,7 +581,7 @@ async def homework_feedback(
     upload = await HomeworkService().upload_for_child_session(parent_id=access_user['id'], child_id=child_id, file=file)
     feedback = upload.ai_validation_summary or 'Your homework was uploaded. Ms. Alisia will help one step at a time.'
     if upload.suggested_next_step:
-        feedback = f'{feedback}\n\nNext step: {upload.suggested_next_step}'
+        feedback = f'{feedback}\n\nUp next: {upload.suggested_next_step}'
     return HomeworkFeedbackResponse(feedback=feedback, provider=upload.provider or 'local', model=upload.model or 'rules')
 
 
@@ -532,6 +607,23 @@ def _student_with_assessed_level(student: StudentProfile, subject: str, assessme
     return student.model_copy(update=updates) if updates else student
 
 
+def _student_from_child(student: StudentProfile, child: dict | None) -> StudentProfile:
+    if not child:
+        return student
+    grade = _grade_number(child.get('grade_level')) or student.grade
+    updates = {
+        'name': child.get('name') or student.name,
+        'grade': grade,
+        'subjects': _subjects_from_child(child) or student.subjects,
+        'learning_goals': child.get('learning_goals') or student.learning_goals,
+        'difficulty_level': child.get('difficulty_level') or student.difficulty_level,
+        'parent_notes': child.get('parent_notes') or student.parent_notes,
+        'confidence': child.get('difficulty_level') or student.confidence,
+        'focus_notes': child.get('learning_goals') or student.focus_notes,
+    }
+    return student.model_copy(update=updates)
+
+
 def _practice_level_label(value: object) -> str | None:
     focus = _practice_focus_label(value)
     return f'Practice focus: {focus}' if focus else None
@@ -541,6 +633,14 @@ def _session_title(subject: str, topic: str | None) -> str:
     label = _subject_label(subject)
     clean_topic = _session_topic_label(subject, topic)
     return f'{label} Practice - {clean_topic}'
+
+
+def _safe_opening_reply(text: str, student_name: str | None = None) -> str:
+    cleaned = ' '.join(str(text or '').split()).strip()
+    if cleaned and len(cleaned) <= 420:
+        return cleaned
+    name = (student_name or '').strip() or 'there'
+    return f'Hi {name}, I am glad you are here. Before we start, how are you feeling today? Then I can ask one quick thing so I know how to help.'
 
 
 def _session_topic_label(subject: str, topic: str | None) -> str:
@@ -574,9 +674,16 @@ def _homework_context_available(message: str, topic: str, history: list) -> bool
 
 
 def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> StudentProfile:
-    child_name = child.get('name') or student.name
-    grade = _grade_number(child.get('grade_level')) or student.grade
-    return student.model_copy(update={'name': child_name, 'grade': grade})
+    return _student_from_child(student, child)
+
+
+def _subjects_from_child(child: dict) -> list[str]:
+    subjects = child.get('subjects') or []
+    if isinstance(subjects, list):
+        return [str(subject) for subject in subjects if subject]
+    if isinstance(subjects, str):
+        return [subject for subject in ['Math', 'ELA', 'Writing'] if subject in subjects]
+    return []
 
 
 def _direct_math_attempt_count(state: TutoringState, answer_check) -> int:
@@ -591,12 +698,13 @@ def _direct_math_attempt_count(state: TutoringState, answer_check) -> int:
 
 def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
     expression = answer_check.checked_expression or 'That problem'
-    expected = answer_check.expected_answer or 'the correct answer'
+    expected = answer_check.expected_answer or 'the answer'
+    similar_problem = _similar_direct_math_problem(expression)
     if answer_check.is_correct:
         return (
             f"Yes, that's correct!\n\n"
             f"{expression} = {expected}.\n\n"
-            "Nice work. Want to try one more? What is 45 × 4?"
+            f"Nice work. Want to try one more? What is {similar_problem}?"
         )
     if attempt_count <= 1:
         first_hint, _ = _direct_math_hint_steps(expression)
@@ -607,13 +715,13 @@ def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
     if attempt_count == 2:
         _, stronger_hint = _direct_math_hint_steps(expression)
         return (
-            "You're close. Here is a stronger hint.\n\n"
+            "You're close. Let's try it a different way.\n\n"
             f"{stronger_hint}"
         )
     return (
         "Nice effort. Let's finish it together.\n\n"
         f"{expression} = {expected}.\n\n"
-        "Try one similar problem: what is 45 × 4?"
+        f"Try one similar problem: what is {similar_problem}?"
     )
 
 
@@ -632,10 +740,10 @@ def _direct_math_help_expression(message: str) -> str:
     )
     if not any(marker in text for marker in help_markers):
         return ''
-    match = re.search(r'(\d+)\s*[xX×*]\s*(\d+)', message)
+    match = re.search(r'(-?\d+(?:\.\d+)?)\s*([xX×*+\-/÷])\s*(-?\d+(?:\.\d+)?)', message)
     if not match:
         return ''
-    return f'{int(match.group(1))} × {int(match.group(2))}'
+    return _display_direct_math_expression(match.group(1), match.group(2), match.group(3))
 
 
 def _direct_math_help_reply(expression: str) -> str:
@@ -663,10 +771,65 @@ def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
                 f"Now try adding {base_product} + {remainder_product}.",
             )
 
+    parsed = _parse_display_math_expression(expression)
+    if parsed:
+        left, operator, right = parsed
+        if operator == '+':
+            return (
+                f"Start by lining up the numbers in {expression}.\n\nWhat do you get when you add the ones first?",
+                f"Add the ones first, then the tens. Now try putting those parts together for {expression}.",
+            )
+        if operator == '-':
+            return (
+                f"Start with the number before the minus sign in {expression}.\n\nWhat happens when you take away {right}?",
+                f"Subtract in small parts if that helps. Now try the subtraction again for {expression}.",
+            )
+        if operator in {'÷', '/'}:
+            return (
+                f"Think of {expression} as sharing into equal groups.\n\nHow many groups of {right} fit into {left}?",
+                f"Try skip-counting by {right} until you reach {left}, then count how many jumps you made.",
+            )
+        if operator == '×':
+            return (
+                f"Think of {expression} as {left} equal groups of {right}.\n\nWhat is the first group worth?",
+                f"You can skip-count by {right}, {left} times. Try counting those jumps carefully.",
+            )
+
     return (
         f"Look at {expression} one operation at a time.\n\nWhat operation should we do first?",
         f"Use the operation in {expression} carefully, then compare your result to your answer.\n\nTry the calculation one more time.",
     )
+
+
+def _display_direct_math_expression(left: str, operator: str, right: str) -> str:
+    clean_operator = {'x': '×', 'X': '×', '*': '×', '/': '÷', '÷': '÷'}.get(operator, operator)
+    return f'{left} {clean_operator} {right}'
+
+
+def _parse_display_math_expression(expression: str) -> tuple[int, str, int] | None:
+    match = re.match(r'^\s*(-?\d+)\s*([+−\-×xX*/÷])\s*(-?\d+)\s*$', expression)
+    if not match:
+        return None
+    operator = {'x': '×', 'X': '×', '*': '×', '/': '÷', '−': '-'}.get(match.group(2), match.group(2))
+    return int(match.group(1)), operator, int(match.group(3))
+
+
+def _similar_direct_math_problem(expression: str) -> str:
+    parsed = _parse_display_math_expression(expression)
+    if not parsed:
+        return '45 × 4'
+    left, operator, right = parsed
+    if operator == '+':
+        return f'{left + 2} + {right + 1}'
+    if operator == '-':
+        return f'{max(left + 3, right + 4)} - {right + 1}'
+    if operator == '÷':
+        divisor = max(abs(right), 2)
+        quotient = max(abs(left // divisor) + 1, 2)
+        return f'{divisor * quotient} ÷ {divisor}'
+    if operator == '×':
+        return f'{left + 1} × {right}'
+    return '45 × 4'
 
 
 def _grade_number(value: object) -> int | None:
@@ -757,11 +920,11 @@ def _child_score_feedback(result: AssessmentResult, subject: str, practice_next:
         return {
             'performance_label': performance_label,
             'score_summary': f'Next focus: {practice_next}',
-            'celebration_title': 'Check-in complete',
-            'celebration_message': f'You completed your {subject} check-in.',
-            'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
-            'encouragement': 'Thank you for completing it. Ms. Alisia will choose a helpful next step.',
-            'badge_label': 'Check-in Complete',
+            'celebration_title': 'Great work!',
+            'celebration_message': f'You just finished your {subject} check-in!',
+            'next_step_message': f'Up next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+            'encouragement': 'Nice work. Ms. Alisia will choose a helpful next step.',
+            'badge_label': 'All Done!',
         }
 
     review_count = len([item for item in result.question_results if item.status == 'needs_review'])
@@ -773,22 +936,22 @@ def _child_score_feedback(result: AssessmentResult, subject: str, practice_next:
         return {
             'performance_label': 'Ready for the Next Step',
             'score_summary': f'Score: {score_text}',
-            'celebration_title': 'Excellent work',
+            'celebration_title': 'Great work!',
             'celebration_message': f'You got all {total} {subject} questions correct.',
-            'next_step_message': f'Next, Ms. Alisia will give you a new {subject} practice step.',
-            'encouragement': 'Great job. You were accurate on every question in this check-in.',
+            'next_step_message': f'Up next, Ms. Alisia will give you a new {subject} practice step.',
+            'encouragement': 'Great job. You got every question right.',
             'badge_label': 'All Correct',
         }
 
     if review_count and not incorrect_count and not partial_count:
         return {
-            'performance_label': 'Ready for Review',
-            'score_summary': f'{review_count}/{total} answer{"s" if review_count != 1 else ""} ready for review',
-            'celebration_title': 'Check-in complete',
-            'celebration_message': f'You completed your {subject} check-in.',
-            'next_step_message': f'Next, Ms. Alisia will review your work and help with {practice_next}.',
-            'encouragement': 'Nice effort. Some answers need careful review, so Ms. Alisia will look at them gently.',
-            'badge_label': 'Review Ready',
+            'performance_label': 'Ready for a Closer Look',
+            'score_summary': f'{review_count}/{total} answer{"s" if review_count != 1 else ""} ready for Ms. Alisia',
+            'celebration_title': 'Great work!',
+            'celebration_message': f'You just finished your {subject} check-in!',
+            'next_step_message': f'Up next, Ms. Alisia will look at your work and help with {practice_next}.',
+            'encouragement': 'Nice effort. Ms. Alisia will look at your work gently and help with the next step.',
+            'badge_label': 'Nice Start',
         }
 
     if correct >= max(1, total - 1):
@@ -797,7 +960,7 @@ def _child_score_feedback(result: AssessmentResult, subject: str, practice_next:
             'score_summary': f'Score: {score_text}',
             'celebration_title': 'Nice work',
             'celebration_message': f'You got {correct} out of {total} {subject} questions correct.',
-            'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+            'next_step_message': f'Up next, Ms. Alisia will help you practice {practice_next} one step at a time.',
             'encouragement': 'You did well. We found one skill to practice next.',
             'badge_label': 'Strong Work',
         }
@@ -808,7 +971,7 @@ def _child_score_feedback(result: AssessmentResult, subject: str, practice_next:
             'score_summary': f'Score: {score_text}',
             'celebration_title': 'Good effort',
             'celebration_message': f'You got {correct} out of {total} {subject} questions correct.',
-            'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+            'next_step_message': f'Up next, Ms. Alisia will help you practice {practice_next} one step at a time.',
             'encouragement': 'You have a good starting point. We will build the next skill together.',
             'badge_label': 'Practice Ready',
         }
@@ -817,8 +980,8 @@ def _child_score_feedback(result: AssessmentResult, subject: str, practice_next:
         'performance_label': 'Ready for Practice',
         'score_summary': f'Score: {score_text}',
         'celebration_title': 'Good effort',
-        'celebration_message': f'You completed your {subject} check-in.',
-        'next_step_message': f'Next, Ms. Alisia will help you practice {practice_next} one step at a time.',
+        'celebration_message': f'You just finished your {subject} check-in!',
+        'next_step_message': f'Up next, Ms. Alisia will help you practice {practice_next} one step at a time.',
         'encouragement': 'This gives us a clear place to start. Ms. Alisia will help one small step at a time.',
         'badge_label': 'Practice Ready',
     }

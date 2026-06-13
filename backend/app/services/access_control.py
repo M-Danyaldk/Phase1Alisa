@@ -34,6 +34,7 @@ async def require_child_access(authorization: str, child_id: str | None, access_
         user = await authenticated_user(bearer_token(authorization))
         child = await ensure_child_for_parent(user['id'], child_id)
         await ensure_child_billing_access(child_id, child_name=child.get('name'))
+        user['child'] = child
         return user
 
     session = await StudentAuthService().session_from_token(bearer_token(authorization))
@@ -41,7 +42,7 @@ async def require_child_access(authorization: str, child_id: str | None, access_
         raise HTTPException(status_code=403, detail='This student session cannot access another child profile.')
     child = await ensure_child_for_parent(session['parent_id'], child_id)
     await ensure_child_billing_access(child_id, child_name=child.get('name'))
-    return {'id': session['parent_id'], 'child_id': session['child_id'], 'role': 'child'}
+    return {'id': session['parent_id'], 'child_id': session['child_id'], 'role': 'child', 'child': child}
 
 
 async def require_student_child_access(authorization: str, child_id: str | None) -> dict:
