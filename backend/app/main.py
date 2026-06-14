@@ -267,7 +267,17 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'mode': 'practice' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.mode,
             'status': 'waiting_for_student' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.status,
         })
-        formatted_reply = _direct_math_check_reply(direct_answer_check, direct_attempt_count)
+        direct_substep_continuity = (
+            direct_answer_check.is_wrong
+            and direct_attempt_count >= 3
+            and _is_substep_of_active_problem(tutoring_state)
+        )
+        if direct_substep_continuity:
+            formatted_reply = _substep_reveal_continue_reply(direct_answer_check, tutoring_state)
+            result_model = 'deterministic-substep-continuity'
+        else:
+            formatted_reply = _direct_math_check_reply(direct_answer_check, direct_attempt_count)
+            result_model = 'deterministic-math-check'
         if direct_answer_check.is_wrong and direct_attempt_count < 3:
             next_state = tutoring_state
         else:
@@ -282,7 +292,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                     subject=payload.subject,
                     topic=resolved_topic,
                     provider='local',
-                    model='deterministic-math-check',
+                    model=result_model,
                     tutoring_state=next_state.model_dump(),
                 ))
                 history_saved = True
@@ -310,7 +320,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 source='session',
                 metadata={
                     'provider': 'local',
-                    'model': 'deterministic-math-check',
+                    'model': result_model,
                     'topic_source': topic_resolution['source'],
                     'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
                 },
@@ -318,7 +328,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         return ChatResponse(
             reply=formatted_reply,
             provider='local',
-            model='deterministic-math-check',
+            model=result_model,
             fallback_used=False,
             tutoring_state=next_state,
             thread_id=chat_thread_id,
