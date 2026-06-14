@@ -267,6 +267,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'mode': 'practice' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.mode,
             'status': 'waiting_for_student' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.status,
         })
+        if payload.tutoring_state.active_problem.strip():
+            tutoring_state = tutoring_state.model_copy(update={
+                'active_problem': payload.tutoring_state.active_problem,
+            })
         direct_continuity_state = tutoring_state
         if payload.tutoring_state.active_problem.strip():
             direct_continuity_state = tutoring_state.model_copy(update={
