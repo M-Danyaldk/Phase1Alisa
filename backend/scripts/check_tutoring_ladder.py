@@ -1,6 +1,6 @@
 from backend.app.models import ChatHistoryItem, TutoringState
 from backend.app.tutoring_logic import build_chat_directives
-from backend.app.main import _answer_check_question, _correct_math_answer_reply, _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply, _is_substep_of_active_problem, _substep_reveal_continue_reply
+from backend.app.main import _answer_check_question, _correct_math_answer_reply, _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply, _is_substep_of_active_problem, _substep_correct_finish_reply, _substep_reveal_continue_reply
 from backend.app.services.tutor_answer_checker import TutorAnswerChecker
 
 
@@ -134,6 +134,13 @@ def main() -> None:
         failures.append('Deterministic third wrong sub-step reply still starts similar practice.')
     if '20 x 4 = 80' not in substep_reply or '28 x 4 = 80 + (8 x 4)' not in substep_reply or 'What is 8 x 4?' not in substep_reply:
         failures.append('Deterministic third wrong sub-step reply did not return to the original multiplication problem.')
+    correct_substep_check = checker._check_math('What is 8 x 4?\n28 x 4', '32', '')
+    correct_substep_reply = _substep_correct_finish_reply(
+        correct_substep_check,
+        TutoringState(active_problem='28 x 4', current_question='What is 8 x 4?', attempt_count=1),
+    )
+    if 'Final answer: 112' not in correct_substep_reply or 'Want to try one more' in correct_substep_reply:
+        failures.append('Correct remaining sub-step did not finish the original multiplication problem.')
 
     wrong_check = checker.check_direct_math_statement('The problem is 34 x 3. My answer is 100. Is that correct?')
     first_direct_reply = _direct_math_check_reply(wrong_check, 1)

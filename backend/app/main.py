@@ -285,6 +285,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             tutoring_state = direct_continuity_state
             formatted_reply = _substep_reveal_continue_reply(direct_answer_check, tutoring_state)
             result_model = 'deterministic-substep-continuity'
+        elif direct_answer_check.is_correct and _is_substep_of_active_problem(direct_continuity_state):
+            tutoring_state = direct_continuity_state
+            formatted_reply = _substep_correct_finish_reply(direct_answer_check, tutoring_state)
+            result_model = 'deterministic-substep-completion'
         else:
             formatted_reply = _direct_math_check_reply(direct_answer_check, direct_attempt_count)
             result_model = 'deterministic-math-check'
@@ -480,7 +484,17 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         f"Memory: {tutoring_state.memory_note or 'none'}"
     )
     user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or payload.message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nRespond as Ms. Alisia using the required tutoring method."
-    if answer_check and answer_check.is_correct and payload.subject == 'Math':
+    if (
+        answer_check
+        and answer_check.is_correct
+        and payload.subject == 'Math'
+        and _is_substep_of_active_problem(tutoring_state, current_step)
+    ):
+        formatted_reply = _substep_correct_finish_reply(answer_check, tutoring_state, current_step)
+        result_provider = 'local'
+        result_model = 'deterministic-substep-completion'
+        result_fallback_used = False
+    elif answer_check and answer_check.is_correct and payload.subject == 'Math':
         formatted_reply = _correct_math_answer_reply(answer_check, tutoring_state, current_step)
         result_provider = 'local'
         result_model = 'deterministic-current-math-check'
@@ -809,6 +823,34 @@ def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_s
     )
 
 
+def _substep_correct_finish_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
+    expected = answer_check.expected_answer or state.expected_answer or 'that answer'
+    step_expression = (
+        answer_check.checked_expression
+        or extract_math_expression(state.current_question or current_step or state.current_step)
+        or _display_math_expression_from_state(state, current_step)
+        or 'this step'
+    )
+    active_expression = extract_math_expression(state.active_problem) or state.active_problem.strip()
+    completion = _multiplication_completion(active_expression, step_expression, expected)
+    step_display = _display_ascii_math_expression(step_expression)
+    if completion:
+        return (
+            "Yes, that's correct!\n\n"
+            f"{step_display} = {expected}.\n\n"
+            f"{completion}\n\n"
+            "Nice work finishing the original problem."
+        )
+    active_display = _display_ascii_math_expression(active_expression)
+    if active_display:
+        return (
+            "Yes, that's correct!\n\n"
+            f"{step_display} = {expected}.\n\n"
+            f"Now finish the original problem: {active_display}."
+        )
+    return _correct_math_answer_reply(answer_check, state, current_step)
+
+
 def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
     return '\n'.join(
         part
@@ -875,6 +917,23 @@ def _remaining_multiplication_step(active_expression: str, step_expression: str,
     if remainder <= 0:
         return ''
     return f"{_display_ascii_math_expression(active_expression)} = {step_answer} + ({remainder} x {active_right}).\n\nWhat is {remainder} x {active_right}?"
+
+
+def _multiplication_completion(active_expression: str, step_expression: str, step_answer: str) -> str:
+    active = _parse_simple_int_expression(active_expression)
+    step = _parse_simple_int_expression(step_expression)
+    if not active or not step:
+        return ''
+    active_left, active_operator, active_right = active
+    step_left, step_operator, step_right = step
+    if active_operator != '*' or step_operator != '*' or active_right != step_right:
+        return ''
+    other_part = active_left - step_left
+    if other_part <= 0:
+        return ''
+    other_product = other_part * active_right
+    total = active_left * active_right
+    return f"Now finish {_display_ascii_math_expression(active_expression)}: {other_product} + {step_answer} = {total}.\n\nFinal answer: {total}"
 
 
 def _direct_math_help_expression(message: str) -> str:
