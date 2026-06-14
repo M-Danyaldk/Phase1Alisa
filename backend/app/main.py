@@ -267,12 +267,18 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'mode': 'practice' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.mode,
             'status': 'waiting_for_student' if direct_answer_check.is_wrong and direct_attempt_count < 3 else tutoring_state.status,
         })
+        direct_continuity_state = tutoring_state
+        if payload.tutoring_state.active_problem.strip():
+            direct_continuity_state = tutoring_state.model_copy(update={
+                'active_problem': payload.tutoring_state.active_problem,
+            })
         direct_substep_continuity = (
             direct_answer_check.is_wrong
             and direct_attempt_count >= 3
-            and _is_substep_of_active_problem(tutoring_state)
+            and _is_substep_of_active_problem(direct_continuity_state)
         )
         if direct_substep_continuity:
+            tutoring_state = direct_continuity_state
             formatted_reply = _substep_reveal_continue_reply(direct_answer_check, tutoring_state)
             result_model = 'deterministic-substep-continuity'
         else:
