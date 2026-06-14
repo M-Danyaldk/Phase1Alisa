@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -40,6 +41,37 @@ def _correct_math_answer_reply(answer_check, state: TutoringState, current_step:
     return f"Yes, that's correct!\n\nThe answer is {expected}.\n\nNice work. Let's keep going one small step at a time."
 
 
+def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
+    expected = answer_check.expected_answer or state.expected_answer or 'the answer'
+    step_expression = (
+        answer_check.checked_expression
+        or extract_math_expression(state.current_question or current_step or state.current_step)
+        or _display_math_expression_from_state(state, current_step)
+        or 'this step'
+    )
+    active_expression = extract_math_expression(state.active_problem) or state.active_problem.strip()
+    step_display = _display_ascii_math_expression(step_expression)
+    active_display = _display_ascii_math_expression(active_expression)
+    next_step = _remaining_multiplication_step(active_expression, step_expression, expected)
+    if next_step:
+        return (
+            "Nice effort. Let's finish this original problem before trying a new one.\n\n"
+            f"{step_display} = {expected}.\n\n"
+            f"Now come back to {active_display}: {next_step}"
+        )
+    if active_display:
+        return (
+            "Nice effort. Let's finish this original problem before trying a new one.\n\n"
+            f"{step_display} = {expected}.\n\n"
+            f"Now come back to {active_display}. What is the next small step?"
+        )
+    return (
+        "Nice effort. Let's finish this step before trying a new one.\n\n"
+        f"{step_display} = {expected}.\n\n"
+        "What is the next small step?"
+    )
+
+
 def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
     return '\n'.join(
         part
@@ -65,6 +97,47 @@ def _is_substep_of_active_problem(state: TutoringState, current_step: str = '') 
     if not active or not step or active == step:
         return False
     return bool(extract_math_expression(active) or extract_math_expression(step))
+
+
+def _display_ascii_math_expression(expression: str) -> str:
+    return (
+        str(expression or '')
+        .replace('*', 'x')
+        .replace('×', 'x')
+        .replace('Ã—', 'x')
+        .replace('Ãƒâ€”', 'x')
+        .replace('/', '÷')
+        .replace('Ã·', '÷')
+        .replace('ÃƒÂ·', '÷')
+        .strip()
+    )
+
+
+def _parse_simple_int_expression(expression: str) -> tuple[int, str, int] | None:
+    match = re.search(r'(-?\d+)\s*([+xX*/\-/÷×])\s*(-?\d+)', str(expression or ''))
+    if not match:
+        return None
+    operator = match.group(2)
+    if operator in {'x', 'X', '*', '×'}:
+        operator = '*'
+    elif operator in {'/', '÷'}:
+        operator = '/'
+    return int(match.group(1)), operator, int(match.group(3))
+
+
+def _remaining_multiplication_step(active_expression: str, step_expression: str, step_answer: str) -> str:
+    active = _parse_simple_int_expression(active_expression)
+    step = _parse_simple_int_expression(step_expression)
+    if not active or not step:
+        return ''
+    active_left, active_operator, active_right = active
+    step_left, step_operator, step_right = step
+    if active_operator != '*' or step_operator != '*' or active_right != step_right:
+        return ''
+    remainder = active_left - step_left
+    if remainder <= 0:
+        return ''
+    return f"{_display_ascii_math_expression(active_expression)} = {step_answer} + ({remainder} x {active_right}).\n\nWhat is {remainder} x {active_right}?"
 
 
 class VoiceService:
@@ -371,6 +444,16 @@ class VoiceService:
             formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = 'deterministic-current-math-check'
+        elif (
+            answer_check
+            and answer_check.is_wrong
+            and subject == 'Math'
+            and next_state.attempt_count >= 3
+            and _is_substep_of_active_problem(next_state, current_step)
+        ):
+            formatted_reply = _substep_reveal_continue_reply(answer_check, next_state, current_step)
+            result_provider = 'local'
+            result_model = 'deterministic-substep-continuity'
         else:
             result = await LLMRouter().generate(system=system, user=user, purpose='chat')
             formatted_reply = format_student_reply(result.text)
