@@ -126,8 +126,8 @@ export function PrelaunchLandingView({ onNavigate }: { onNavigate?: (path: strin
         <h2>Simple, transparent pricing. No surprises.</h2>
       </div>
       <div className="landing-pricing-grid">
-        <PricingCard title="Chat Plan" price="$129/month or $1,419/year — includes 1 month free" />
-        <PricingCard title="Chat Plus Audio" price="$159/month or $1,749/year — includes 1 month free" />
+        <PricingCard title="Chat Plan" price="$129/month or $1,419 billed annually" />
+        <PricingCard title="Chat Plus Audio" price="$159/month or $1,749 billed annually" />
       </div>
       <p className="landing-inline-note">A 5% family discount is applied to all children when a second child is added.</p>
       <p className="landing-inline-note">Every new family starts with a free 7-day trial. No credit card required.</p>

@@ -275,7 +275,7 @@ export function App() {
     let loadedChildren: ChildProfile[] = [];
     try {
       loadedChildren = await loadChildren(nextSession);
-      if (loadedChildren.length) await loadBillingStatus(nextSession);
+      if (loadedChildren.length) void loadBillingStatus(nextSession);
     } catch (error) {
       setChildren([]);
       setSelectedChildId('');

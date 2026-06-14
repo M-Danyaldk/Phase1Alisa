@@ -1,6 +1,6 @@
 from backend.app.models import ChatHistoryItem, TutoringState
 from backend.app.tutoring_logic import build_chat_directives
-from backend.app.main import _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply
+from backend.app.main import _answer_check_question, _correct_math_answer_reply, _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply
 from backend.app.services.tutor_answer_checker import TutorAnswerChecker
 
 
@@ -61,6 +61,22 @@ def main() -> None:
     if first_state.attempt_count != 1 or first_state.answer_revealed:
         failures.append(f'First wrong attempt state was attempt={first_state.attempt_count} revealed={first_state.answer_revealed}.')
 
+    _, _, _, clarification_state = build_chat_directives(
+        'we were on 12-5',
+        [ChatHistoryItem(role='msalisia', content='What fraction of the pizza is left?')],
+        TutoringState(current_question='What fraction of the pizza is left?', attempt_count=1),
+    )
+    if clarification_state.attempt_count != 0 or clarification_state.current_question:
+        failures.append(f'Context clarification was treated as an answer attempt: attempt={clarification_state.attempt_count} current={clarification_state.current_question!r}.')
+
+    _, _, _, concern_state = build_chat_directives(
+        'you should know what we are working on - is everything okay with you?',
+        [ChatHistoryItem(role='msalisia', content='What is your answer?')],
+        TutoringState(current_question='What is your answer?', attempt_count=1),
+    )
+    if concern_state.attempt_count != 0 or concern_state.current_question:
+        failures.append(f'Tutor concern was treated as an answer attempt: attempt={concern_state.attempt_count} current={concern_state.current_question!r}.')
+
     directives, _, _, second_state = build_chat_directives(
         '101',
         history,
@@ -101,6 +117,16 @@ def main() -> None:
     if direct_attempt != 2:
         failures.append(f'Direct math attempt count was {direct_attempt}, expected 2.')
 
+    vague_state = TutoringState(
+        active_problem='12 - 5',
+        current_question='What happens when you take away 5?',
+        attempt_count=1,
+    )
+    current_answer_check = checker._check_math(_answer_check_question(vague_state, ''), '7', '')
+    current_answer_reply = _correct_math_answer_reply(current_answer_check, vague_state)
+    if not current_answer_check.is_correct or "Yes, that's correct!" not in current_answer_reply or '12 - 5 = 7' not in current_answer_reply:
+        failures.append('Current-step math answer backstop did not accept 12 - 5 = 7 deterministically.')
+
     if failures:
         print('Tutoring ladder check failed:')
         for failure in failures:
@@ -115,6 +141,8 @@ def main() -> None:
     print('- Direct "my answer is ..." math checks follow the same ladder.')
     print('- New direct questions override the opening quick question.')
     print('- Direct multiplication help is deterministic and does not reveal too early.')
+    print('- Clarifications and tutor concerns are not graded as answer attempts.')
+    print('- Correct current-step math answers can be confirmed deterministically.')
 
 
 if __name__ == '__main__':

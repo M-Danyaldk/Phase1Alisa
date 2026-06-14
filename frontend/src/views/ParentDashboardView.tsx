@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { InfoCard } from '../components/InfoCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { subjectLabel } from '../constants';
-import { getFilteredChildReport } from '../lib/api/reports';
 import { getMyReferrals } from '../lib/api/referrals';
 import { getFamilyClassroomLink } from '../lib/api/studentAuth';
 import { getParentWeeklyRhythm } from '../lib/api/studentDashboard';
@@ -44,7 +43,6 @@ export function ParentDashboardView({
   const [familyLink, setFamilyLink] = useState<FamilyClassroomLink | null>(null);
   const [referralMessage, setReferralMessage] = useState('');
   const [classroomMessage, setClassroomMessage] = useState('');
-  const [hasLearningHistory, setHasLearningHistory] = useState(false);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -61,21 +59,8 @@ export function ParentDashboardView({
     return () => { cancelled = true; };
   }, [accessToken]);
 
-  useEffect(() => {
-    if (!accessToken || !children.length) {
-      setHasLearningHistory(false);
-      return;
-    }
-    let cancelled = false;
-    Promise.all(children.map(child => getFilteredChildReport(accessToken, child.id, 'all', 'All').catch(() => null)))
-      .then(reports => {
-        if (!cancelled) setHasLearningHistory(reports.some(reportHasLearningHistory));
-      })
-      .catch(() => { if (!cancelled) setHasLearningHistory(false); });
-    return () => { cancelled = true; };
-  }, [accessToken, children]);
-
-  const dashboardMessage = parentDashboardMessage(children, weeklyRhythms, hasLearningHistory);
+  const selectedChildRhythm = selectedChild ? weeklyRhythms.find(item => item.childId === selectedChild.id) : null;
+  const dashboardMessage = parentDashboardMessage(children, selectedChild, selectedChildRhythm);
   const selectedChildHasLearningAccess = childAccessAllowsLearning(selectedChildAccess);
   const selectedChildCanStartTrial = Boolean(selectedChild && trialAvailable && !selectedChildHasLearningAccess && !billingLocked);
 
@@ -106,8 +91,8 @@ export function ParentDashboardView({
 
     <div className="parent-dashboard-grid">
       <section className="hero-card wide">
-        <h3>Parent control center</h3>
-        <p>Use this area for child profiles, reports, billing, and oversight. Live tutoring and assessment-taking happen only after the student logs in with their own username and PIN.</p>
+        <h3>{selectedChild ? `${selectedChild.name}'s parent control center` : 'Parent control center'}</h3>
+        <p>{selectedChild ? `${selectedChild.name}'s profile, reports, billing, and classroom access are selected.` : 'Use this area for child profiles, reports, billing, and oversight.'} Live tutoring and assessment-taking happen only after the student logs in with their own username and PIN.</p>
         <div className="parent-action-row">
           <button className="primary-button" onClick={() => onViewChange('reports')} disabled={!selectedChild}>View Reports</button>
           <button className="secondary-button" onClick={() => onViewChange('children')}>Manage Child Profiles</button>
@@ -118,8 +103,8 @@ export function ParentDashboardView({
       <section className="report-card child-entry-card">
         <div>
           <span className="eyebrow">Child Classroom</span>
-          <h3>Family classroom link</h3>
-          <p>Use this family classroom link for your children. Each child signs in with their own username and PIN.</p>
+          <h3>{selectedChild ? `${selectedChild.name}'s classroom access` : 'Family classroom link'}</h3>
+          <p>{selectedChild ? `${selectedChild.name} signs in from the family classroom link with their own username and PIN.` : 'Use this family classroom link for your children. Each child signs in with their own username and PIN.'}</p>
         </div>
         {children.length ? <>
           <label>Student
@@ -170,10 +155,16 @@ export function ParentDashboardView({
 
     <section className="report-card">
       <div className="section-row">
-        <h3>Weekly Learning Rhythm</h3>
+        <h3>{selectedChild ? `${selectedChild.name}'s Weekly Rhythm` : 'Weekly Learning Rhythm'}</h3>
         <button className="secondary-button compact" onClick={() => onViewChange('reports')}>Reports</button>
       </div>
       <p className="muted-copy">Weekly rhythm resets every Monday. Missing a day never lowers a child&apos;s status; each new week starts fresh.</p>
+      {selectedChild && <div className="report-detail-list">
+        <span>Selected child: {selectedChild.name}</span>
+        <span>Weekly status: {selectedChildRhythm?.displayLabel || 'Fresh Start'}</span>
+        <span>Sessions this week: {selectedChildRhythm?.sessionCount ?? 0}</span>
+        <span>Access: {selectedChildHasLearningAccess ? 'Active' : billingLocked ? 'Billing required' : statusLabel(selectedChild.status)}</span>
+      </div>}
       <div className="weekly-rhythm-list">
         {children.map(child => {
           const rhythm = weeklyRhythms.find(item => item.childId === child.id);
@@ -247,20 +238,9 @@ function statusLabel(status: ChildProfile['status']): string {
   return 'Active';
 }
 
-function parentDashboardMessage(children: ChildProfile[], weeklyRhythms: WeeklyRhythm[], hasLearningHistory: boolean): string {
-  if (!children.length) return 'Welcome to MsAlisia — let’s create your child’s profile.';
-  const hasWeeklyActivity = weeklyRhythms.some(item => item.sessionCount > 0);
-  if (hasLearningHistory || hasWeeklyActivity) return 'Welcome back — your child’s progress is waiting for you.';
-  return 'Your child profile is ready — let’s start the first learning session.';
-}
-
-function reportHasLearningHistory(report: Awaited<ReturnType<typeof getFilteredChildReport>> | null): boolean {
-  if (!report) return false;
-  return Boolean(
-    report.lessons_completed > 0
-    || report.questions_practiced > 0
-    || (report.recent_tutor_sessions || []).length
-    || (report.recent_assessments || []).length
-    || (report.recent_learning_memory || []).length
-  );
+function parentDashboardMessage(children: ChildProfile[], selectedChild?: ChildProfile, selectedChildRhythm?: WeeklyRhythm | null): string {
+  if (!children.length) return 'Welcome to MsAlisia - let us create your child profile.';
+  if (!selectedChild) return 'Select a child to review classroom access, reports, and weekly rhythm.';
+  if ((selectedChildRhythm?.sessionCount ?? 0) > 0) return `Welcome back - ${selectedChild.name}'s progress is waiting for you.`;
+  return `${selectedChild.name}'s profile is ready - start the first learning session when your child is ready.`;
 }

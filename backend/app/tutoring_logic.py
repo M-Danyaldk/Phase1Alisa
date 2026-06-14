@@ -30,6 +30,40 @@ CONFUSED_PHRASES = [
     'how?',
 ]
 
+CONTEXT_CLARIFICATION_PHRASES = [
+    'we were on',
+    'we are on',
+    'we were working on',
+    'we are working on',
+    'we just did',
+    'last question was',
+    'the question was',
+    'you asked',
+    'you were asking',
+    'i was doing',
+    'i am doing',
+    'i meant',
+    'that was about',
+    'we were talking about',
+]
+
+TUTOR_CONCERN_PHRASES = [
+    'you should know',
+    'do you remember',
+    'you forgot',
+    'is everything okay',
+    'are you okay',
+    'what happened',
+    'why did you',
+    'that is not what',
+    'that was not what',
+    'we already',
+    'you switched',
+    'wrong subject',
+    'not reading',
+    'not fractions',
+]
+
 HOMEWORK_SKIP_PHRASES = [
     'homework',
     'worksheet',
@@ -73,6 +107,17 @@ def detect_homework_or_skip_intent(message: str) -> bool:
 
 def detect_confused_intent(message: str) -> bool:
     return _contains_any(message, CONFUSED_PHRASES)
+
+
+def detect_context_clarification_intent(message: str) -> bool:
+    return _contains_any(message, CONTEXT_CLARIFICATION_PHRASES)
+
+
+def detect_tutor_concern_intent(message: str) -> bool:
+    normalized = _normalized(message)
+    if _contains_any(message, TUTOR_CONCERN_PHRASES):
+        return True
+    return bool(re.search(r'\b(why|how)\s+(did|are|were|can)\s+you\b', normalized))
 
 
 def detect_definition_intent(message: str) -> bool:
@@ -251,9 +296,18 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     math_expression = detect_math_expression(message)
     homework_or_skip = detect_homework_or_skip_intent(message)
     action_intent = detect_action_intent(message)
+    context_clarification = detect_context_clarification_intent(message)
+    tutor_concern = detect_tutor_concern_intent(message)
     skill = state.skill or infer_skill('', '', active_problem or message)
     opening_followup = _is_opening_followup(history, state)
-    direct_question_override = new_problem or definition or homework_or_skip or (direct_help and math_expression)
+    direct_question_override = (
+        new_problem
+        or definition
+        or homework_or_skip
+        or context_clarification
+        or tutor_concern
+        or (direct_help and math_expression)
+    )
     answering_tutor_question = is_answering_tutor_question(history) and not opening_followup and not direct_question_override
 
     attempt_count = state.attempt_count + 1 if answering_tutor_question else 0
@@ -303,6 +357,16 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     if definition:
         directives.append('Give a short direct definition first. Then connect it back to the student’s active problem if there is one.')
         directives.append('Do not ask a new question before giving the useful definition.')
+
+    if context_clarification:
+        directives.append('The student is clarifying what the session was about, not submitting an answer. Do not mark this as correct or wrong.')
+        directives.append('Acknowledge the clarified context and continue from it if enough information is available.')
+        if math_expression:
+            directives.append('The clarified context includes a math expression. Treat that expression as the active problem to resume.')
+
+    if tutor_concern:
+        directives.append('The student is expressing concern about confusion, memory, subject switching, or tutor behavior. Do not treat this as an answer submission.')
+        directives.append('Acknowledge the concern briefly, be honest about the current visible context, and calmly re-ground the lesson before asking for any answer.')
 
     if action_intent == 'hint':
         directives.append('The student asked for a hint. Give one small hint only, then invite them to try.')

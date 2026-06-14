@@ -96,7 +96,7 @@ class WaitlistService:
             subject="You're on the MsAlisia waitlist",
             text=(
                 'Thank you for joining the MsAlisia waitlist.\n\n'
-                f'Access is scheduled to open on {self._open_date_label()}.\n\n'
+                f'We will reach out on {self._open_date_label()} with your access link.\n\n'
                 'Francesca and the MsAlisia Team'
             ),
             html=self._waitlist_confirmation_html(),
@@ -184,7 +184,7 @@ class WaitlistService:
               <td style="padding:34px 30px 12px;">
                 <div style="font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#d6a72e;margin-bottom:10px;">You're on the list</div>
                 <h1 style="margin:0;color:#5e3ca0;font-size:34px;line-height:1.12;font-weight:900;">Thanks for joining the MsAlisia waitlist.</h1>
-                <p style="margin:14px 0 0;color:#5f5576;font-size:17px;line-height:1.6;">Access is scheduled to open on {open_date}. We will reach out when it is your family's turn.</p>
+                <p style="margin:14px 0 0;color:#5f5576;font-size:17px;line-height:1.6;">We will reach out on {open_date} with your access link.</p>
               </td>
             </tr>
             <tr>

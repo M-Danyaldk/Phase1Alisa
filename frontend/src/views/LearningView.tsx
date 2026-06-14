@@ -53,6 +53,10 @@ function subjectSwitchMessage(subject: Subject): string {
 
 function detectSubjectFromMessage(message: string): Subject | null {
   const text = message.toLowerCase();
+  const explicitSubjectRequest = /\b(switch|change|move|go)\s+(to|back to)\s+(math|reading|writing)\b/.test(text)
+    || /\b(can we|could we|please|let's|lets|i want|i need|i'd like|start|practice|do|help me with|work on)\b/.test(text);
+
+  if (!explicitSubjectRequest) return null;
 
   const mathHints = ['math', 'fraction', 'fractions', 'decimal', 'divide', 'division', 'multiply', 'multiplication', 'subtract', 'addition', 'equation', 'ratio', 'lcm', 'gcf', 'area', 'perimeter'];
   const elaHints = ['reading', 'read', 'passage', 'main idea', 'inference', 'context clue', 'context clues', 'theme', 'character', 'setting', 'summary', 'vocabulary', 'author', 'evidence', 'grammar', 'verb', 'noun', 'adjective', 'sentence meaning'];
@@ -98,7 +102,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const trackingEnabled = Boolean(studentSession && accessToken && childId);
   const sessionId = sessionStatus?.session_id || null;
   const brainBreakActive = Boolean(sessionStatus?.brain_break_active);
-  const tutorDisabled = brainBreakActive || sessionStatus?.brain_break_required || sessionStatus?.session_status === 'paused_inactive';
+  const sessionPaused = sessionStatus?.session_status === 'paused' || sessionStatus?.session_status === 'paused_inactive';
+  const tutorDisabled = brainBreakActive || Boolean(sessionStatus?.brain_break_required);
   const voiceAvailable = Boolean(studentSession && voiceAllowed && accessToken && childId);
 
   function greetingFor(nextSubject: Subject) {
@@ -156,8 +161,92 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     }
   }
 
+  async function restoreThread(thread: ChatThread, showHistoryLoading = true, requestId?: number): Promise<boolean> {
+    if (!accessToken) return false;
+    if (showHistoryLoading) setHistoryLoading(true);
+    setThreadError('');
+    try {
+      const history = await getChatHistory(accessToken, thread.id, childId || undefined, studentSession);
+      if (requestId && openingRequestRef.current !== requestId) return false;
+      const nextSubject = thread.subject;
+      setActiveThread(thread);
+      setLastAnnouncedSubject(nextSubject);
+      setSubject(nextSubject);
+      setTopic(thread.topic || subjectDefaults[nextSubject]);
+      setTopicSource('manual');
+      setMessages(history.map(message => ({
+        role: message.role,
+        content: message.content,
+        provider: message.provider || undefined,
+        subject: message.subject || nextSubject,
+      })));
+      setInput('');
+      const latestState = [...history].reverse().find(message => message.tutoring_state)?.tutoring_state;
+      setTutoringState(latestState || initialTutoringState);
+      return history.length > 0;
+    } catch (error) {
+      if (isChatSetupPending(error)) {
+        setHistorySetupPending(true);
+        setThreadError('');
+      } else {
+        setThreadError(error instanceof Error ? error.message : 'Could not open this chat.');
+      }
+      return false;
+    } finally {
+      if (showHistoryLoading) setHistoryLoading(false);
+    }
+  }
+
+  async function loadLatestOrOpening(nextSubject: Subject, nextTopic = subjectDefaults[nextSubject], nextTopicSource: TopicSource = 'default') {
+    const requestId = openingRequestRef.current + 1;
+    openingRequestRef.current = requestId;
+    setMessages([]);
+    setLoading(true);
+    setThreadLoading(true);
+    setThreadError('');
+    setHistorySetupPending(false);
+
+    if (!accessToken || !childId) {
+      setThreadLoading(false);
+      setLoading(false);
+      setMessages(greetingFor(nextSubject));
+      return;
+    }
+
+    try {
+      const records = childId
+        ? await getChildChatThreads(accessToken, childId, nextSubject, studentSession)
+        : await getChatThreads(accessToken, nextSubject);
+      if (openingRequestRef.current !== requestId) return;
+      setThreads(records);
+      const latestThread = records[0];
+      if (latestThread && await restoreThread(latestThread, false, requestId)) {
+        setLoading(false);
+        void refreshThreads();
+        return;
+      }
+    } catch (error) {
+      if (openingRequestRef.current !== requestId) return;
+      if (isChatSetupPending(error)) {
+        setHistorySetupPending(true);
+        setThreadError('');
+        setThreads([]);
+      } else {
+        setThreadError(error instanceof Error ? error.message : 'Could not load previous chats.');
+      }
+    } finally {
+      if (openingRequestRef.current === requestId) setThreadLoading(false);
+    }
+
+    if (openingRequestRef.current === requestId) {
+      await loadOpening(nextSubject, nextTopic, nextTopicSource);
+      await refreshThreads();
+    }
+  }
+
   async function refreshThreads() {
     if (!accessToken) return;
+    setThreadLoading(true);
     try {
       const records = childId ? await getChildChatThreads(accessToken, childId, undefined, studentSession) : await getChatThreads(accessToken);
       setThreads(records);
@@ -170,6 +259,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         return;
       }
       setThreadError(error instanceof Error ? error.message : 'Could not load previous chats.');
+    } finally {
+      setThreadLoading(false);
     }
   }
 
@@ -182,9 +273,8 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setTopic(nextTopic);
     setTopicSource(initialTopic ? 'assessment' : 'default');
     setLastAnnouncedSubject(initialSubject);
-    loadOpening(initialSubject, nextTopic, initialTopic ? 'assessment' : 'default');
+    loadLatestOrOpening(initialSubject, nextTopic, initialTopic ? 'assessment' : 'default');
     setInput('');
-    refreshThreads();
     setSessionStatus(null);
     setNudgeVisible(false);
     setSessionNotice('');
@@ -245,7 +335,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }, [accessToken, childId, subject, topic, trackingEnabled]);
 
   useEffect(() => {
-    if (!trackingEnabled || brainBreakActive || loading || sessionStatus?.session_status === 'paused_inactive') return;
+    if (!trackingEnabled || brainBreakActive || loading || sessionPaused) return;
 
     nudgeRecordedRef.current = false;
     nudgeAudioPlayedRef.current = false;
@@ -278,7 +368,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       window.clearTimeout(nudgeTimer);
       window.clearTimeout(pauseTimer);
     };
-  }, [accessToken, brainBreakActive, childId, lastActivityAt, loading, onInactivePause, sessionId, sessionStatus?.session_status, trackingEnabled]);
+  }, [accessToken, brainBreakActive, childId, lastActivityAt, loading, onInactivePause, sessionId, sessionPaused, trackingEnabled]);
 
   useEffect(() => {
     if (!nudgeVisible || !voiceAvailable || !voiceModeActive || tutorDisabled || brainBreakActive || nudgeAudioPlayedRef.current) return;
@@ -325,36 +415,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   }
 
   async function openThread(thread: ChatThread) {
-    if (!accessToken) return;
-    setHistoryLoading(true);
-    setThreadError('');
-    try {
-      const history = await getChatHistory(accessToken, thread.id, childId || undefined, studentSession);
-      const nextSubject = thread.subject;
-      setActiveThread(thread);
-      setLastAnnouncedSubject(nextSubject);
-      setSubject(nextSubject);
-      setTopic(thread.topic || subjectDefaults[nextSubject]);
-      setTopicSource('manual');
-      setMessages(history.length ? history.map(message => ({
-        role: message.role,
-        content: message.content,
-        provider: message.provider || undefined,
-        subject: message.subject || nextSubject,
-      })) : []);
-      setInput('');
-      const latestState = [...history].reverse().find(message => message.tutoring_state)?.tutoring_state;
-      setTutoringState(latestState || initialTutoringState);
-    } catch (error) {
-      if (isChatSetupPending(error)) {
-        setHistorySetupPending(true);
-        setThreadError('');
-      } else {
-        setThreadError(error instanceof Error ? error.message : 'Could not open this chat.');
-      }
-    } finally {
-      setHistoryLoading(false);
-    }
+    await restoreThread(thread);
   }
 
   async function send() {
@@ -508,7 +569,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       brainBreakWasActiveRef.current = true;
       setNudgeVisible(false);
       setSessionNotice(status.message || DEFAULT_BRAIN_BREAK_MESSAGE);
-    } else if (status.session_status !== 'paused_inactive') {
+    } else if (status.session_status !== 'paused' && status.session_status !== 'paused_inactive') {
       setSessionNotice('');
     }
     if (hadBrainBreak && !status.brain_break_active && !status.brain_break_required) {
@@ -629,9 +690,9 @@ function latestAssistantMessage(messages: ChatMessage[]): string | null {
 
 function fallbackTutorMessage(state: TutoringState): string {
   if (state.attempt_count > 0 || state.current_question || state.current_step) {
-    return "That answer doesn't look right yet. Let's try one hint: look back at the question, find the key numbers or words, and try the same step again.";
+    return "I lost my place before I could check that. Please send your last message again, and I'll check it carefully.";
   }
-  return 'Something got stuck on my side. Let us keep going with one small step: tell me your answer, and I will check it.';
+  return 'I lost my place for a moment. Please send your last message again so we can keep going.';
 }
 
 function playAssistantAudio(audioBase64: string, mimeType: string) {
@@ -671,7 +732,7 @@ function childFriendlySessionMessage(error: unknown): string {
   if (lower.includes('student session') || lower.includes('not allowed') || lower.includes('unauthorized')) {
     return 'Please log in again from your student account to keep learning.';
   }
-  return 'Something got stuck. Please try again in a moment.';
+  return 'Ms. Alisia had trouble saving the session timer. You can keep learning while we reconnect.';
 }
 
 function isChatSetupPending(error: unknown): boolean {

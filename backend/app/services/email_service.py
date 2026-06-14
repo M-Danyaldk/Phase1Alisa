@@ -755,9 +755,9 @@ class EmailService:
     def _annual_amount_label(self, subscription: dict) -> str:
         plan_type = subscription.get('plan_type')
         if plan_type == 'voice':
-            return '$1,749/year'
+            return '$1,749 billed annually'
         if plan_type == 'text':
-            return '$1,419/year'
+            return '$1,419 billed annually'
         return ''
 
     def _validate_trigger(self, trigger_type: str) -> None:

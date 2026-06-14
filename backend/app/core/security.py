@@ -14,9 +14,13 @@ def hash_verification_code(code: str) -> str:
     return sha256(code.strip().encode('utf-8')).hexdigest()
 
 
+def _normalize_pin(pin: str) -> str:
+    return pin.strip().casefold()
+
+
 def hash_pin(pin: str) -> str:
     salt = token_hex(16)
-    digest = pbkdf2_hmac('sha256', pin.strip().encode('utf-8'), salt.encode('utf-8'), PIN_HASH_ITERATIONS).hex()
+    digest = pbkdf2_hmac('sha256', _normalize_pin(pin).encode('utf-8'), salt.encode('utf-8'), PIN_HASH_ITERATIONS).hex()
     return f'pbkdf2_sha256${PIN_HASH_ITERATIONS}${salt}${digest}'
 
 
@@ -25,8 +29,14 @@ def verify_pin(pin: str, stored_hash: str) -> bool:
         algorithm, iterations, salt, expected = stored_hash.split('$', 3)
         if algorithm != 'pbkdf2_sha256':
             return False
-        digest = pbkdf2_hmac('sha256', pin.strip().encode('utf-8'), salt.encode('utf-8'), int(iterations)).hex()
-        return compare_digest(digest, expected)
+        candidates = {_normalize_pin(pin), pin.strip()}
+        return any(
+            compare_digest(
+                pbkdf2_hmac('sha256', candidate.encode('utf-8'), salt.encode('utf-8'), int(iterations)).hex(),
+                expected,
+            )
+            for candidate in candidates
+        )
     except Exception:
         return False
 

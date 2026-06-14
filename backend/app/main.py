@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .curriculum import curriculum_payload
 from .database import init_db
+from .assessment_validation import extract_math_expression
 from .assessment_selector import previous_versions_from_assessments, select_next_assessment_version
 from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatOpeningRequest, ChatOpeningResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
 from .prompts import compact_chat_system_prompt, tutor_opening_system_prompt
@@ -405,7 +406,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     if tutoring_state.attempt_count > 0 and (tutoring_state.current_question or current_step):
         answer_check = await answer_checker.check(
             subject=payload.subject,
-            question=tutoring_state.current_question or current_step,
+            question=_answer_check_question(tutoring_state, current_step),
             student_answer=payload.message,
             expected_answer=tutoring_state.expected_answer,
         )
@@ -455,19 +456,28 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         f"Memory: {tutoring_state.memory_note or 'none'}"
     )
     user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or payload.message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nRespond as Ms. Alisia using the required tutoring method."
-    result = await router.generate(system=system, user=user, purpose='chat')
-    formatted_reply = format_student_reply(result.text)
-    if looks_incomplete_response(formatted_reply, payload.message):
-        continuation_user = (
-            f'{user}\n\n'
-            f'Previous incomplete answer:\n{formatted_reply}\n\n'
-            'Finish the answer briefly and include the final answer. Do not restart.'
-        )
-        continuation = await router.generate(system=system, user=continuation_user, purpose='chat')
-        result.provider = continuation.provider
-        result.model = continuation.model
-        result.fallback_used = result.fallback_used or continuation.fallback_used
-        formatted_reply = format_student_reply(f'{formatted_reply}\n\n{continuation.text}')
+    if answer_check and answer_check.is_correct and payload.subject == 'Math':
+        formatted_reply = _correct_math_answer_reply(answer_check, tutoring_state, current_step)
+        result_provider = 'local'
+        result_model = 'deterministic-current-math-check'
+        result_fallback_used = False
+    else:
+        result = await router.generate(system=system, user=user, purpose='chat')
+        formatted_reply = format_student_reply(result.text)
+        if looks_incomplete_response(formatted_reply, payload.message):
+            continuation_user = (
+                f'{user}\n\n'
+                f'Previous incomplete answer:\n{formatted_reply}\n\n'
+                'Finish the answer briefly and include the final answer. Do not restart.'
+            )
+            continuation = await router.generate(system=system, user=continuation_user, purpose='chat')
+            result.provider = continuation.provider
+            result.model = continuation.model
+            result.fallback_used = result.fallback_used or continuation.fallback_used
+            formatted_reply = format_student_reply(f'{formatted_reply}\n\n{continuation.text}')
+        result_provider = result.provider
+        result_model = result.model
+        result_fallback_used = result.fallback_used
     next_state = update_tutoring_state_after_reply(tutoring_state, payload.message, formatted_reply)
     if chat_store and chat_user_id and chat_thread_id:
         try:
@@ -478,8 +488,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 content=formatted_reply,
                 subject=payload.subject,
                 topic=resolved_topic,
-                provider=result.provider,
-                model=result.model,
+                provider=result_provider,
+                model=result_model,
                 tutoring_state=next_state.model_dump(),
             ))
             history_saved = True
@@ -506,17 +516,17 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             thread_id=chat_thread_id,
             source='session',
             metadata={
-                'provider': result.provider,
-                'model': result.model,
+                'provider': result_provider,
+                'model': result_model,
                 'topic_source': topic_resolution['source'],
                 'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
             },
         )
     return ChatResponse(
         reply=formatted_reply,
-        provider=result.provider,
-        model=result.model,
-        fallback_used=result.fallback_used,
+        provider=result_provider,
+        model=result_model,
+        fallback_used=result_fallback_used,
         tutoring_state=next_state,
         thread_id=chat_thread_id,
         history_saved=history_saved,
@@ -723,6 +733,33 @@ def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
         f"{expression} = {expected}.\n\n"
         f"Try one similar problem: what is {similar_problem}?"
     )
+
+
+def _correct_math_answer_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
+    expected = answer_check.expected_answer or state.expected_answer or 'that answer'
+    expression = _display_math_expression_from_state(state, current_step)
+    if expression:
+        return f"Yes, that's correct!\n\n{expression} = {expected}.\n\nNice work. Let's keep going one small step at a time."
+    return f"Yes, that's correct!\n\nThe answer is {expected}.\n\nNice work. Let's keep going one small step at a time."
+
+
+def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
+    return '\n'.join(
+        part
+        for part in [
+            state.current_question or current_step,
+            state.active_problem,
+        ]
+        if part
+    )
+
+
+def _display_math_expression_from_state(state: TutoringState, current_step: str = '') -> str:
+    for value in (state.current_question, current_step, state.current_step, state.active_problem):
+        expression = extract_math_expression(value)
+        if expression:
+            return expression.replace('*', 'Ã—').replace('/', 'Ã·')
+    return ''
 
 
 def _direct_math_help_expression(message: str) -> str:

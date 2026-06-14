@@ -58,7 +58,9 @@ class SessionActivityService:
         return self._status_response(child_id, {**session, 'session_status': 'active', 'last_activity_at': now.isoformat()}, counter)
 
     async def record_inactivity_nudge(self, parent_id: str, child_id: str, session_id: str | None = None) -> SessionStatusResponse:
-        session = await self._require_session(parent_id, child_id, session_id)
+        session = await self._session_or_latest(parent_id, child_id, session_id)
+        if not session:
+            return await self.status(parent_id, child_id)
         now = self._now()
         await self._insert_activity_event(parent_id, child_id, session.get('id'), 'inactivity_nudge', inactive_seconds_delta=INACTIVITY_THRESHOLD_SECONDS)
         await self.supabase.update('learning_sessions', {'id': f'eq.{session["id"]}'}, {
@@ -69,7 +71,9 @@ class SessionActivityService:
         return self._status_response(child_id, {**session, 'inactivity_nudge_sent_at': now.isoformat()}, counter)
 
     async def pause_inactive(self, parent_id: str, child_id: str, session_id: str | None = None, inactive_seconds: int = 180) -> SessionStatusResponse:
-        session = await self._require_session(parent_id, child_id, session_id)
+        session = await self._session_or_latest(parent_id, child_id, session_id)
+        if not session:
+            return await self.status(parent_id, child_id)
         now = self._now()
         inactive_delta = max(0, min(inactive_seconds, 15 * 60))
         inactive_total = int(session.get('inactive_time_seconds') or 0) + inactive_delta
@@ -89,7 +93,7 @@ class SessionActivityService:
         await self.ensure_can_tutor(parent_id, child_id)
         session = await self._active_or_latest_session(parent_id, child_id)
         if session_id:
-            session = await self._require_session(parent_id, child_id, session_id)
+            session = await self._session_or_latest(parent_id, child_id, session_id)
         if not session:
             session = await self._create_session(parent_id, child_id, 'Math', 'general practice')
         now = self._now()
@@ -174,6 +178,15 @@ class SessionActivityService:
         if not records:
             raise HTTPException(status_code=404, detail='This learning session was not found.')
         return records[0]
+
+    async def _session_or_latest(self, parent_id: str, child_id: str, session_id: str | None) -> dict | None:
+        try:
+            return await self._require_session(parent_id, child_id, session_id)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            logger.info('Recovering from missing learning session for child %s; using latest session status.', child_id)
+            return await self._active_or_latest_session(parent_id, child_id)
 
     async def _active_session(self, parent_id: str, child_id: str) -> dict | None:
         records = await self.supabase.select(

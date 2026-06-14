@@ -29,8 +29,8 @@ PLAN_CATALOG: dict[str, dict] = {
         'plan_type': 'text',
         'billing_interval': 'annual',
         'display_name': 'Chat Annual',
-        'price_label': '$1,419/year',
-        'annual_discount_label': '1 month free',
+        'price_label': '$1,419 billed annually',
+        'annual_discount_label': None,
         'stripe_price_env': 'STRIPE_TEXT_ANNUAL_PRICE_ID',
         'settings_attr': 'stripe_text_annual_price_id',
         'voice_enabled': False,
@@ -48,8 +48,8 @@ PLAN_CATALOG: dict[str, dict] = {
         'plan_type': 'voice',
         'billing_interval': 'annual',
         'display_name': 'Chat + Audio Annual',
-        'price_label': '$1,749/year',
-        'annual_discount_label': '1 month free',
+        'price_label': '$1,749 billed annually',
+        'annual_discount_label': None,
         'stripe_price_env': 'STRIPE_VOICE_ANNUAL_PRICE_ID',
         'settings_attr': 'stripe_voice_annual_price_id',
         'voice_enabled': True,
@@ -347,7 +347,7 @@ class BillingService:
         await self._ensure_child_can_checkout(parent_id, child_id)
         plan = self._plan(plan_key)
         stripe_price_id = self._stripe_price_id(plan)
-        await self._ensure_usd_price(stripe, stripe_price_id, plan)
+        await self._ensure_stripe_price_matches_plan(stripe, stripe_price_id, plan)
         customer_id = await self._get_or_create_stripe_customer(parent_id, email)
         family_discount = await self._family_discount_state(parent_id)
         coupon = await self._validate_coupon_code(stripe, coupon_code)
@@ -433,7 +433,7 @@ class BillingService:
         family_discount = await self._family_discount_state(parent_id, pending_checkout_count=len(normalized))
         coupon = await self._validate_coupon_code(stripe, coupon_code)
         for item in normalized:
-            await self._ensure_usd_price(stripe, self._stripe_price_id(item['plan']), item['plan'])
+            await self._ensure_stripe_price_matches_plan(stripe, self._stripe_price_id(item['plan']), item['plan'])
         child_plan_map = self._encode_child_plan_map(normalized)
         child_names = ', '.join(item['child'].get('name', 'Child') for item in normalized[:5])
         if len(normalized) > 5:
@@ -1101,14 +1101,14 @@ class BillingService:
             raise HTTPException(status_code=503, detail=f'{plan["stripe_price_env"]} is not configured yet.')
         return stripe_price_id
 
-    async def _ensure_usd_price(self, stripe, stripe_price_id: str, plan: dict) -> None:
+    async def _ensure_stripe_price_matches_plan(self, stripe, stripe_price_id: str, plan: dict) -> None:
         try:
             price = await anyio.to_thread.run_sync(lambda: stripe.Price.retrieve(stripe_price_id))
         except Exception as exc:
-            logger.warning('Could not verify Stripe price currency for %s: %s', plan.get('stripe_price_env'), exc)
+            logger.warning('Could not verify Stripe price for %s: %s', plan.get('stripe_price_env'), exc)
             raise HTTPException(
                 status_code=503,
-                detail='Could not verify Stripe price currency. Please try again or contact support.',
+                detail='Could not verify Stripe price configuration. Please try again or contact support.',
             ) from exc
         currency = str(self._stripe_value(price, 'currency') or '').lower()
         if currency != 'usd':
@@ -1121,6 +1121,24 @@ class BillingService:
             raise HTTPException(
                 status_code=503,
                 detail='Stripe checkout is not configured for USD yet. Please contact support.',
+            )
+        recurring = self._stripe_value(price, 'recurring') or {}
+        recurring_interval = str(self._stripe_value(recurring, 'interval') or '').lower()
+        recurring_interval_count = self._stripe_value(recurring, 'interval_count') or 1
+        expected_interval = 'year' if plan.get('billing_interval') == 'annual' else 'month'
+        if recurring_interval != expected_interval or int(recurring_interval_count) != 1:
+            logger.error(
+                'Stripe price %s from %s has recurring interval %sx%s, expected %sx1 for %s.',
+                stripe_price_id,
+                plan.get('stripe_price_env'),
+                recurring_interval or 'missing interval',
+                recurring_interval_count,
+                expected_interval,
+                plan.get('billing_interval'),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f'{plan["stripe_price_env"]} must be configured in Stripe as a {expected_interval}ly recurring price. Please contact support.',
             )
 
     def _stripe_value(self, payload, key: str):
@@ -1672,7 +1690,7 @@ class BillingService:
             scheduled_send_at=scheduled_at.isoformat(),
             metadata={
                 'renewal_date': period_end.date().isoformat(),
-                'amount': '$1,749/year' if billing_payload.get('plan_type') == 'voice' else '$1,419/year',
+                'amount': '$1,749 billed annually' if billing_payload.get('plan_type') == 'voice' else '$1,419 billed annually',
                 'stripe_customer_id': customer_id,
                 'stripe_subscription_id': billing_payload.get('stripe_subscription_id'),
                 'dedupe_key': f"annual_renewal_reminder|{billing_payload.get('stripe_subscription_id')}|{scheduled_at.date().isoformat()}",

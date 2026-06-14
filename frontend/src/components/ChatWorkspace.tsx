@@ -204,7 +204,7 @@ export function ChatWorkspace({
       </button>}
     </div>
     {(brainBreakWarning || disabledMessage) && !brainBreak?.active && <div className="session-banner" role="status">
-      <strong>{brainBreakWarning ? 'Brain Break reminder' : 'Learning paused'}</strong>
+      <strong>{brainBreakWarning ? 'Brain Break reminder' : disabled ? 'Learning paused' : 'Learning connection'}</strong>
       <span>{brainBreakWarning || disabledMessage}</span>
     </div>}
     {inactivityNudge && !brainBreak?.active && <div className="session-nudge" role="dialog" aria-live="polite" aria-label="Inactivity reminder">
