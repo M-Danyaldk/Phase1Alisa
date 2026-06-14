@@ -209,6 +209,14 @@ def _same_question(left: str, right: str) -> bool:
     return _normalized(left).rstrip('?') == _normalized(right).rstrip('?')
 
 
+def _is_substep_of_active_problem(active_problem: str, current_step: str) -> bool:
+    active = _normalized(active_problem).rstrip('?')
+    step = _normalized(current_step).rstrip('?')
+    if not active or not step or active == step:
+        return False
+    return detect_math_expression(active_problem) or detect_math_expression(current_step)
+
+
 def is_answering_tutor_question(history: list[ChatHistoryItem]) -> bool:
     if not history:
         return False
@@ -258,6 +266,9 @@ def _is_opening_followup(history: list[ChatHistoryItem], state: TutoringState) -
 
 
 def infer_active_problem(message: str, history: list[ChatHistoryItem], state: TutoringState | None = None) -> str:
+    if state and state.active_problem.strip() and detect_context_clarification_intent(message):
+        return state.active_problem.strip()
+
     if _looks_like_new_problem(message):
         return message.strip()
 
@@ -360,8 +371,12 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
 
     if context_clarification:
         directives.append('The student is clarifying what the session was about, not submitting an answer. Do not mark this as correct or wrong.')
-        directives.append('Acknowledge the clarified context and continue from it if enough information is available.')
-        if math_expression:
+        if math_expression and state.active_problem.strip():
+            directives.append('Acknowledge the clarified context, but do not replace the unfinished active problem unless the student clearly asks to switch.')
+            directives.append(f'Keep the lesson anchored on the unfinished active problem first: {state.active_problem.strip()}')
+        else:
+            directives.append('Acknowledge the clarified context and continue from it if enough information is available.')
+        if math_expression and not state.active_problem.strip():
             directives.append('The clarified context includes a math expression. Treat that expression as the active problem to resume.')
 
     if tutor_concern:
@@ -414,8 +429,13 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
 
     mode = 'practice'
     status = 'waiting_for_student'
+    substep_of_active_problem = _is_substep_of_active_problem(active_problem, current_step or current_question)
     if current_step:
         directives.append(f'The student is answering this current question: {current_step}')
+    if substep_of_active_problem:
+        directives.append(f'This current question is only one step inside the active problem: {active_problem}')
+        directives.append('After this step is checked or explained, return to the active problem and finish it before starting a new practice problem.')
+        directives.append('Do not ask a new similar practice question until the active problem has a clear final answer, unless the student explicitly asks to switch.')
     if state.expected_answer.strip():
         directives.append(f'Expected answer or target idea if useful: {state.expected_answer.strip()}')
     directives.append('Stay on this one current question only. Do not jump to a new topic or a new part too early.')
@@ -432,7 +452,11 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
         directives.append('Give a stronger hint or one worked sub-step, but do not reveal the final answer yet. Ask the student to try once more.')
     else:
         directives.append('This is the third attempt or later for the current question.')
-        directives.append('If the answer is still wrong, give the correct answer, explain it in 1 or 2 short lines, then give one new similar same-topic question.')
+        if substep_of_active_problem:
+            directives.append('If the answer is still wrong, give the correct answer for this step, explain it in 1 or 2 short lines, then continue the original active problem.')
+            directives.append('Do not give a new similar practice question yet. First complete the original active problem.')
+        else:
+            directives.append('If the answer is still wrong, give the correct answer, explain it in 1 or 2 short lines, then give one new similar same-topic question.')
 
     if confused and attempt_count < 3:
         directives.append('The student seems unsure. Keep your hint very simple and kind.')

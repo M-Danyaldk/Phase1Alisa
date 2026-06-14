@@ -59,6 +59,14 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
     return ''
 
 
+def _is_substep_of_active_problem(state: TutoringState, current_step: str = '') -> bool:
+    active = (state.active_problem or '').strip().lower().rstrip('?')
+    step = (state.current_question or current_step or state.current_step or '').strip().lower().rstrip('?')
+    if not active or not step or active == step:
+        return False
+    return bool(extract_math_expression(active) or extract_math_expression(step))
+
+
 class VoiceService:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -324,7 +332,11 @@ class VoiceService:
             elif next_state.attempt_count == 2:
                 directives.append('Backend answer check: wrong or unclear on second attempt. Give a stronger hint or one worked sub-step. Do not reveal the final answer. Ask the student to try once more.')
             else:
-                directives.append('Backend answer check: wrong or unclear on third attempt. Reveal the answer warmly, explain it simply, then give one similar new practice question. Do not ask the same question again.')
+                if _is_substep_of_active_problem(next_state, current_step):
+                    directives.append('Backend answer check: wrong or unclear on third attempt for a sub-step of the active problem. Reveal this step answer warmly, explain it simply, then continue and finish the original active problem.')
+                    directives.append('Do not give one similar new practice question until the original active problem has a clear final answer.')
+                else:
+                    directives.append('Backend answer check: wrong or unclear on third attempt. Reveal the answer warmly, explain it simply, then give one similar new practice question. Do not ask the same question again.')
                 if answer_check.expected_answer:
                     directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
             if answer_check.feedback_note:

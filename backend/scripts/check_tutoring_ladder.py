@@ -1,6 +1,6 @@
 from backend.app.models import ChatHistoryItem, TutoringState
 from backend.app.tutoring_logic import build_chat_directives
-from backend.app.main import _answer_check_question, _correct_math_answer_reply, _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply
+from backend.app.main import _answer_check_question, _correct_math_answer_reply, _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply, _is_substep_of_active_problem
 from backend.app.services.tutor_answer_checker import TutorAnswerChecker
 
 
@@ -77,6 +77,17 @@ def main() -> None:
     if concern_state.attempt_count != 0 or concern_state.current_question:
         failures.append(f'Tutor concern was treated as an answer attempt: attempt={concern_state.attempt_count} current={concern_state.current_question!r}.')
 
+    clarification_directives, clarification_active, _, clarification_state = build_chat_directives(
+        'we were on 12 - 5',
+        [ChatHistoryItem(role='msalisia', content='Now that we know 30 x 3 = 90, let us finish the problem.')],
+        TutoringState(active_problem='34 x 3', current_question='What is 60 + 30?', attempt_count=0),
+    )
+    clarification_text = ' '.join(clarification_directives).lower()
+    if clarification_active != '34 x 3' or clarification_state.active_problem != '34 x 3':
+        failures.append(f'Clarification replaced unfinished active problem: active={clarification_active!r} state={clarification_state.active_problem!r}.')
+    if 'do not replace the unfinished active problem' not in clarification_text:
+        failures.append('Clarification did not guard against switching away from an unfinished active problem.')
+
     directives, _, _, second_state = build_chat_directives(
         '101',
         history,
@@ -98,6 +109,19 @@ def main() -> None:
         failures.append(f'Third wrong attempt state was attempt={third_state.attempt_count} revealed={third_state.answer_revealed}.')
     if 'give the correct answer' not in third_text or 'one new similar same-topic question' not in third_text:
         failures.append('Third wrong attempt did not require answer reveal plus similar practice.')
+
+    directives, _, _, substep_third_state = build_chat_directives(
+        '103',
+        [ChatHistoryItem(role='msalisia', content='What is 60 + 30?')],
+        TutoringState(active_problem='34 × 3', current_question='What is 60 + 30?', attempt_count=2),
+    )
+    substep_third_text = ' '.join(directives).lower()
+    if not substep_third_state.answer_revealed:
+        failures.append('Third wrong sub-step attempt did not mark answer as revealed.')
+    if 'complete the original active problem' not in substep_third_text or 'do not give a new similar practice question' not in substep_third_text:
+        failures.append('Third wrong sub-step attempt did not require finishing the active problem before similar practice.')
+    if not _is_substep_of_active_problem(TutoringState(active_problem='34 × 3', current_question='What is 60 + 30?')):
+        failures.append('Main sub-step guard did not detect 60 + 30 as part of 34 × 3.')
 
     checker = TutorAnswerChecker()
     wrong_check = checker.check_direct_math_statement('The problem is 34 x 3. My answer is 100. Is that correct?')
@@ -143,6 +167,7 @@ def main() -> None:
     print('- Direct multiplication help is deterministic and does not reveal too early.')
     print('- Clarifications and tutor concerns are not graded as answer attempts.')
     print('- Correct current-step math answers can be confirmed deterministically.')
+    print('- Multi-step problems finish the original problem before starting similar practice.')
 
 
 if __name__ == '__main__':
