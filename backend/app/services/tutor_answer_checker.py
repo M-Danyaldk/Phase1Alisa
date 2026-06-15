@@ -3,7 +3,8 @@ import re
 from dataclasses import dataclass
 from fractions import Fraction
 
-from ..assessment_validation import extract_math_expression, extract_numeric_value, format_fraction, normalize_math_text, safe_eval_expression
+from ..assessment_bank import AssessmentQuestion, all_assessment_versions
+from ..assessment_validation import extract_math_expression, extract_numeric_value, format_fraction, normalize_answer_text, normalize_math_text, safe_eval_expression, validate_assessment_answer
 from ..services.llm.router import LLMRouter
 
 
@@ -34,6 +35,9 @@ class TutorAnswerChecker:
         math_result = self._check_math(question, student_answer, expected_answer)
         if math_result.status != 'unclear':
             return math_result
+        local_text_result = self._check_local_text_prompt(subject, question, student_answer, expected_answer)
+        if local_text_result.status != 'unclear':
+            return local_text_result
         if expected_answer.strip():
             text_result = self._check_text_against_expected(student_answer, expected_answer)
             if text_result.status != 'unclear':
@@ -132,6 +136,86 @@ class TutorAnswerChecker:
         if overlap >= 0.35:
             return AnswerCheckResult(status='partially_correct', expected_answer=expected_answer)
         return AnswerCheckResult(status='incorrect', expected_answer=expected_answer)
+
+    def _check_local_text_prompt(
+        self,
+        subject: str,
+        question: str,
+        student_answer: str,
+        expected_answer: str,
+    ) -> AnswerCheckResult:
+        pseudo = self._pseudo_question(subject, question, expected_answer)
+        if not pseudo:
+            return AnswerCheckResult()
+        validation = validate_assessment_answer(pseudo, student_answer)
+        if validation.status == 'needs_review':
+            return AnswerCheckResult()
+        return AnswerCheckResult(
+            status=validation.status,
+            expected_answer=validation.expected_answer,
+            feedback_note=validation.feedback_note,
+        )
+
+    def _pseudo_question(self, subject: str, question: str, expected_answer: str) -> AssessmentQuestion | None:
+        clean_question = str(question or '').strip()
+        if not clean_question:
+            return None
+        lower = clean_question.lower()
+        matched = self._lookup_bank_question(subject, clean_question)
+        if matched:
+            return matched
+
+        if subject == 'Writing':
+            if lower.startswith('write one clear sentence'):
+                return self._build_pseudo_question(subject, clean_question, 'writing_rubric', expected_answer or 'One complete sentence that stays on topic.', 'complete sentence')
+            if lower.startswith('write 3 sentences'):
+                return self._build_pseudo_question(subject, clean_question, 'writing_rubric', expected_answer or 'Three connected explanatory sentences with a clear reason and details.', 'explanatory writing')
+            if lower.startswith('how can you make this sentence stronger'):
+                return self._build_pseudo_question(subject, clean_question, 'writing_rubric', expected_answer or 'A stronger sentence with more specific detail or vivid word choice.', 'revision for detail')
+
+        if lower.startswith('fix this sentence:'):
+            return self._build_pseudo_question(subject, clean_question, 'exact_text', expected_answer, 'grammar and conventions')
+        if 'what does "' in lower and '" mean' in lower:
+            return self._build_pseudo_question(subject, clean_question, 'keyword_text', expected_answer, 'vocabulary in context')
+        if subject == 'ELA' and expected_answer.strip():
+            return self._build_pseudo_question(subject, clean_question, 'keyword_text', expected_answer, 'reading comprehension')
+        return None
+
+    def _lookup_bank_question(self, subject: str, question: str) -> AssessmentQuestion | None:
+        normalized = normalize_answer_text(question)
+        if not normalized:
+            return None
+        for version in all_assessment_versions():
+            for item in version.questions:
+                if item.subject == subject and normalize_answer_text(item.question) == normalized:
+                    return item
+        return None
+
+    def _build_pseudo_question(
+        self,
+        subject: str,
+        question: str,
+        validation_type: str,
+        expected_answer: str,
+        skill: str,
+    ) -> AssessmentQuestion:
+        accepted_answers = (expected_answer,) if expected_answer.strip() and validation_type in {'exact_text', 'keyword_text'} else ()
+        return AssessmentQuestion(
+            id='tutor-local-check',
+            subject=subject,
+            grade=4,
+            version=0,
+            position=1,
+            skill=skill,
+            question=question,
+            validation_type=validation_type,
+            expected_answer=expected_answer,
+            accepted_answers=accepted_answers,
+            rubric=(),
+            next_topic_if_incorrect=skill,
+            child_correct_feedback='',
+            child_incorrect_feedback='',
+        )
 
     async def _classify_with_llm(
         self,

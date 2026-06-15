@@ -22,13 +22,51 @@ export type StudentProfile = {
 export type ChatMessage = { role: 'student' | 'msalisia'; content: string; provider?: string; subject?: string };
 export type TopicSource = 'manual' | 'default' | 'assessment';
 
+export type TutorStepRecord = {
+  step_id?: string;
+  label?: string;
+  description?: string;
+  expression?: string;
+  expected_answer?: string;
+  result?: string;
+  updated_expression?: string;
+  status?: string;
+  attempts?: number;
+  explanation?: string;
+};
+
+export type TutorHelperBranch = {
+  branch_id?: string;
+  branch_type?: string;
+  question?: string;
+  linked_step_id?: string;
+  return_step_id?: string;
+  status?: string;
+};
+
+export type TutorQueuedQuestion = {
+  question_id?: string;
+  question?: string;
+  subject?: string;
+  source?: string;
+  status?: string;
+};
+
 export type TutoringState = {
+  problem_id?: string;
+  main_problem?: string;
   active_problem: string;
   current_subject?: string;
   full_problem?: string;
+  ordered_steps?: TutorStepRecord[];
+  current_step_index?: number;
+  current_step_id?: string;
   completed_steps?: string[];
   current_expression?: string;
   remaining_steps?: string[];
+  completed_step_results?: string[];
+  step_results?: Record<string, string>;
+  attempts_per_step?: Record<string, number>;
   current_step: string;
   current_question?: string;
   expected_answer?: string;
@@ -40,6 +78,12 @@ export type TutoringState = {
   hint_given?: boolean;
   answer_revealed: boolean;
   next_similar_question?: string;
+  helper_branch?: TutorHelperBranch;
+  queued_followup_questions?: TutorQueuedQuestion[];
+  return_step_index?: number;
+  return_step_id?: string;
+  final_answer?: string;
+  problem_status?: string;
   mode: string;
   status: string;
   memory_note: string;

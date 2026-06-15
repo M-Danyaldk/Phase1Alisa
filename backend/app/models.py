@@ -27,13 +27,51 @@ class ChatHistoryItem(BaseModel):
     subject: Optional[str] = None
 
 
+class TutorStepRecord(BaseModel):
+    step_id: str = ''
+    label: str = ''
+    description: str = ''
+    expression: str = ''
+    expected_answer: str = ''
+    result: str = ''
+    updated_expression: str = ''
+    status: str = 'pending'
+    attempts: int = 0
+    explanation: str = ''
+
+
+class TutorHelperBranch(BaseModel):
+    branch_id: str = ''
+    branch_type: str = ''
+    question: str = ''
+    linked_step_id: str = ''
+    return_step_id: str = ''
+    status: str = 'idle'
+
+
+class TutorQueuedQuestion(BaseModel):
+    question_id: str = ''
+    question: str = ''
+    subject: str = ''
+    source: str = 'student'
+    status: str = 'queued'
+
+
 class TutoringState(BaseModel):
+    problem_id: str = ''
+    main_problem: str = ''
     active_problem: str = ''
     current_subject: str = ''
     full_problem: str = ''
+    ordered_steps: list[TutorStepRecord] = Field(default_factory=list)
+    current_step_index: int = 0
+    current_step_id: str = ''
     completed_steps: list[str] = Field(default_factory=list)
     current_expression: str = ''
     remaining_steps: list[str] = Field(default_factory=list)
+    completed_step_results: list[str] = Field(default_factory=list)
+    step_results: dict[str, str] = Field(default_factory=dict)
+    attempts_per_step: dict[str, int] = Field(default_factory=dict)
     current_step: str = ''
     current_question: str = ''
     expected_answer: str = ''
@@ -45,6 +83,12 @@ class TutoringState(BaseModel):
     hint_given: bool = False
     answer_revealed: bool = False
     next_similar_question: str = ''
+    helper_branch: TutorHelperBranch = Field(default_factory=TutorHelperBranch)
+    queued_followup_questions: list[TutorQueuedQuestion] = Field(default_factory=list)
+    return_step_index: int = 0
+    return_step_id: str = ''
+    final_answer: str = ''
+    problem_status: str = 'idle'
     mode: str = 'solve'
     status: str = 'idle'
     memory_note: str = ''

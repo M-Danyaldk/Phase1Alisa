@@ -66,6 +66,31 @@ Routing behavior:
 | `app/services/assessment_service.py` | Assessment evaluation and JSON parsing |
 | `app/database.py` | SQLite schema and helpers |
 
+## Tutor Flow Verification
+
+Use the tutor-flow checks after tutor architecture changes:
+
+```bash
+cd backend
+python -m scripts.check_tutor_flow_all
+```
+
+This runs:
+
+- `scripts/check_tutoring_ladder.py`
+- `scripts/check_tutor_flow_architecture.py`
+
+Current coverage includes:
+
+- multi-step math planning and progression
+- deterministic hint / reveal ladder behavior
+- helper-question return to main problem
+- queued follow-up questions after the main problem
+- explicit task switching
+- tutor-concern re-grounding
+- writing and ELA local answer checking
+- child-facing assessment feedback wording
+
 ## Production Notes
 
 For production, replace local SQLite with PostgreSQL and add:

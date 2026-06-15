@@ -138,11 +138,38 @@ def _fallback_result(
 
 def _child_feedback(question: AssessmentQuestion, status: str) -> str:
     if status == 'correct':
+        if question.validation_type == 'writing_rubric':
+            if question.skill == 'complete sentence':
+                return 'Nice job. You wrote a clear complete sentence.'
+            if question.skill == 'explanatory writing':
+                return 'Nice job. You explained your idea in complete sentences.'
+            if question.skill == 'revision for detail':
+                return 'Nice job. You made the sentence stronger with better detail.'
         return question.child_correct_feedback
     if status == 'partially_correct':
+        if question.validation_type == 'writing_rubric':
+            if question.skill == 'complete sentence':
+                return 'Good try. Your idea is there. Next, make it a full sentence with a capital letter and ending punctuation.'
+            if question.skill == 'explanatory writing':
+                return 'Good try. You started explaining your idea. Next, write three complete sentences and add a clearer reason.'
+            if question.skill == 'revision for detail':
+                return 'Good try. You started to revise the sentence. Next, add more specific detail to make it stronger.'
+        if question.validation_type == 'exact_text':
+            return 'Good try. You fixed part of it. Check capitalization, grammar, and punctuation one more time.'
         return f'Nice effort. You are close, and we can strengthen {question.next_topic_if_incorrect}.'
     if status == 'needs_review':
         return 'Ms. Alisia will review this carefully before choosing the next step.'
+    if question.validation_type == 'writing_rubric':
+        if question.skill == 'complete sentence':
+            return 'Good try. Let’s practice writing one clear complete sentence.'
+        if question.skill == 'explanatory writing':
+            return 'Good try. Let’s practice explaining your idea in three complete sentences.'
+        if question.skill == 'revision for detail':
+            return 'Good try. Let’s practice making a sentence stronger with clearer detail.'
+    if question.validation_type == 'exact_text':
+        return 'Good try. Let’s practice fixing the sentence so it has the right grammar and punctuation.'
+    if question.validation_type == 'keyword_text':
+        return 'Good try. Let’s go back to the main idea and look for the most important words.'
     return question.child_incorrect_feedback
 
 

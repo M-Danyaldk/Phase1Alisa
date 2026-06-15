@@ -170,9 +170,11 @@ def _validate_numeric(question: AssessmentQuestion, answer: str) -> AnswerValida
 
 def _validate_exact_text(question: AssessmentQuestion, answer: str) -> AnswerValidationResult:
     normalized = normalize_answer_text(answer)
+    canonical = _canonical_text(normalized)
     expected_options = {normalize_answer_text(question.expected_answer)}
     expected_options.update(normalize_answer_text(item) for item in question.accepted_answers)
-    if normalized in expected_options:
+    canonical_options = {_canonical_text(item) for item in expected_options}
+    if normalized in expected_options or canonical in canonical_options:
         return _result(question, answer, 'correct', 'high', 'Text matches the expected correction.')
 
     student_words = keyword_set(answer)
@@ -202,19 +204,42 @@ def _validate_writing_minimum(question: AssessmentQuestion, answer: str) -> Answ
     words = re.findall(r"[A-Za-z0-9']+", answer)
     sentence_count = _sentence_count(answer)
     has_ending_punctuation = bool(re.search(r'[.!?]\s*$', answer.strip()))
+    starts_with_capital = bool(re.match(r'^\s*[A-Z]', answer))
+    prompt = normalize_answer_text(question.question)
 
     if len(words) < 4:
         return _result(question, answer, 'incorrect', 'high', 'Writing answer is too short to assess.')
 
-    if question.position == 2:
-        if sentence_count >= 3 and len(words) >= 15:
-            return _result(question, answer, 'needs_review', 'medium', 'Meets the three-sentence minimum and is ready for rubric review.')
-        if sentence_count >= 2 and len(words) >= 10:
+    if question.skill == 'complete sentence' or prompt.startswith('write one clear sentence'):
+        if sentence_count >= 1 and len(words) >= 6 and has_ending_punctuation and starts_with_capital:
+            return _result(question, answer, 'correct', 'high', 'Wrote one complete sentence with a capital letter and ending punctuation.')
+        if sentence_count >= 1 and len(words) >= 5:
+            return _result(question, answer, 'partially_correct', 'medium', 'The idea is started, but the sentence needs stronger conventions or clearer wording.')
+        return _result(question, answer, 'incorrect', 'high', 'Does not yet form one clear complete sentence.')
+
+    if question.skill == 'explanatory writing' or prompt.startswith('write 3 sentences'):
+        explanation_markers = {'because', 'so', 'this', 'helps', 'matters', 'builds', 'shows'}
+        answer_words = {word.lower() for word in words}
+        has_reason_language = bool(answer_words & explanation_markers)
+        if sentence_count >= 3 and len(words) >= 15 and has_reason_language:
+            return _result(question, answer, 'correct', 'high', 'Includes three explanatory sentences with a clear reason.')
+        if sentence_count >= 2 and len(words) >= 8:
             return _result(question, answer, 'partially_correct', 'medium', 'Includes some explanation but not the full three-sentence target.')
-        return _result(question, answer, 'incorrect', 'high', 'Does not meet the three-sentence writing target.')
+        return _result(question, answer, 'incorrect', 'high', 'Does not yet meet the three-sentence explanatory writing target.')
+
+    if question.skill == 'revision for detail' or prompt.startswith('how can you make this sentence stronger'):
+        original_sentence = _revision_source_sentence(question.question)
+        original_words = keyword_set(original_sentence)
+        student_words = keyword_set(answer)
+        added_words = student_words - original_words
+        if sentence_count >= 1 and len(words) >= 6 and has_ending_punctuation and original_words and student_words & original_words and added_words:
+            return _result(question, answer, 'correct', 'medium', 'Revised the sentence with added detail or stronger word choice.')
+        if sentence_count >= 1 and len(words) >= 5:
+            return _result(question, answer, 'partially_correct', 'medium', 'Attempts a stronger sentence, but it needs more specific detail or clearer revision.')
+        return _result(question, answer, 'incorrect', 'high', 'Does not yet revise the sentence into a stronger complete sentence.')
 
     if has_ending_punctuation and len(words) >= 6:
-        return _result(question, answer, 'needs_review', 'medium', 'Meets the basic writing minimum and is ready for rubric review.')
+        return _result(question, answer, 'correct', 'medium', 'Meets the basic writing minimum.')
     if len(words) >= 5:
         return _result(question, answer, 'partially_correct', 'medium', 'Has enough words but may need sentence punctuation or detail.')
     return _result(question, answer, 'incorrect', 'high', 'Does not meet the basic writing target.')
@@ -222,6 +247,37 @@ def _validate_writing_minimum(question: AssessmentQuestion, answer: str) -> Answ
 
 def _sentence_count(text: str) -> int:
     return len([part for part in re.split(r'[.!?]+', text) if part.strip()])
+
+
+def _revision_source_sentence(question_text: str) -> str:
+    match = re.search(r'stronger:\s*(.+)$', str(question_text or ''), re.IGNORECASE)
+    if match:
+        return match.group(1).strip().strip('"')
+    return ''
+
+
+def _canonical_text(text: str) -> str:
+    canonical = normalize_answer_text(text)
+    replacements = {
+        "doesn't": 'does not',
+        "don't": 'do not',
+        "isn't": 'is not',
+        "aren't": 'are not',
+        "wasn't": 'was not',
+        "weren't": 'were not',
+        "can't": 'cannot',
+        "won't": 'will not',
+        "didn't": 'did not',
+        "hasn't": 'has not',
+        "haven't": 'have not',
+        "hadn't": 'had not',
+        "it's": 'it is',
+        "that's": 'that is',
+    }
+    for source, target in replacements.items():
+        canonical = canonical.replace(source, target)
+    canonical = re.sub(r'\s+', ' ', canonical).strip()
+    return canonical
 
 
 def _result(

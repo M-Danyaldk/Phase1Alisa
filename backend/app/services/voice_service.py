@@ -23,7 +23,15 @@ from .session_activity_service import SessionActivityService
 from .topic_resolver import TopicResolver
 from .tutor_answer_checker import TutorAnswerChecker
 from ..tutoring_logic import build_chat_directives, update_tutoring_state_after_reply
-from ..utils.multi_step_progress import build_progress_tracker_directives, update_multi_step_progress
+from ..utils.multi_step_progress import (
+    advance_structured_math_problem,
+    build_progress_tracker_directives,
+    build_structured_retry_reply,
+    build_structured_step_reply,
+    current_step_expression,
+    has_structured_math_problem,
+    update_multi_step_progress,
+)
 from ..utils.tutor_response import format_student_reply, looks_incomplete_response
 
 logger = logging.getLogger(__name__)
@@ -39,6 +47,38 @@ def _correct_math_answer_reply(answer_check, state: TutoringState, current_step:
     if expression:
         return f"Yes, that's correct!\n\n{expression} = {expected}.\n\nNice work. Let's keep going one small step at a time."
     return f"Yes, that's correct!\n\nThe answer is {expected}.\n\nNice work. Let's keep going one small step at a time."
+
+
+def _text_answer_check_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
+    prompt = (state.current_question or current_step or state.current_step or 'that question').strip()
+    expected = (answer_check.expected_answer or state.expected_answer or '').strip()
+    note = (answer_check.feedback_note or '').strip()
+
+    if answer_check.is_correct:
+        if note:
+            return f"Yes, that's correct!\n\n{note}\n\nNice work. Let's keep going one small step at a time."
+        return "Yes, that's correct!\n\nNice work. Let's keep going one small step at a time."
+
+    if state.attempt_count <= 1:
+        hint = note or 'Take one more look at the question and try to make your answer a little clearer.'
+        return f"Good try.\n\n{hint}\n\nTry this same question again:\n{prompt}"
+
+    if state.attempt_count == 2:
+        hint = note or 'You are close. Add a clearer reason, detail, or full sentence in your answer.'
+        return f"Good try.\n\n{hint}\n\nTry the same question one more time:\n{prompt}"
+
+    if expected:
+        return (
+            "Let's finish this one together.\n\n"
+            f"A strong answer would be: {expected}\n\n"
+            f"{note or 'Now you can use that idea in the next step.'}"
+        )
+
+    return (
+        "Let's finish this one together.\n\n"
+        f"{note or 'A stronger answer needs clearer words, a complete idea, or better support.'}\n\n"
+        "Now let's keep going one small step at a time."
+    )
 
 
 def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
@@ -101,6 +141,8 @@ def _substep_correct_finish_reply(answer_check, state: TutoringState, current_st
 
 
 def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
+    if has_structured_math_problem(state):
+        return current_step_expression(state) or state.current_question or current_step
     return '\n'.join(
         part
         for part in [
@@ -112,6 +154,10 @@ def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
 
 
 def _display_math_expression_from_state(state: TutoringState, current_step: str = '') -> str:
+    if has_structured_math_problem(state):
+        expression = current_step_expression(state) or state.current_expression or state.main_problem
+        if expression:
+            return expression.replace('*', 'Ãƒâ€”').replace('/', 'ÃƒÂ·')
     for value in (state.current_question, current_step, state.current_step, state.active_problem):
         expression = extract_math_expression(value)
         if expression:
@@ -120,6 +166,8 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
 
 
 def _is_substep_of_active_problem(state: TutoringState, current_step: str = '') -> bool:
+    if has_structured_math_problem(state):
+        return bool(state.main_problem and state.current_step_id)
     active = (state.active_problem or '').strip().lower().rstrip('?')
     step = (state.current_question or current_step or state.current_step or '').strip().lower().rstrip('?')
     if not active or not step or active == step:
@@ -427,6 +475,9 @@ class VoiceService:
         directives, active_task, current_step, next_state = build_chat_directives(transcript, history, tutoring_state)
         next_state = next_state.model_copy(update={'current_subject': subject})
         next_state = update_multi_step_progress(transcript, next_state)
+        if has_structured_math_problem(next_state):
+            active_task = next_state.main_problem or active_task
+            current_step = current_step_expression(next_state) or current_step
         answer_check = None
         if next_state.attempt_count > 0 and (next_state.current_question or current_step):
             answer_check = await TutorAnswerChecker().check(
@@ -485,7 +536,23 @@ class VoiceService:
             f"Memory: {next_state.memory_note or 'none'}"
         )
         user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nRespond as Ms. Alisia using the required tutoring method."
-        if (
+        structured_progression = has_structured_math_problem(next_state) and subject == 'Math'
+        if structured_progression and answer_check and answer_check.is_correct:
+            final_state = advance_structured_math_problem(next_state, answer_check.expected_answer or next_state.expected_answer)
+            formatted_reply = build_structured_step_reply(next_state, final_state)
+            result_provider = 'local'
+            result_model = 'deterministic-structured-step-completion'
+        elif structured_progression and answer_check and answer_check.is_wrong and next_state.attempt_count in {1, 2}:
+            final_state = next_state
+            formatted_reply = build_structured_retry_reply(next_state, next_state.attempt_count)
+            result_provider = 'local'
+            result_model = f'deterministic-structured-step-hint-{next_state.attempt_count}'
+        elif structured_progression and answer_check and answer_check.is_wrong and next_state.attempt_count >= 3:
+            final_state = advance_structured_math_problem(next_state, answer_check.expected_answer or next_state.expected_answer)
+            formatted_reply = build_structured_step_reply(next_state, final_state, reveal=True)
+            result_provider = 'local'
+            result_model = 'deterministic-structured-step-reveal'
+        elif (
             answer_check
             and answer_check.is_correct
             and subject == 'Math'
@@ -498,6 +565,10 @@ class VoiceService:
             formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = 'deterministic-current-math-check'
+        elif answer_check and subject != 'Math' and (answer_check.expected_answer or answer_check.feedback_note or answer_check.status in {'correct', 'incorrect', 'partially_correct'}):
+            formatted_reply = _text_answer_check_reply(answer_check, next_state, current_step)
+            result_provider = 'local'
+            result_model = f'deterministic-{subject.lower()}-text-check'
         elif (
             answer_check
             and answer_check.is_wrong
@@ -524,7 +595,16 @@ class VoiceService:
                 formatted_reply = format_student_reply(f'{formatted_reply}\n\n{continuation.text}')
             result_provider = result.provider
             result_model = result.model
-        final_state = update_tutoring_state_after_reply(next_state, transcript, formatted_reply)
+        if not (
+            structured_progression
+            and answer_check
+            and (
+                answer_check.is_correct
+                or (answer_check.is_wrong and next_state.attempt_count in {1, 2})
+                or (answer_check.is_wrong and next_state.attempt_count >= 3)
+            )
+        ):
+            final_state = update_tutoring_state_after_reply(next_state, transcript, formatted_reply)
 
         if chat_store and chat_thread_id:
             try:

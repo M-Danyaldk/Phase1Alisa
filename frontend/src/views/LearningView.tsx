@@ -69,7 +69,48 @@ function detectSubjectFromMessage(message: string): Subject | null {
 }
 
 export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', initialTopic, studentSession = false, voiceAllowed = false, onBackHome, onInactivePause, onRequireRelogin }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; initialTopic?: string; studentSession?: boolean; voiceAllowed?: boolean; onBackHome?: () => void; onInactivePause?: (message: string) => void; onRequireRelogin?: (message: string) => void }) {
-  const initialTutoringState: TutoringState = { active_problem: '', current_step: '', attempt_count: 0, answer_revealed: false, mode: 'solve', status: 'idle', memory_note: '' };
+  const initialTutoringState: TutoringState = {
+    problem_id: '',
+    main_problem: '',
+    active_problem: '',
+    full_problem: '',
+    ordered_steps: [],
+    current_step_index: 0,
+    current_step_id: '',
+    completed_steps: [],
+    current_expression: '',
+    remaining_steps: [],
+    completed_step_results: [],
+    step_results: {},
+    attempts_per_step: {},
+    current_step: '',
+    current_question: '',
+    expected_answer: '',
+    student_answer: '',
+    correctness_status: '',
+    skill: '',
+    step_number: 0,
+    attempt_count: 0,
+    hint_given: false,
+    answer_revealed: false,
+    next_similar_question: '',
+    helper_branch: {
+      branch_id: '',
+      branch_type: '',
+      question: '',
+      linked_step_id: '',
+      return_step_id: '',
+      status: 'idle',
+    },
+    queued_followup_questions: [],
+    return_step_index: 0,
+    return_step_id: '',
+    final_answer: '',
+    problem_status: 'idle',
+    mode: 'solve',
+    status: 'idle',
+    memory_note: '',
+  };
   const chatSetupNotice = 'Chat worked, but history was not saved. Please check Supabase setup.';
   const [subject, setSubject] = useState<Subject>(initialSubject);
   const [topic, setTopic] = useState(initialTopic || subjectDefaults[initialSubject]);
