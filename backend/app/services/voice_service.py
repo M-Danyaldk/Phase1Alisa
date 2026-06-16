@@ -22,10 +22,22 @@ from .llm.router import LLMRouter
 from .session_activity_service import SessionActivityService
 from .topic_resolver import TopicResolver
 from .tutor_answer_checker import TutorAnswerChecker
-from ..tutoring_logic import build_chat_directives, update_tutoring_state_after_reply
+from .tutor_intent_classifier import TutorIntentClassifier
+from .tutor_math_normalizer import TutorMathNormalizer
+from .tutor_subject_classifier import TutorSubjectClassifier
+from ..tutoring_logic import (
+    build_subject_boundary_reply,
+    build_chat_directives,
+    build_new_problem_clarification_reply,
+    build_resume_paused_problem_reply,
+    build_switch_confirmation_reply,
+    detect_off_subject_request,
+    update_tutoring_state_after_reply,
+)
 from ..utils.multi_step_progress import (
     advance_structured_math_problem,
     build_progress_tracker_directives,
+    build_structured_roadmap_reply,
     build_structured_retry_reply,
     build_structured_step_reply,
     current_step_expression,
@@ -472,18 +484,120 @@ class VoiceService:
             chat_store = None
             history_error = str(exc)
 
-        directives, active_task, current_step, next_state = build_chat_directives(transcript, history, tutoring_state)
+        effective_transcript = transcript
+        if subject == 'Math':
+            normalization = await TutorMathNormalizer().normalize_if_needed(subject, transcript, tutoring_state)
+            if normalization.normalized_expression:
+                effective_transcript = normalization.normalized_expression
+
+        subject_assist = await TutorSubjectClassifier().classify_if_needed(
+            subject,
+            effective_transcript,
+            tutoring_state,
+        )
+        uncertain_subject_boundary = (
+            subject in {'Math', 'ELA', 'Writing'}
+            and subject_assist.label == 'ambiguous'
+            and subject_assist.confidence in {'medium', 'high'}
+            and TutorSubjectClassifier().should_use_fallback(subject, effective_transcript, tutoring_state)
+        )
+
+        if detect_off_subject_request(subject, effective_transcript, tutoring_state) or subject_assist.label == 'off_subject' or uncertain_subject_boundary:
+            final_state = tutoring_state.model_copy(update={
+                'current_subject': subject,
+                'student_answer': transcript,
+                'attempt_count': 0,
+                'hint_given': False,
+                'correctness_status': '',
+            })
+            formatted_reply = build_subject_boundary_reply(subject, final_state)
+            result_provider = 'local'
+            result_model = 'deterministic-subject-boundary'
+            if chat_store and chat_thread_id:
+                try:
+                    message = await chat_store.store_message(parent_id, ChatMessageCreateRequest(
+                        thread_id=chat_thread_id,
+                        child_id=child_id,
+                        role='msalisia',
+                        content=formatted_reply,
+                        subject=subject,
+                        topic=resolved_topic,
+                        provider=result_provider,
+                        model=result_model,
+                        tutoring_state={**final_state.model_dump(), 'voice_mode': True},
+                    ))
+                    assistant_message_id = message.get('id')
+                    history_saved = True
+                except Exception as exc:
+                    logger.warning('Voice chat history save failed after subject boundary reply: %s', exc)
+                    history_error = str(exc)
+
+            await learning_memory_service.record_exchange_summary(
+                parent_id=parent_id,
+                child_id=child_id,
+                subject=subject,
+                topic=resolved_topic,
+                grade_level=child.get('grade_level'),
+                working_level=(assessment_context or {}).get('assessed_level'),
+                student_message=transcript,
+                assistant_text=formatted_reply,
+                tutoring_state=final_state,
+                thread_id=chat_thread_id,
+                source='voice_session',
+                metadata={
+                    'provider': result_provider,
+                    'model': result_model,
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': topic_resolution.get('assessed_level'),
+                    'voice_mode': True,
+                },
+            )
+
+            return {
+                'assistant_text': formatted_reply,
+                'provider': result_provider,
+                'model': result_model,
+                'tutoring_state': final_state,
+                'thread_id': chat_thread_id,
+                'assistant_message_id': assistant_message_id,
+                'history_saved': history_saved,
+                'history_error': history_error,
+                'resolved_topic': resolved_topic,
+                'topic_source': topic_resolution['source'],
+                'assessed_level': topic_resolution.get('assessed_level'),
+            }
+
+        intent_assist = await TutorIntentClassifier().classify_if_needed(
+            subject,
+            effective_transcript,
+            history,
+            tutoring_state,
+        )
+        directives, active_task, current_step, next_state = build_chat_directives(
+            effective_transcript,
+            history,
+            tutoring_state,
+            assisted_intent_label=intent_assist.label,
+        )
         next_state = next_state.model_copy(update={'current_subject': subject})
-        next_state = update_multi_step_progress(transcript, next_state)
+        previous_structured_problem_id = tutoring_state.problem_id
+        if next_state.mode != 'clarify_new_problem':
+            next_state = update_multi_step_progress(effective_transcript, next_state)
         if has_structured_math_problem(next_state):
             active_task = next_state.main_problem or active_task
             current_step = current_step_expression(next_state) or current_step
+        should_send_structured_roadmap = (
+            subject == 'Math'
+            and has_structured_math_problem(next_state)
+            and next_state.attempt_count == 0
+            and next_state.problem_id != previous_structured_problem_id
+        )
         answer_check = None
         if next_state.attempt_count > 0 and (next_state.current_question or current_step):
             answer_check = await TutorAnswerChecker().check(
                 subject=subject,
                 question=_answer_check_question(next_state, current_step),
-                student_answer=transcript,
+                student_answer=effective_transcript,
                 expected_answer=next_state.expected_answer,
             )
             next_state = next_state.model_copy(update={
@@ -535,9 +649,48 @@ class VoiceService:
             f"Correctness: {next_state.correctness_status or 'not checked'}; "
             f"Memory: {next_state.memory_note or 'none'}"
         )
-        user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nRespond as Ms. Alisia using the required tutoring method."
+        user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or effective_transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nNormalized math if useful: {effective_transcript}\n\nRespond as Ms. Alisia using the required tutoring method."
         structured_progression = has_structured_math_problem(next_state) and subject == 'Math'
-        if structured_progression and answer_check and answer_check.is_correct:
+        special_local_reply = False
+        if next_state.mode == 'resume_paused_problem_notice':
+            final_state = next_state.model_copy(update={
+                'mode': 'practice' if (next_state.current_question or next_state.current_step) else 'solve',
+                'status': 'waiting_for_student' if (next_state.current_question or next_state.current_step) else 'solving',
+                'paused_main_problem': '',
+                'paused_current_step': '',
+                'paused_current_question': '',
+                'paused_completed_steps': [],
+            })
+            formatted_reply = build_resume_paused_problem_reply(next_state)
+            result_provider = 'local'
+            result_model = 'deterministic-resume-paused-problem'
+            special_local_reply = True
+        elif next_state.mode == 'clarify_new_problem':
+            final_state = next_state
+            formatted_reply = build_new_problem_clarification_reply(next_state)
+            result_provider = 'local'
+            result_model = 'deterministic-new-problem-clarification'
+            special_local_reply = True
+        elif (
+            subject == 'Math'
+            and tutoring_state.problem_status not in {'finished', 'idle'}
+            and next_state.paused_main_problem
+            and next_state.active_problem.strip()
+            and next_state.active_problem.strip() != next_state.paused_main_problem.strip()
+            and next_state.mode == 'solve'
+            and next_state.status == 'solving'
+        ):
+            final_state = next_state
+            formatted_reply = build_switch_confirmation_reply(next_state, next_state.active_problem)
+            result_provider = 'local'
+            result_model = 'deterministic-switch-confirmation'
+            special_local_reply = True
+        elif should_send_structured_roadmap:
+            final_state = next_state
+            formatted_reply = build_structured_roadmap_reply(next_state)
+            result_provider = 'local'
+            result_model = 'deterministic-structured-roadmap'
+        elif structured_progression and answer_check and answer_check.is_correct:
             final_state = advance_structured_math_problem(next_state, answer_check.expected_answer or next_state.expected_answer)
             formatted_reply = build_structured_step_reply(next_state, final_state)
             result_provider = 'local'
@@ -595,8 +748,10 @@ class VoiceService:
                 formatted_reply = format_student_reply(f'{formatted_reply}\n\n{continuation.text}')
             result_provider = result.provider
             result_model = result.model
-        if not (
-            structured_progression
+        if not special_local_reply and not (
+            next_state.mode not in {'clarify_new_problem', 'resume_paused_problem_notice'}
+            and not should_send_structured_roadmap
+            and structured_progression
             and answer_check
             and (
                 answer_check.is_correct
@@ -604,7 +759,7 @@ class VoiceService:
                 or (answer_check.is_wrong and next_state.attempt_count >= 3)
             )
         ):
-            final_state = update_tutoring_state_after_reply(next_state, transcript, formatted_reply)
+            final_state = update_tutoring_state_after_reply(next_state, effective_transcript, formatted_reply)
 
         if chat_store and chat_thread_id:
             try:

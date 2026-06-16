@@ -96,6 +96,31 @@ ACTION_INTENTS = {
     'check_answer': ['check my answer', 'is this right', 'is my answer right', 'check this'],
 }
 
+SUBJECT_SWITCH_PATTERN = re.compile(r'\b(switch|change|move|go)\s+(to|back to)\s+(math|reading|writing|ela)\b')
+MATH_TOPIC_WORDS = {
+    'math', 'fraction', 'fractions', 'numerator', 'denominator', 'lcm', 'multiply', 'multiplication',
+    'divide', 'division', 'add', 'addition', 'subtract', 'subtraction', 'equation', 'expression',
+    'problem', 'step', 'decimal', 'number', 'numbers', 'whole number', 'mixed number', 'simplify',
+    'solve', 'sum', 'difference', 'product', 'quotient',
+}
+ELA_TOPIC_WORDS = {
+    'reading', 'story', 'passage', 'main idea', 'inference', 'character', 'characters', 'theme',
+    'meaning', 'context clue', 'vocabulary', 'evidence', 'author', 'setting', 'plot',
+}
+WRITING_TOPIC_WORDS = {
+    'writing', 'write', 'revise', 'revision', 'rewrite', 'edit', 'essay', 'topic sentence',
+    'complete sentence', 'clear sentence', 'stronger sentence', 'detail', 'details',
+}
+GENERAL_KNOWLEDGE_WORDS = {
+    'photosynthesis', 'plant', 'plants', 'science', 'volcano', 'planet', 'president', 'country',
+    'history', 'animal', 'animals', 'solar system', 'gravity', 'weather',
+}
+SCIENCE_TOPIC_WORDS = {
+    'photosynthesis', 'plant', 'plants', 'leaf', 'leaves', 'stem', 'roots', 'root', 'flower', 'flowers',
+    'sunlight', 'soil', 'water', 'air', 'oxygen', 'carbon dioxide', 'energy', 'chlorophyll',
+    'science', 'gravity', 'weather', 'volcano', 'planet', 'planets', 'solar system',
+}
+
 
 def _normalized(text: str) -> str:
     return ' '.join(text.lower().strip().split())
@@ -141,12 +166,28 @@ def detect_switch_task_intent(message: str) -> bool:
     return _contains_any(message, SWITCH_TASK_PHRASES)
 
 
+def detect_explicit_subject_switch(message: str) -> bool:
+    return bool(SUBJECT_SWITCH_PATTERN.search(_normalized(message)))
+
+
 def detect_math_expression(message: str) -> bool:
     if not any(char.isdigit() for char in message):
         return False
     if re.search(r'\d\s*[xX]\s*\d', message):
         return True
     return any(symbol in message for symbol in ['+', '-', '*', '/', '=', '×', '÷'])
+
+
+def _extract_number_tokens(text: str) -> set[str]:
+    return set(re.findall(r'-?\d+(?:/\d+)?(?:\.\d+)?', str(text or '')))
+
+
+def _looks_like_raw_math_expression_only(message: str) -> bool:
+    text = str(message or '').strip()
+    if not text or not detect_math_expression(text):
+        return False
+    cleaned = re.sub(r'[\d\s+\-*/=().xX]', '', text)
+    return cleaned == ''
 
 
 def detect_action_intent(message: str) -> str:
@@ -195,6 +236,92 @@ def _looks_like_new_problem(message: str) -> bool:
     return text.startswith(starters) or len(text) > 24
 
 
+def _looks_like_general_knowledge_question(message: str) -> bool:
+    text = _normalized(message)
+    if not text:
+        return False
+    question_like = bool(re.match(r'^(what is|what are|who is|who are|how do|how does|why do|why does|tell me about|explain)\b', text))
+    if not question_like:
+        return False
+    return any(word in text for word in GENERAL_KNOWLEDGE_WORDS | SCIENCE_TOPIC_WORDS)
+
+
+def _looks_like_reading_task(message: str) -> bool:
+    text = _normalized(message)
+    if not text:
+        return False
+
+    strong_phrases = (
+        'main idea',
+        'context clue',
+        'what does',
+        'what is the meaning',
+        'meaning of',
+        'character',
+        'theme',
+        'passage',
+        'story',
+        'reading',
+        'vocabulary',
+        'inference',
+        'author',
+        'setting',
+        'plot',
+    )
+    starters = (
+        'read this',
+        'help me understand this passage',
+        'help me with this passage',
+        'help me with this text',
+        'can you help me with this passage',
+        'can you help me with this text',
+        'help me read this',
+        'what does',
+        'what is the main idea',
+        'who is the main character',
+        'what is the theme',
+    )
+    return text.startswith(starters) or any(phrase in text for phrase in strong_phrases)
+
+
+def _looks_like_writing_task(message: str) -> bool:
+    text = _normalized(message)
+    if not text:
+        return False
+
+    strong_phrases = (
+        'write one clear sentence',
+        'write 3 sentences',
+        'write three sentences',
+        'fix this sentence',
+        'make this sentence stronger',
+        'how can you make this sentence stronger',
+        'complete sentence',
+        'topic sentence',
+        'revise',
+        'revision',
+        'rewrite',
+        'edit this',
+        'writing',
+        'essay',
+    )
+    starters = (
+        'help me write',
+        'help me with this paragraph',
+        'help me with this sentence',
+        'can you help me with this paragraph',
+        'can you help me with this sentence',
+        'check my sentence',
+        'write ',
+        'rewrite ',
+        'revise ',
+        'edit ',
+        'fix this sentence',
+        'how can you make this sentence stronger',
+    )
+    return text.startswith(starters) or any(phrase in text for phrase in strong_phrases)
+
+
 def _looks_like_answer_to_current_math_step(message: str, current_question: str) -> bool:
     text = _normalized(message)
     if not current_question.strip() or not text:
@@ -203,11 +330,49 @@ def _looks_like_answer_to_current_math_step(message: str, current_question: str)
         return False
     if not any(char.isdigit() for char in message):
         return False
+    if re.fullmatch(r'-?\d+(?:/\d+)?(?:\.\d+)?', text):
+        return True
     if len(text) > 32:
         return False
-    if detect_math_expression(message):
+    return False
+
+
+def _is_related_to_active_problem(message: str, state: TutoringState, active_problem: str, current_step: str) -> bool:
+    normalized = _normalized(message)
+    if not normalized:
+        return False
+
+    math_refs = [
+        active_problem,
+        state.main_problem,
+        current_step,
+        state.current_question,
+        state.current_expression,
+        *[step.expression for step in state.ordered_steps],
+        *state.completed_steps,
+        *state.completed_step_results,
+        *list(state.step_results.values()),
+    ]
+    ref_numbers = set().union(*(_extract_number_tokens(item) for item in math_refs if item))
+    message_numbers = _extract_number_tokens(message)
+    shared_numbers = ref_numbers.intersection(message_numbers)
+
+    if any(phrase in normalized for phrase in ['how', 'why', 'came', 'come', 'became', 'become', 'from', 'mean', 'explain', 'get', 'got']):
+        return bool(shared_numbers)
+
+    current_step_text = _normalized(current_step)
+    if current_step_text and any(phrase in normalized for phrase in ['this step', 'that step', 'current step', 'your step']):
         return True
-    return bool(re.fullmatch(r'-?\d+(?:\.\d+)?', text))
+
+    if any(phrase in normalized for phrase in ['how did', 'where did', 'why is', 'why did', 'how do you get']):
+        return bool(shared_numbers)
+
+    if state.current_step_id and current_step.strip():
+        current_numbers = _extract_number_tokens(current_step)
+        if message_numbers and current_numbers and message_numbers.issubset(current_numbers):
+            return True
+
+    return False
 
 
 def _question_id(text: str) -> str:
@@ -383,6 +548,12 @@ def _structured_state_fields(state: TutoringState) -> dict:
         'attempts_per_step': state.attempts_per_step,
         'helper_branch': state.helper_branch,
         'queued_followup_questions': state.queued_followup_questions,
+        'pending_input_kind': state.pending_input_kind,
+        'pending_new_problem': state.pending_new_problem,
+        'paused_main_problem': state.paused_main_problem,
+        'paused_current_step': state.paused_current_step,
+        'paused_current_question': state.paused_current_question,
+        'paused_completed_steps': state.paused_completed_steps,
         'return_step_index': state.return_step_index,
         'return_step_id': state.return_step_id,
         'final_answer': state.final_answer,
@@ -390,7 +561,12 @@ def _structured_state_fields(state: TutoringState) -> dict:
     }
 
 
-def build_chat_directives(message: str, history: list[ChatHistoryItem], state: TutoringState | None = None) -> tuple[list[str], str, str, TutoringState]:
+def build_chat_directives(
+    message: str,
+    history: list[ChatHistoryItem],
+    state: TutoringState | None = None,
+    assisted_intent_label: str = '',
+) -> tuple[list[str], str, str, TutoringState]:
     state = state or TutoringState()
     directives = _base_directives()
     active_problem = infer_active_problem(message, history, state)
@@ -401,6 +577,7 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     definition = detect_definition_intent(message)
     new_problem = _looks_like_new_problem(message)
     math_expression = detect_math_expression(message)
+    raw_math_expression_only = _looks_like_raw_math_expression_only(message)
     homework_or_skip = detect_homework_or_skip_intent(message)
     switch_task = detect_switch_task_intent(message)
     action_intent = detect_action_intent(message)
@@ -410,8 +587,67 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     opening_followup = _is_opening_followup(history, state)
     answer_to_current_math_step = _looks_like_answer_to_current_math_step(message, current_question or current_step)
     unfinished_main_problem = _has_unfinished_main_problem(state)
+    related_to_active_problem = _is_related_to_active_problem(message, state, active_problem, current_step or current_question)
+    if assisted_intent_label == 'answer_current_step':
+        answer_to_current_math_step = True
+    elif assisted_intent_label == 'related_question':
+        related_to_active_problem = True
+        new_problem = True
+    elif assisted_intent_label == 'switch_request':
+        switch_task = True
+        new_problem = True
+    elif assisted_intent_label == 'clarification_about_context':
+        context_clarification = True
+    elif assisted_intent_label == 'new_problem':
+        new_problem = True
+    needs_new_problem_clarification = (
+        unfinished_main_problem
+        and raw_math_expression_only
+        and not switch_task
+        and not answer_to_current_math_step
+        and not related_to_active_problem
+    )
+    if assisted_intent_label == 'new_problem' and unfinished_main_problem and not switch_task and not answer_to_current_math_step:
+        needs_new_problem_clarification = True
+    if unfinished_main_problem and not switch_task and (related_to_active_problem or needs_new_problem_clarification):
+        active_problem = state.main_problem or state.active_problem or active_problem
+
+    if (
+        state.mode == 'resume_paused_problem'
+        and state.paused_main_problem.strip()
+        and not switch_task
+        and not new_problem
+        and not homework_or_skip
+        and not tutor_concern
+        and not context_clarification
+    ):
+        restored_problem = state.paused_main_problem.strip()
+        restored_step = state.paused_current_step.strip()
+        restored_question = state.paused_current_question.strip() or restored_step
+        structured_fields = _structured_state_fields(state)
+        next_state = TutoringState(
+            **structured_fields,
+            active_problem=restored_problem,
+            current_subject=state.current_subject,
+            current_step=restored_step,
+            current_question=restored_question,
+            expected_answer=state.expected_answer,
+            student_answer=message,
+            correctness_status='',
+            skill=state.skill or skill,
+            step_number=state.step_number,
+            attempt_count=0,
+            hint_given=False,
+            answer_revealed=False,
+            next_similar_question='',
+            mode='resume_paused_problem_notice',
+            status='waiting_for_student',
+            memory_note=state.memory_note,
+        )
+        return directives, restored_problem, restored_step, next_state
     side_question_requested = (
         unfinished_main_problem
+        and not needs_new_problem_clarification
         and not switch_task
         and not context_clarification
         and not tutor_concern
@@ -419,7 +655,11 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
         and not answer_to_current_math_step
         and (
             definition
-            or (new_problem and not _same_prompt(message, active_problem or state.main_problem or state.active_problem))
+            or (
+                new_problem
+                and related_to_active_problem
+                and not _same_prompt(message, active_problem or state.main_problem or state.active_problem)
+            )
         )
     )
     direct_question_override = (
@@ -446,6 +686,38 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
 
     if switch_task:
         directives.append('The student explicitly wants to switch tasks. It is okay to leave the previous problem and move to the new requested task.')
+        if unfinished_main_problem and (state.main_problem.strip() or state.active_problem.strip()):
+            directives.append('Tell the student you will solve the new problem first and then return to the earlier main problem.')
+
+    if needs_new_problem_clarification:
+        directives.append('The student just sent a new raw math expression while another problem is still unfinished.')
+        directives.append('Do not treat this as the answer to the current step.')
+        directives.append('Do not switch to the new expression yet.')
+        directives.append('Tell the student clearly that this looks like a new problem and that you are still focused on the current problem first.')
+        directives.append('Ask one short clarification question: is this part of the current problem, or do they want to solve it as a new problem?')
+        structured_fields = _structured_state_fields(state)
+        structured_fields['pending_input_kind'] = 'new_math_expression'
+        structured_fields['pending_new_problem'] = message.strip()
+        next_state = TutoringState(
+            **structured_fields,
+            active_problem=state.main_problem or state.active_problem or active_problem,
+            current_subject=state.current_subject,
+            current_step=state.current_step,
+            current_question=state.current_question or state.current_step,
+            expected_answer=state.expected_answer,
+            student_answer=message,
+            correctness_status='',
+            skill=skill,
+            step_number=state.step_number or max(1, state.current_step_index + 1),
+            attempt_count=0,
+            hint_given=False,
+            answer_revealed=False,
+            next_similar_question='',
+            mode='clarify_new_problem',
+            status='waiting_for_clarification',
+            memory_note=state.memory_note,
+        )
+        return directives, state.main_problem or state.active_problem or active_problem, current_step, next_state
 
     if opening_followup:
         directives.append('The student is answering the opening human moment. Respond to how they feel before any learning content.')
@@ -626,6 +898,14 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     if not answering_tutor_question:
         mode = 'solve'
         status = 'solving'
+        structured_fields = _structured_state_fields(state)
+        if switch_task and unfinished_main_problem and (state.main_problem.strip() or state.active_problem.strip()):
+            structured_fields['paused_main_problem'] = state.main_problem or state.active_problem
+            structured_fields['paused_current_step'] = state.current_step
+            structured_fields['paused_current_question'] = state.current_question or state.current_step
+            structured_fields['paused_completed_steps'] = list(state.completed_steps)
+            if active_problem == (state.main_problem or state.active_problem):
+                active_problem = message.strip()
         if (new_problem and not answer_to_current_math_step) or direct_help:
             if direct_question_override and current_step:
                 directives.append('The student asked a new direct question, so answer that question before returning to any earlier quick question.')
@@ -644,7 +924,7 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
             directives.append('The student wants to skip the conversational check-in or go to homework. Do not force a check-in; move into one useful learning or homework step.')
         directives.append('After the main problem is helped enough, you may ask one tiny same-topic practice question.')
         next_state = TutoringState(
-            **_structured_state_fields(state),
+            **structured_fields,
             active_problem=active_problem,
             current_step='',
             current_question='',
@@ -712,6 +992,117 @@ def build_chat_directives(message: str, history: list[ChatHistoryItem], state: T
     return directives, active_problem, current_step, next_state
 
 
+def build_new_problem_clarification_reply(state: TutoringState) -> str:
+    current_problem = (state.main_problem or state.active_problem or '').strip()
+    current_step = (state.current_question or state.current_step or '').strip()
+    pending_problem = (state.pending_new_problem or '').strip()
+
+    lines = []
+    if pending_problem:
+        lines.append(f'This looks like a new math problem: {pending_problem}.')
+        lines.append('')
+    if current_problem:
+        lines.append(f'We are still working on: {current_problem}.')
+        lines.append('')
+    if current_step:
+        lines.append(f'Current step: {current_step}')
+        lines.append('')
+    lines.append('Tell me which one you want:')
+    lines.append('part of this problem, or a new problem?')
+    return '\n'.join(lines)
+
+
+def build_switch_confirmation_reply(state: TutoringState, new_problem: str) -> str:
+    previous_problem = (state.paused_main_problem or state.main_problem or state.active_problem or '').strip()
+    lines = [
+        f'Okay, we can solve this new problem first: {new_problem.strip()}',
+        '',
+    ]
+    if previous_problem:
+        lines.extend([
+            f'After that, I will bring you back to: {previous_problem}',
+            '',
+        ])
+    lines.append("Let's start with the new problem now.")
+    return '\n'.join(lines)
+
+
+def build_resume_paused_problem_reply(state: TutoringState) -> str:
+    paused_problem = (state.paused_main_problem or '').strip()
+    paused_question = (state.paused_current_question or state.paused_current_step or '').strip()
+    completed = [item for item in state.paused_completed_steps if item]
+
+    lines = ['We finished the new problem.', '']
+    if paused_problem:
+        lines.append(f"Now let's return to your main problem: {paused_problem}")
+        lines.append('')
+    if completed:
+        shown = ', '.join(completed[:3])
+        lines.append(f'We already completed: {shown}')
+        lines.append('')
+    if paused_question:
+        lines.append(f'Current step: {paused_question}')
+        lines.append('')
+        lines.append("Let's keep going from here.")
+    return '\n'.join(lines)
+
+
+def detect_off_subject_request(subject: str, message: str, state: TutoringState | None = None) -> bool:
+    state = state or TutoringState()
+    text = _normalized(message)
+    if not text or detect_explicit_subject_switch(message):
+        return False
+    if subject == 'Math':
+        if detect_math_expression(message):
+            return False
+        if any(word in text for word in MATH_TOPIC_WORDS):
+            return False
+        if _looks_like_general_knowledge_question(message):
+            return True
+        if any(word in text for word in SCIENCE_TOPIC_WORDS):
+            return True
+        if any(word in text for word in GENERAL_KNOWLEDGE_WORDS):
+            return True
+        return bool(re.match(r'^(what is|who is|tell me about)\b', text))
+    if subject in {'ELA', 'Writing'} and detect_math_expression(message):
+        return True
+    if subject == 'ELA':
+        if _looks_like_writing_task(message):
+            return True
+        if _looks_like_reading_task(message):
+            return False
+        if any(word in text for word in ELA_TOPIC_WORDS):
+            return False
+        return any(word in text for word in GENERAL_KNOWLEDGE_WORDS)
+    if subject == 'Writing':
+        if _looks_like_reading_task(message):
+            return True
+        if _looks_like_writing_task(message):
+            return False
+        if any(word in text for word in WRITING_TOPIC_WORDS):
+            return False
+        return any(word in text for word in GENERAL_KNOWLEDGE_WORDS)
+    return False
+
+
+def build_subject_boundary_reply(subject: str, state: TutoringState) -> str:
+    subject_label = 'math' if subject == 'Math' else ('reading' if subject == 'ELA' else 'writing')
+    main_problem = (state.main_problem or state.active_problem or '').strip()
+    current_step = (state.current_question or state.current_step or '').strip()
+
+    lines = [f'That is a different kind of question, and right now we are working on {subject_label}.', '']
+    if main_problem:
+        lines.append(f'We are still working on: {main_problem}.')
+        lines.append('')
+    if current_step:
+        lines.append(f'Current step: {current_step}')
+        lines.append('')
+        lines.append("Let's keep going with this step first.")
+    else:
+        lines.append(f"Let's stay with {subject_label} for now.")
+    return '\n'.join(lines)
+
+
 def extract_followup_step(reply: str) -> str:
     questions = [part.strip() for part in re.findall(r'[^.!?]*\?', reply) if part.strip()]
     if questions:
@@ -754,6 +1145,11 @@ def update_tutoring_state_after_reply(
     current_question = state.current_question or state.current_step
     same_question = bool(next_step and current_question and _same_question(next_step, current_question))
     next_step_number = state.step_number + 1 if next_step and not same_question else state.step_number
+    switched_away_from_paused_problem = bool(
+        state.paused_main_problem.strip()
+        and state.active_problem.strip()
+        and state.active_problem.strip() != state.paused_main_problem.strip()
+    )
 
     if state.helper_branch.status == 'active' and state.helper_branch.question:
         helper_branch = state.helper_branch.model_copy(update={'status': 'completed'})
@@ -804,6 +1200,27 @@ def update_tutoring_state_after_reply(
             mode=restored_mode,
             status=restored_status,
             memory_note=_build_memory_note(state.active_problem or state.main_problem, reply, state.memory_note),
+        )
+
+    if switched_away_from_paused_problem and not next_step:
+        return TutoringState(
+            **_structured_state_fields(state),
+            active_problem=state.active_problem,
+            current_subject=state.current_subject,
+            current_step='',
+            current_question='',
+            expected_answer='',
+            student_answer=state.student_answer,
+            correctness_status=state.correctness_status,
+            skill=state.skill,
+            step_number=state.step_number,
+            attempt_count=0,
+            hint_given=False,
+            answer_revealed=False,
+            next_similar_question='',
+            mode='resume_paused_problem',
+            status='waiting_to_resume',
+            memory_note=_build_memory_note(state.active_problem, reply, state.memory_note),
         )
 
     if state.ordered_steps and state.current_step_id and state.problem_status in {'in_progress', 'awaiting_step'}:
@@ -883,7 +1300,7 @@ def update_tutoring_state_after_reply(
         hint_given=False,
         answer_revealed=state.answer_revealed,
         next_similar_question='',
-        mode='solve',
-        status='finished',
+        mode='resume_paused_problem' if state.paused_main_problem.strip() else 'solve',
+        status='waiting_to_resume' if state.paused_main_problem.strip() else 'finished',
         memory_note=_build_memory_note(active_problem, reply, state.memory_note),
     )

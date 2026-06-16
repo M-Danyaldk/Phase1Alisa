@@ -43,11 +43,23 @@ from .services.learning_profile_service import LearningProfileService
 from .services.monitoring_service import MonitoringService
 from .services.session_activity_service import SessionActivityService
 from .services.tutor_answer_checker import TutorAnswerChecker
+from .services.tutor_intent_classifier import TutorIntentClassifier
+from .services.tutor_math_normalizer import TutorMathNormalizer
+from .services.tutor_subject_classifier import TutorSubjectClassifier
 from .services.topic_resolver import TopicResolver
-from .tutoring_logic import build_chat_directives, update_tutoring_state_after_reply
+from .tutoring_logic import (
+    build_subject_boundary_reply,
+    build_chat_directives,
+    build_new_problem_clarification_reply,
+    build_resume_paused_problem_reply,
+    build_switch_confirmation_reply,
+    detect_off_subject_request,
+    update_tutoring_state_after_reply,
+)
 from .utils.multi_step_progress import (
     advance_structured_math_problem,
     build_progress_tracker_directives,
+    build_structured_roadmap_reply,
     build_structured_retry_reply,
     build_structured_step_reply,
     current_step_expression,
@@ -254,15 +266,118 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         chat_thread_id = payload.thread_id
         history_error = str(exc)
 
+    effective_message = payload.message
+    if payload.subject == 'Math':
+        normalization = await TutorMathNormalizer().normalize_if_needed(payload.subject, payload.message, payload.tutoring_state)
+        if normalization.normalized_expression:
+            effective_message = normalization.normalized_expression
+
+    subject_assist = await TutorSubjectClassifier().classify_if_needed(
+        payload.subject,
+        effective_message,
+        payload.tutoring_state,
+    )
+    uncertain_subject_boundary = (
+        payload.subject in {'Math', 'ELA', 'Writing'}
+        and subject_assist.label == 'ambiguous'
+        and subject_assist.confidence in {'medium', 'high'}
+        and TutorSubjectClassifier().should_use_fallback(payload.subject, effective_message, payload.tutoring_state)
+    )
+
+    if detect_off_subject_request(payload.subject, effective_message, payload.tutoring_state) or subject_assist.label == 'off_subject' or uncertain_subject_boundary:
+        next_state = payload.tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'student_answer': payload.message,
+            'attempt_count': 0,
+            'hint_given': False,
+            'correctness_status': '',
+        })
+        formatted_reply = build_subject_boundary_reply(payload.subject, next_state)
+        if chat_store and chat_user_id and chat_thread_id:
+            try:
+                await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
+                    thread_id=chat_thread_id,
+                    child_id=payload.child_id,
+                    role='msalisia',
+                    content=formatted_reply,
+                    subject=payload.subject,
+                    topic=resolved_topic,
+                    provider='local',
+                    model='deterministic-subject-boundary',
+                    tutoring_state=next_state.model_dump(),
+                ))
+                history_saved = True
+            except Exception as exc:
+                logger.warning('Chat history save failed after subject boundary reply: %s', exc)
+                history_error = str(exc)
+        if payload.child_id:
+            await SessionActivityService().exchange_complete(
+                child_user['id'],
+                payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+            )
+            await learning_memory_service.record_exchange_summary(
+                parent_id=child_user['id'],
+                child_id=payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+                grade_level=f'Grade {prompt_student.grade}',
+                working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
+                student_message=payload.message,
+                assistant_text=formatted_reply,
+                tutoring_state=next_state,
+                thread_id=chat_thread_id,
+                source='session',
+                metadata={
+                    'provider': 'local',
+                    'model': 'deterministic-subject-boundary',
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
+                },
+            )
+        return ChatResponse(
+            reply=formatted_reply,
+            provider='local',
+            model='deterministic-subject-boundary',
+            fallback_used=False,
+            tutoring_state=next_state,
+            thread_id=chat_thread_id,
+            history_saved=history_saved,
+            history_error=history_error,
+            resolved_topic=resolved_topic,
+            topic_source=topic_resolution['source'],
+            assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+        )
+
     router = LLMRouter()
-    directives, active_task, current_step, tutoring_state = build_chat_directives(payload.message, payload.history, payload.tutoring_state)
+    intent_assist = await TutorIntentClassifier().classify_if_needed(
+        payload.subject,
+        effective_message,
+        payload.history,
+        payload.tutoring_state,
+    )
+    directives, active_task, current_step, tutoring_state = build_chat_directives(
+        effective_message,
+        payload.history,
+        payload.tutoring_state,
+        assisted_intent_label=intent_assist.label,
+    )
     tutoring_state = tutoring_state.model_copy(update={'current_subject': payload.subject})
-    tutoring_state = update_multi_step_progress(payload.message, tutoring_state)
+    previous_structured_problem_id = payload.tutoring_state.problem_id
+    if tutoring_state.mode != 'clarify_new_problem':
+        tutoring_state = update_multi_step_progress(effective_message, tutoring_state)
     if has_structured_math_problem(tutoring_state):
         active_task = tutoring_state.main_problem or active_task
         current_step = current_step_expression(tutoring_state) or current_step
+    should_send_structured_roadmap = (
+        payload.subject == 'Math'
+        and has_structured_math_problem(tutoring_state)
+        and tutoring_state.attempt_count == 0
+        and tutoring_state.problem_id != previous_structured_problem_id
+    )
     answer_checker = TutorAnswerChecker()
-    direct_answer_check = answer_checker.check_direct_math_statement(payload.message) if payload.subject == 'Math' else None
+    direct_answer_check = answer_checker.check_direct_math_statement(effective_message) if payload.subject == 'Math' else None
     if direct_answer_check and direct_answer_check.status != 'unclear':
         direct_attempt_count = _direct_math_attempt_count(payload.tutoring_state, direct_answer_check)
         tutoring_state = tutoring_state.model_copy(update={
@@ -306,7 +421,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         if direct_answer_check.is_wrong and direct_attempt_count < 3:
             next_state = tutoring_state
         else:
-            next_state = update_tutoring_state_after_reply(tutoring_state, payload.message, formatted_reply)
+            next_state = update_tutoring_state_after_reply(tutoring_state, effective_message, formatted_reply)
         if chat_store and chat_user_id and chat_thread_id:
             try:
                 await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
@@ -363,7 +478,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
         )
-    direct_help_expression = _direct_math_help_expression(payload.message) if payload.subject == 'Math' else ''
+    direct_help_expression = _direct_math_help_expression(effective_message) if payload.subject == 'Math' else ''
     if direct_help_expression:
         tutoring_state = tutoring_state.model_copy(update={
             'current_subject': payload.subject,
@@ -442,7 +557,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         answer_check = await answer_checker.check(
             subject=payload.subject,
             question=_answer_check_question(tutoring_state, current_step),
-            student_answer=payload.message,
+            student_answer=effective_message,
             expected_answer=tutoring_state.expected_answer,
         )
         tutoring_state = tutoring_state.model_copy(update={
@@ -469,7 +584,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 directives.append(f'Correct answer to explain: {answer_check.expected_answer}')
         if answer_check.feedback_note:
             directives.append(f'Answer-check note: {answer_check.feedback_note}')
-    homework_context_available = _homework_context_available(payload.message, payload.topic, payload.history)
+    homework_context_available = _homework_context_available(effective_message, payload.topic, payload.history)
     directives = [
         f'The currently selected subject is {payload.subject}. Stay in this subject unless the student clearly asks to switch to another subject.',
         'Lead the activity with one clear next step. Do not ask broad questions like "What would you like to work on?" when recent check-in results, homework, or current task context is available.',
@@ -494,9 +609,52 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         f"Correctness: {tutoring_state.correctness_status or 'not checked'}; "
         f"Memory: {tutoring_state.memory_note or 'none'}"
     )
-    user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or payload.message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nRespond as Ms. Alisia using the required tutoring method."
+    user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or effective_message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nNormalized math if useful: {effective_message}\n\nRespond as Ms. Alisia using the required tutoring method."
     structured_progression = has_structured_math_problem(tutoring_state) and payload.subject == 'Math'
-    if structured_progression and answer_check and answer_check.is_correct:
+    special_local_reply = False
+    if tutoring_state.mode == 'resume_paused_problem_notice':
+        formatted_reply = build_resume_paused_problem_reply(tutoring_state)
+        next_state = tutoring_state.model_copy(update={
+            'mode': 'practice' if (tutoring_state.current_question or tutoring_state.current_step) else 'solve',
+            'status': 'waiting_for_student' if (tutoring_state.current_question or tutoring_state.current_step) else 'solving',
+            'paused_main_problem': '',
+            'paused_current_step': '',
+            'paused_current_question': '',
+            'paused_completed_steps': [],
+        })
+        result_provider = 'local'
+        result_model = 'deterministic-resume-paused-problem'
+        result_fallback_used = False
+        special_local_reply = True
+    elif tutoring_state.mode == 'clarify_new_problem':
+        formatted_reply = build_new_problem_clarification_reply(tutoring_state)
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = 'deterministic-new-problem-clarification'
+        result_fallback_used = False
+        special_local_reply = True
+    elif (
+        payload.subject == 'Math'
+        and payload.tutoring_state.problem_status not in {'finished', 'idle'}
+        and tutoring_state.paused_main_problem
+        and tutoring_state.active_problem.strip()
+        and tutoring_state.active_problem.strip() != tutoring_state.paused_main_problem.strip()
+        and tutoring_state.mode == 'solve'
+        and tutoring_state.status == 'solving'
+    ):
+        formatted_reply = build_switch_confirmation_reply(tutoring_state, tutoring_state.active_problem)
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = 'deterministic-switch-confirmation'
+        result_fallback_used = False
+        special_local_reply = True
+    elif should_send_structured_roadmap:
+        formatted_reply = build_structured_roadmap_reply(tutoring_state)
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = 'deterministic-structured-roadmap'
+        result_fallback_used = False
+    elif structured_progression and answer_check and answer_check.is_correct:
         next_state = advance_structured_math_problem(tutoring_state, answer_check.expected_answer or tutoring_state.expected_answer)
         formatted_reply = build_structured_step_reply(tutoring_state, next_state)
         result_provider = 'local'
@@ -562,8 +720,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_provider = result.provider
         result_model = result.model
         result_fallback_used = result.fallback_used
-    if not (
-        structured_progression
+    if not special_local_reply and not (
+        tutoring_state.mode not in {'clarify_new_problem', 'resume_paused_problem_notice'}
+        and not should_send_structured_roadmap
+        and structured_progression
         and answer_check
         and (
             answer_check.is_correct
@@ -571,7 +731,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             or (answer_check.is_wrong and tutoring_state.attempt_count >= 3)
         )
     ):
-        next_state = update_tutoring_state_after_reply(tutoring_state, payload.message, formatted_reply)
+        next_state = update_tutoring_state_after_reply(tutoring_state, effective_message, formatted_reply)
     if chat_store and chat_user_id and chat_thread_id:
         try:
             await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(

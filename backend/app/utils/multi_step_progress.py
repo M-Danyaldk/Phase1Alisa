@@ -195,8 +195,41 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
             '',
             f'Current step: {next_step.label}',
             f'{next_step.label}: {next_step.description or _display_expression(next_step.expression)}',
+            '',
+            'Easy idea:',
+            _child_friendly_step_explanation(next_step),
+            '',
             _step_prompt(next_step),
         ])
+    return '\n'.join(lines)
+
+
+def build_structured_roadmap_reply(state: TutoringState) -> str:
+    if not has_structured_math_problem(state):
+        return ''
+
+    current_step = _current_step_record(state)
+    if not current_step:
+        return ''
+
+    lines = [
+        "Let's solve this one step by step.",
+        '',
+        f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
+        '',
+        'Plan:',
+    ]
+    lines.extend(_roadmap_lines(state))
+    lines.extend([
+        '',
+        f"{current_step.label}: {_display_expression(current_step.expression)}",
+        '',
+        'Easy idea:',
+        _child_friendly_step_explanation(current_step),
+        '',
+        'First, solve this part:',
+        _step_prompt(current_step),
+    ])
     return '\n'.join(lines)
 
 
@@ -213,6 +246,9 @@ def build_structured_retry_reply(state: TutoringState, attempt_count: int) -> st
         f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
         f'Current step: {current_step.label}',
         f'{current_step.label}: {_display_expression(current_step.expression)}',
+        '',
+        'Easy idea:',
+        _child_friendly_step_explanation(current_step),
         '',
         f'Hint: {hint}',
         '',
@@ -237,6 +273,14 @@ def _structured_progress_lines(state: TutoringState, step: TutorStepRecord, resu
     lines.append(f'{step.label}: {_display_expression(step.expression)} = {result}.')
     remaining_labels = _remaining_step_labels(state, step.step_id)
     lines.append(f'Steps left: {remaining_labels}')
+    return lines
+
+
+def _roadmap_lines(state: TutoringState) -> list[str]:
+    lines: list[str] = []
+    for step in state.ordered_steps:
+        summary = step.description or _display_expression(step.expression)
+        lines.append(f'{step.label}: {summary}')
     return lines
 
 
@@ -285,6 +329,41 @@ def _structured_hint_for_step(step: TutorStepRecord, stronger: bool = False) -> 
             return 'Keep the first fraction, flip the second fraction, then multiply.'
         return 'For dividing fractions, change division to multiplication by the reciprocal.'
     return 'Focus only on this one step first.'
+
+
+def _child_friendly_step_explanation(step: TutorStepRecord) -> str:
+    expression = step.expression.replace(' ', '')
+    if (step.description or '').lower().startswith('solve the parentheses'):
+        return 'We open the small box first. The parentheses show the part we should finish before using it in the bigger problem.'
+
+    whole_plus_fraction = re.fullmatch(r'(\d+/\d+)\+(\d+)', expression) or re.fullmatch(r'(\d+)\+(\d+/\d+)', expression)
+    any_fraction_add = re.fullmatch(r'(\d+)/(\d+)\+(\d+)/(\d+)', expression)
+
+    if whole_plus_fraction:
+        return 'Think about money. If one part is a whole amount and the other part is split into smaller pieces, we first turn the whole amount into the same kind of pieces so they can be added fairly.'
+
+    if any_fraction_add:
+        left_denominator = any_fraction_add.group(2)
+        right_denominator = any_fraction_add.group(4)
+        if left_denominator == right_denominator:
+            return 'Think about pizza slices from pizzas cut the same way. When the slice size matches, we only add how many slices we have.'
+        return 'Think about pizza slices from two pizzas cut in different ways. Before adding, we rename both into the same-size slices so the pieces match.'
+
+    if '-' in expression:
+        return 'Think about spending coins from your pocket. Subtraction means some amount is leaving, so we carefully see what is left.'
+
+    if '*' in expression:
+        if re.fullmatch(r'(\d+)/(\d+)\*(\d+)/(\d+)', expression):
+            return 'Think about collecting game points in pairs. For fraction multiplication, we multiply the top numbers together and the bottom numbers together to make one new fraction.'
+        return 'Think about equal groups of stickers. Multiplication means the same amount is repeated, so we can count the groups step by step.'
+
+    if '/' in expression and re.fullmatch(r'(\d+)/(\d+)/(\d+)/(\d+)', expression):
+        return 'Think about sharing snacks equally. Dividing fractions means we keep the first fraction, flip the second one, and then multiply.'
+
+    if '/' in expression:
+        return 'Think about sharing something equally with friends. Division asks how many equal groups we can make.'
+
+    return 'We will focus on just this small part first, then bring it back to the bigger problem.'
 
 
 def _sync_existing_state(state: TutoringState, normalized_problem: str) -> TutoringState:
@@ -369,6 +448,7 @@ def _extract_math_problem(message: str) -> str:
 def _normalize_expression(text: str) -> str:
     normalized = normalize_math_text(text)
     normalized = normalized.replace('=', ' ')
+    normalized = re.sub(r'(?<![\d/])(-?\d+)\s*/\s*(-?\d+)(?![\d/])', r'\1/\2', normalized)
     normalized = re.sub(r'\s+', ' ', normalized).strip()
     return normalized
 
@@ -376,12 +456,22 @@ def _normalize_expression(text: str) -> str:
 def _is_multi_step_problem(problem: str) -> bool:
     compact = problem.replace(' ', '')
     operators = len(re.findall(r'(?<!/)[+\-*](?!/)', compact))
-    return operators >= 2 or ('(' in compact and ')' in compact)
+    multiply_or_divide_steps = len(re.findall(rf'{NUMBER_TOKEN}\s*[*/]\s*{NUMBER_TOKEN}', problem))
+    add_or_subtract_steps = len(re.findall(rf'{NUMBER_TOKEN}\s*[+-]\s*{NUMBER_TOKEN}', problem))
+    return (
+        operators >= 2
+        or ('(' in compact and ')' in compact)
+        or multiply_or_divide_steps >= 2
+        or (multiply_or_divide_steps >= 1 and add_or_subtract_steps >= 1)
+    )
 
 
 def _has_math_operator(expression: str) -> bool:
     compact = expression.replace(' ', '')
-    return bool(re.search(r'(?<!/)[+\-*](?!/)', compact))
+    return bool(
+        re.search(r'(?<!/)[+\-*](?!/)', compact)
+        or re.search(rf'{NUMBER_TOKEN}\s*/\s*{NUMBER_TOKEN}', expression)
+    )
 
 
 def _next_step_expression(expression: str) -> str:
@@ -421,16 +511,16 @@ def _replace_step(full_expression: str, step_expression: str, result: str) -> st
 
 def _step_description(full_expression: str, step_expression: str) -> str:
     if f'({step_expression})' in full_expression:
-        return f'Solve the parentheses: {_display_expression(step_expression)}'
+        return f'Solve the parentheses -> {_display_expression(step_expression)}'
     if '*' in step_expression:
-        return f'Multiply: {_display_expression(step_expression)}'
+        return f'Multiply -> {_display_expression(step_expression)}'
     if '/' in step_expression and re.search(r'\d+/\d+\s*/\s*\d+/\d+', step_expression):
-        return f'Divide: {_display_expression(step_expression)}'
+        return f'Divide -> {_display_expression(step_expression)}'
     if '+' in step_expression:
-        return f'Add: {_display_expression(step_expression)}'
+        return f'Add -> {_display_expression(step_expression)}'
     if '-' in step_expression:
-        return f'Subtract: {_display_expression(step_expression)}'
-    return f'Solve: {_display_expression(step_expression)}'
+        return f'Subtract -> {_display_expression(step_expression)}'
+    return f'Solve -> {_display_expression(step_expression)}'
 
 
 def _step_prompt(step: TutorStepRecord | None) -> str:
@@ -440,10 +530,8 @@ def _step_prompt(step: TutorStepRecord | None) -> str:
 
 
 def _display_expression(expression: str) -> str:
-    return (
-        str(expression or '')
-        .replace('*', ' x ')
-        .replace('/', ' / ')
-        .replace('  ', ' ')
-        .strip()
-    )
+    text = str(expression or '').strip()
+    text = text.replace('*', ' x ')
+    text = re.sub(r'(?<!\d)/(?!\d)', ' / ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
