@@ -80,6 +80,12 @@ export type TutoringState = {
   next_similar_question?: string;
   helper_branch?: TutorHelperBranch;
   queued_followup_questions?: TutorQueuedQuestion[];
+  pending_input_kind?: string;
+  pending_new_problem?: string;
+  paused_main_problem?: string;
+  paused_current_step?: string;
+  paused_current_question?: string;
+  paused_completed_steps?: string[];
   return_step_index?: number;
   return_step_id?: string;
   final_answer?: string;
