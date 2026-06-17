@@ -3,7 +3,7 @@ import asyncio
 from backend.app.assessment_bank import version_for
 from backend.app.assessment_result_items import build_question_results
 from backend.app.assessment_validation import validate_assessment_answer
-from backend.app.main import _matching_structured_step, _structured_future_step_redirect_reply, _text_answer_check_reply
+from backend.app.main import _matching_structured_step, _should_send_structured_roadmap, _structured_future_step_redirect_reply, _text_answer_check_reply
 from backend.app.models import AssessmentRequest, ChatHistoryItem, StudentProfile, TutoringState
 from backend.app.services.voice_service import (
     _matching_structured_step as _voice_matching_structured_step,
@@ -21,6 +21,7 @@ from backend.app.tutoring_logic import (
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
+    detect_action_intent,
     detect_off_subject_request,
     update_tutoring_state_after_reply,
 )
@@ -28,6 +29,7 @@ from backend.app.utils.multi_step_progress import (
     advance_structured_math_problem,
     build_structured_roadmap_reply,
     build_structured_retry_reply,
+    build_structured_step_focus_reply,
     build_structured_step_reply,
     current_step_expression,
     has_structured_math_problem,
@@ -84,6 +86,47 @@ async def main() -> None:
     _expect('Step C: Add the fraction results' in roadmap_visibility_reply, 'Roadmap revealed the future fraction-add expression instead of a safe label.', failures)
     _expect('Step D: Add the final results' in roadmap_visibility_reply, 'Roadmap revealed the final transformed addition instead of a safe label.', failures)
 
+    fresh_entry_previous_state = TutoringState(
+        current_subject='Math',
+        current_question='What is 9 / 8?',
+        current_step='What is 9 / 8?',
+        attempt_count=1,
+        mode='practice',
+        status='waiting_for_student',
+        active_problem='What is 9 / 8?',
+    )
+    _, fresh_entry_task, fresh_entry_step, fresh_entry_state = build_chat_directives(
+        '9/8 + 7/4 * 8/9 + (20 * 23/2)',
+        [ChatHistoryItem(role='msalisia', content='What is 9 / 8?')],
+        fresh_entry_previous_state,
+    )
+    fresh_entry_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (20 * 23/2)', fresh_entry_state)
+    _expect(has_structured_math_problem(fresh_entry_state), 'Fresh full math entry did not initialize structured progression from an older question state.', failures)
+    _expect(fresh_entry_task == '9/8 + 7/4 * 8/9 + (20 * 23/2)', 'Fresh full math entry did not replace the older quick question as the active task.', failures)
+    _expect(fresh_entry_step == '', 'Fresh full math entry should not stay locked on the old quick-question step.', failures)
+    _expect(
+        _should_send_structured_roadmap(
+            'Math',
+            fresh_entry_previous_state,
+            fresh_entry_state.model_copy(update={'attempt_count': 1}),
+            '9/8 + 7/4 * 8/9 + (20 * 23/2)',
+            fresh_entry_previous_state.problem_id,
+        ),
+        'Fresh full math entry did not force the roadmap when older attempt state was still present.',
+        failures,
+    )
+    _expect(
+        _voice_should_send_structured_roadmap(
+            'Math',
+            fresh_entry_previous_state,
+            fresh_entry_state.model_copy(update={'attempt_count': 1}),
+            '9/8 + 7/4 * 8/9 + (20 * 23/2)',
+            fresh_entry_previous_state.problem_id,
+        ),
+        'Voice fresh full math entry did not force the roadmap when older attempt state was still present.',
+        failures,
+    )
+
     # Structured retry replies should stay anchored to the current step.
     retry_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
     retry_state = retry_state.model_copy(update={'attempt_count': 1})
@@ -91,16 +134,56 @@ async def main() -> None:
     _expect('Main problem:' in retry_one and 'Current step: Step A' in retry_one, 'First structured retry reply did not include main problem and current step.', failures)
     _expect('Easy idea:' in retry_one, 'First structured retry reply did not include the child-friendly explanation block.', failures)
     _expect('Answer form:' in retry_one, 'First structured retry reply did not include answer-form guidance.', failures)
+    _expect('Good try.' in retry_one and "Let's check that." in retry_one, 'First structured retry reply did not use the calmer retry wording.', failures)
+    _expect('The whole number needs the same bottom number as the fraction first.' in retry_one, 'First structured retry reply did not point to the next move clearly.', failures)
     retry_two = build_structured_retry_reply(retry_state.model_copy(update={'attempt_count': 2}), 2)
-    _expect('Hint:' in retry_two and 'Turn 9 into 81/9' in retry_two, 'Second structured retry reply did not give the stronger targeted hint.', failures)
-    fraction_multiply_state = advance_structured_math_problem(retry_state, retry_state.expected_answer)
-    _expect('game points' in build_structured_retry_reply(fraction_multiply_state.model_copy(update={'attempt_count': 1}), 1).lower(), 'Fraction multiplication explanation did not use the game-points example.', failures)
-    fraction_add_state = advance_structured_math_problem(fraction_multiply_state, fraction_multiply_state.expected_answer)
-    _expect('pizza' in build_structured_retry_reply(fraction_add_state.model_copy(update={'attempt_count': 1}), 1).lower(), 'Unlike-denominator addition explanation did not use the pizza example.', failures)
+    _expect('We need matching pieces first.' in retry_two and 'Turn 9 into 81/9.' in retry_two, 'Second structured retry reply did not give the stronger targeted hint.', failures)
+    fraction_multiply_case = update_multi_step_progress('7/4 * 8/9 + 1/2', TutoringState(current_subject='Math'))
+    _expect('game points' in build_structured_retry_reply(fraction_multiply_case.model_copy(update={'attempt_count': 1}), 1).lower(), 'Fraction multiplication explanation did not use the game-points example.', failures)
+    fraction_multiply_retry_two = build_structured_retry_reply(fraction_multiply_case.model_copy(update={'attempt_count': 2}), 2)
+    _expect('Start with the top numbers: 7 x 8.' in fraction_multiply_retry_two, 'Fraction multiplication second hint did not scaffold the top numbers first.', failures)
+    fraction_add_case = update_multi_step_progress('9/8 + 14/9 + 1', TutoringState(current_subject='Math'))
+    fraction_add_retry_one = build_structured_retry_reply(fraction_add_case.model_copy(update={'attempt_count': 1}), 1)
+    _expect('pizza' in fraction_add_retry_one.lower(), 'Unlike-denominator addition explanation did not use the pizza example.', failures)
+    _expect('The bottom numbers are different, so we cannot add yet.' in fraction_add_retry_one, 'Unlike-denominator addition first hint did not point to the denominator mismatch.', failures)
+    fraction_add_retry_two = build_structured_retry_reply(fraction_add_case.model_copy(update={'attempt_count': 2}), 2)
+    _expect('8 and 9 both fit into 72.' in fraction_add_retry_two, 'Unlike-denominator addition second hint did not give the stronger common-bottom scaffold.', failures)
     whole_plus_fraction_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (10 * 23/2)', TutoringState(current_subject='Math'))
     while whole_plus_fraction_state.current_step != '193/72 + 115':
         whole_plus_fraction_state = advance_structured_math_problem(whole_plus_fraction_state, whole_plus_fraction_state.expected_answer)
     _expect('money' in build_structured_retry_reply(whole_plus_fraction_state.model_copy(update={'attempt_count': 1}), 1).lower(), 'Whole-number-plus-fraction explanation did not use the money example.', failures)
+    parentheses_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (20 * 23/2)', TutoringState(current_subject='Math'))
+    parentheses_retry_one = build_structured_retry_reply(parentheses_state.model_copy(update={'attempt_count': 1}), 1)
+    _expect('In this step, multiply first before dividing.' in parentheses_retry_one, 'Parentheses first hint did not point to the multiplication-first move.', failures)
+    _expect('Start with 20 x 23.' in parentheses_retry_one, 'Parentheses first hint did not point to the immediate next move.', failures)
+    parentheses_retry_two = build_structured_retry_reply(parentheses_state.model_copy(update={'attempt_count': 2}), 2)
+    _expect('First work out 20 x 23.' in parentheses_retry_two and 'After that, divide that result by 2.' in parentheses_retry_two, 'Parentheses second hint did not give the stronger scaffold.', failures)
+
+    explain_again_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (20 * 23/2)', TutoringState(current_subject='Math'))
+    explain_again_reply = build_structured_step_focus_reply(
+        explain_again_state,
+        intro='No problem. Let me say it in a simpler way.',
+    )
+    _expect('20 x 23/2' in explain_again_reply, 'Explain-again same-step reply did not stay anchored to the real current step.', failures)
+    _expect('What is 20 x 23/2?' in explain_again_reply, 'Explain-again same-step reply did not end with the original current-step question.', failures)
+    _expect('What is 20 x 23?' not in explain_again_reply, 'Explain-again same-step reply drifted into a hidden micro-step question.', failures)
+    _expect(detect_action_intent('which step?') == 'clarify_prompt', 'Clarification phrase was not recognized as a clarification action.', failures)
+    _expect(detect_action_intent('what do you mean') == 'clarify_prompt', 'Clarification wording was not classified as clarify_prompt.', failures)
+    clarification_history = [ChatHistoryItem(role='msalisia', content=explain_again_state.current_question)]
+    _, clarification_task, clarification_step, clarification_state = build_chat_directives(
+        'which step?',
+        clarification_history,
+        explain_again_state,
+    )
+    _expect(clarification_state.attempt_count == 0, 'Clarification phrase was incorrectly counted as an answer attempt.', failures)
+    _expect(clarification_task == explain_again_state.main_problem, 'Clarification phrase did not stay anchored to the main problem.', failures)
+    _expect(clarification_step == explain_again_state.current_step, 'Clarification phrase did not stay anchored to the current step.', failures)
+    clarification_reply = build_structured_step_focus_reply(
+        explain_again_state,
+        intro='No problem. Let me show exactly what this step is asking.',
+    )
+    _expect('Current step: Step A' in clarification_reply, 'Clarification same-step reply did not restate the current step.', failures)
+    _expect('What is 20 x 23/2?' in clarification_reply, 'Clarification same-step reply did not return to the original step question.', failures)
 
     # Short numeric reply should count as answer attempt, not a new problem.
     answer_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
@@ -111,6 +194,33 @@ async def main() -> None:
 
     _, _, _, phrase_answer_state = build_chat_directives('i think it is 88/9', history, answer_state)
     _expect(phrase_answer_state.attempt_count == 1, 'Short phrased math reply was not counted as the first answer attempt.', failures)
+
+    clarify_state = answer_state.model_copy(update={
+        'mode': 'clarify_new_problem',
+        'status': 'waiting_for_clarification',
+        'pending_input_kind': 'new_math_expression',
+        'pending_new_problem': '12 - 20',
+    })
+    _, clarify_current_task, clarify_current_step, clarify_current_state = build_chat_directives(
+        'part of this problem',
+        [ChatHistoryItem(role='msalisia', content='part of this problem, or a new problem?')],
+        clarify_state,
+    )
+    _expect(clarify_current_state.mode == 'practice', 'Clarification reply for the current problem did not restore normal practice mode.', failures)
+    _expect(clarify_current_state.pending_new_problem == '' and clarify_current_state.pending_input_kind == '', 'Clarification reply for the current problem did not clear the pending clarification fields.', failures)
+    _expect(clarify_current_task == answer_state.main_problem, 'Clarification reply for the current problem did not re-anchor the active task.', failures)
+    _expect(clarify_current_step == answer_state.current_step, 'Clarification reply for the current problem did not restore the current step.', failures)
+
+    _, clarify_new_task, clarify_new_step, clarify_new_state = build_chat_directives(
+        'solve the new problem first',
+        [ChatHistoryItem(role='msalisia', content='part of this problem, or a new problem?')],
+        clarify_state,
+    )
+    _expect(clarify_new_state.mode == 'solve' and clarify_new_state.status == 'solving', 'Clarification reply for the new problem did not switch into solving mode.', failures)
+    _expect(clarify_new_state.pending_new_problem == '' and clarify_new_state.pending_input_kind == '', 'Clarification reply for the new problem did not clear the pending clarification fields.', failures)
+    _expect(clarify_new_task == '12 - 20', 'Clarification reply for the new problem did not promote the pending new problem into the active task.', failures)
+    _expect(clarify_new_step == '', 'Clarification reply for the new problem should not keep the old step active.', failures)
+    _expect(clarify_new_state.paused_main_problem == answer_state.main_problem, 'Clarification reply for the new problem did not preserve the original main problem for return.', failures)
 
     # Low-confidence intent fallback should classify ambiguous messages without taking over tutor control.
     classifier = TutorIntentClassifier()

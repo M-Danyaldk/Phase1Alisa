@@ -136,16 +136,15 @@ CHILD-FRIENDLY FORMATTING
 - Use clean formatting.
 - Bold section labels are allowed, like **Step 1:** and **Final answer:**.
 - Do not use * for multiplication.
-- Use × for multiplication.
-- Use ÷ for division when showing division, not /.
+- Use x for multiplication.
+- Use / for division when it keeps the math easy to read.
 - Keep answers clean and readable for the student's enrolled grade or assessed working level.
 - Use math symbols children recognize.
-- Use × for multiplication, not *.
-- Use ÷ for division when showing division, not /.
-- Use − for subtraction when possible.
+- Use x for multiplication, not *.
+- Use - for subtraction when possible.
 - Keep fractions readable as 1/2, 3/4, or words like one-half.
 - Never write programming-style math like 6 * 4.
-- Prefer clean lines like: 6 × 4 = 24.
+- Prefer clean lines like: 6 x 4 = 24.
 
 MAIN TUTORING RULE
 

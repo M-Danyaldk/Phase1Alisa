@@ -94,6 +94,20 @@ ACTION_INTENTS = {
     'explain_again': ['explain again', 'say it another way', 'again', "i still don't get it", 'i still do not get it'],
     'example': ['example', 'give me an example', 'show example'],
     'check_answer': ['check my answer', 'is this right', 'is my answer right', 'check this'],
+    'clarify_prompt': [
+        'which one',
+        'which question',
+        'which sentence',
+        'which step',
+        'this step?',
+        'that step?',
+        'what do you mean',
+        'what does that mean',
+        'what are you asking',
+        'what is this asking',
+        'what do i do',
+        'what do you want me to do',
+    ],
 }
 
 SUBJECT_SWITCH_PATTERN = re.compile(r'\b(switch|change|move|go)\s+(to|back to)\s+(math|reading|writing|ela)\b')
@@ -192,6 +206,19 @@ def _looks_like_raw_math_expression_only(message: str) -> bool:
 
 def detect_action_intent(message: str) -> str:
     text = _normalized(message)
+    if text in {
+        'which one',
+        'which question',
+        'which sentence',
+        'which step',
+        'what do you mean',
+        'what does that mean',
+        'what are you asking',
+        'what is this asking',
+        'what do i do',
+        'what do you want me to do',
+    }:
+        return 'clarify_prompt'
     for action, phrases in ACTION_INTENTS.items():
         if any(phrase in text for phrase in phrases):
             return action
@@ -442,6 +469,51 @@ def _has_used_helper_branch(state: TutoringState) -> bool:
     return bool(state.helper_branch.question and state.helper_branch.status in {'active', 'completed'})
 
 
+def _has_only_quick_question_context(state: TutoringState, current_question: str) -> bool:
+    if state.problem_id or state.main_problem.strip() or state.ordered_steps:
+        return False
+    question = (current_question or state.current_question or state.current_step or '').strip()
+    active = (state.active_problem or '').strip()
+    if not question:
+        return False
+    if not active:
+        return True
+    return _same_question(active, question)
+
+
+def _clarification_resolution(message: str) -> str:
+    text = _normalized(message)
+    if not text:
+        return ''
+    current_problem_markers = (
+        'part of this problem',
+        'part of the problem',
+        'part of current problem',
+        'same problem',
+        'current problem',
+        'this problem',
+    )
+    new_problem_markers = (
+        'new problem',
+        'solve this first',
+        'do this first',
+        'new one first',
+        'this first',
+        'solve the new problem',
+    )
+    if any(marker in text for marker in new_problem_markers):
+        return 'new_problem'
+    if any(marker in text for marker in current_problem_markers):
+        return 'current_problem'
+    return ''
+
+
+def _clear_pending_problem_fields(structured_fields: dict) -> dict:
+    structured_fields['pending_input_kind'] = ''
+    structured_fields['pending_new_problem'] = ''
+    return structured_fields
+
+
 def _append_queued_followup_question(state: TutoringState, message: str, subject: str = '') -> list[TutorQueuedQuestion]:
     question = message.strip()
     if not question:
@@ -646,6 +718,7 @@ def build_chat_directives(
     answer_to_current_math_step = _looks_like_answer_to_current_math_step(message, current_question or current_step)
     unfinished_main_problem = _has_unfinished_main_problem(state)
     related_to_active_problem = _is_related_to_active_problem(message, state, active_problem, current_step or current_question)
+    quick_question_only_context = _has_only_quick_question_context(state, current_question or current_step)
     if assisted_intent_label == 'answer_current_step':
         answer_to_current_math_step = True
     elif assisted_intent_label == 'related_question':
@@ -661,6 +734,7 @@ def build_chat_directives(
     needs_new_problem_clarification = (
         unfinished_main_problem
         and raw_math_expression_only
+        and not quick_question_only_context
         and not switch_task
         and not answer_to_current_math_step
         and not related_to_active_problem
@@ -726,6 +800,7 @@ def build_chat_directives(
         or homework_or_skip
         or context_clarification
         or tutor_concern
+        or action_intent in {'hint', 'explain_again', 'example', 'clarify_prompt'}
         or (direct_help and math_expression)
     )
     answering_tutor_question = is_answering_tutor_question(history) and not opening_followup and not direct_question_override
@@ -776,6 +851,66 @@ def build_chat_directives(
             memory_note=state.memory_note,
         )
         return directives, state.main_problem or state.active_problem or active_problem, current_step, next_state
+
+    if state.mode == 'clarify_new_problem':
+        clarification_resolution = _clarification_resolution(message)
+        if clarification_resolution == 'current_problem':
+            directives.append('The student confirmed that the new expression was part of the current problem.')
+            directives.append('Drop the clarification state and continue with the current main problem only.')
+            structured_fields = _clear_pending_problem_fields(_structured_state_fields(state))
+            restored_problem = state.main_problem or state.active_problem or active_problem
+            restored_step = state.current_step.strip()
+            restored_question = state.current_question.strip() or restored_step
+            next_state = TutoringState(
+                **structured_fields,
+                active_problem=restored_problem,
+                current_subject=state.current_subject,
+                current_step=restored_step,
+                current_question=restored_question,
+                expected_answer=state.expected_answer,
+                student_answer=message,
+                correctness_status='',
+                skill=skill,
+                step_number=state.step_number or max(1, state.current_step_index + 1),
+                attempt_count=0,
+                hint_given=False,
+                answer_revealed=False,
+                next_similar_question='',
+                mode='practice' if restored_question else 'solve',
+                status='waiting_for_student' if restored_question else 'solving',
+                memory_note=state.memory_note,
+            )
+            return directives, restored_problem, restored_step, next_state
+
+        if clarification_resolution == 'new_problem':
+            directives.append('The student confirmed they want to solve the new problem first.')
+            directives.append('Pause the current main problem and switch cleanly to the new one.')
+            new_problem_text = state.pending_new_problem.strip() or message.strip()
+            structured_fields = _clear_pending_problem_fields(_structured_state_fields(state))
+            structured_fields['paused_main_problem'] = state.main_problem or state.active_problem
+            structured_fields['paused_current_step'] = state.current_step
+            structured_fields['paused_current_question'] = state.current_question or state.current_step
+            structured_fields['paused_completed_steps'] = list(state.completed_steps)
+            next_state = TutoringState(
+                **structured_fields,
+                active_problem=new_problem_text,
+                current_subject=state.current_subject,
+                current_step='',
+                current_question='',
+                expected_answer='',
+                student_answer=message,
+                correctness_status='',
+                skill=skill,
+                step_number=state.step_number,
+                attempt_count=0,
+                hint_given=False,
+                answer_revealed=False,
+                next_similar_question='',
+                mode='solve',
+                status='solving',
+                memory_note=state.memory_note,
+            )
+            return directives, new_problem_text, '', next_state
 
     if opening_followup:
         directives.append('The student is answering the opening human moment. Respond to how they feel before any learning content.')
@@ -831,6 +966,11 @@ def build_chat_directives(
         directives.append('The student asked for a hint. Give one small hint only, then invite them to try.')
     elif action_intent == 'explain_again':
         directives.append('Explain the same idea again using simpler words and a tiny example.')
+    elif action_intent == 'clarify_prompt':
+        directives.append('The student is asking what the current prompt or step means, not giving an answer.')
+        directives.append('Do not mark this as correct or wrong.')
+        directives.append('Clarify the same current step or question in simpler words.')
+        directives.append('Restate exactly what the student should do next, then ask the same step question again.')
     elif action_intent == 'example':
         directives.append('Give one short example that matches the current subject and topic.')
     elif action_intent == 'check_answer':
@@ -957,6 +1097,24 @@ def build_chat_directives(
         mode = 'solve'
         status = 'solving'
         structured_fields = _structured_state_fields(state)
+        preserved_active_problem = state.main_problem or state.active_problem or active_problem
+        if action_intent == 'clarify_prompt' and unfinished_main_problem:
+            next_state = TutoringState(
+                **structured_fields,
+                active_problem=preserved_active_problem,
+                current_subject=state.current_subject,
+                current_step=state.current_step,
+                current_question=state.current_question or state.current_step,
+                expected_answer=state.expected_answer,
+                skill=skill,
+                step_number=state.step_number,
+                attempt_count=0,
+                answer_revealed=False,
+                mode='practice' if (state.current_question or state.current_step) else 'solve',
+                status='waiting_for_student' if (state.current_question or state.current_step) else 'solving',
+                memory_note=state.memory_note,
+            )
+            return directives, preserved_active_problem, state.current_step, next_state
         if switch_task and unfinished_main_problem and (state.main_problem.strip() or state.active_problem.strip()):
             structured_fields['paused_main_problem'] = state.main_problem or state.active_problem
             structured_fields['paused_current_step'] = state.current_step
@@ -1216,7 +1374,7 @@ def update_tutoring_state_after_reply(
         restored_expected_answer = state.expected_answer
         restored_mode = 'practice' if restored_question else 'solve'
         restored_status = 'waiting_for_student' if restored_question else 'solving'
-        structured_fields = _structured_state_fields(state)
+        structured_fields = _clear_pending_problem_fields(_structured_state_fields(state))
         structured_fields['helper_branch'] = helper_branch
 
         if state.ordered_steps and state.problem_status in {'in_progress', 'awaiting_step'}:
@@ -1262,7 +1420,7 @@ def update_tutoring_state_after_reply(
 
     if switched_away_from_paused_problem and not next_step:
         return TutoringState(
-            **_structured_state_fields(state),
+            **_clear_pending_problem_fields(_structured_state_fields(state)),
             active_problem=state.active_problem,
             current_subject=state.current_subject,
             current_step='',
@@ -1284,7 +1442,7 @@ def update_tutoring_state_after_reply(
     if state.ordered_steps and state.current_step_id and state.problem_status in {'in_progress', 'awaiting_step'}:
         if next_step:
             return TutoringState(
-                **_structured_state_fields(state),
+                **_clear_pending_problem_fields(_structured_state_fields(state)),
                 active_problem=active_problem,
                 current_subject=state.current_subject,
                 current_step=state.current_step,
@@ -1303,7 +1461,7 @@ def update_tutoring_state_after_reply(
                 memory_note=_build_memory_note(active_problem, reply, state.memory_note),
             )
         return TutoringState(
-            **_structured_state_fields(state),
+            **_clear_pending_problem_fields(_structured_state_fields(state)),
             active_problem=active_problem,
             current_subject=state.current_subject,
             current_step=state.current_step,
@@ -1324,7 +1482,7 @@ def update_tutoring_state_after_reply(
 
     if next_step:
         return TutoringState(
-            **_structured_state_fields(state),
+            **_clear_pending_problem_fields(_structured_state_fields(state)),
             active_problem=active_problem,
             current_subject=state.current_subject,
             current_step=next_step,
@@ -1344,7 +1502,7 @@ def update_tutoring_state_after_reply(
         )
 
     return TutoringState(
-        **_structured_state_fields(state),
+        **_clear_pending_problem_fields(_structured_state_fields(state)),
         active_problem=active_problem,
         current_subject=state.current_subject,
         current_step='',

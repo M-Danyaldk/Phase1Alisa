@@ -31,6 +31,7 @@ from ..tutoring_logic import (
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
+    detect_action_intent,
     detect_off_subject_request,
     update_tutoring_state_after_reply,
 )
@@ -49,7 +50,7 @@ from ..utils.tutor_response import format_student_reply, looks_incomplete_respon
 
 logger = logging.getLogger(__name__)
 
-VOICE_FALLBACK_MESSAGE = 'No problem — we will use chat instead!'
+VOICE_FALLBACK_MESSAGE = 'No problem - we will use chat instead!'
 UNCLEAR_TRANSCRIPT_MESSAGE = 'I could not hear that clearly. Could you try again?'
 MAX_AUDIO_BYTES = 12 * 1024 * 1024
 
@@ -184,11 +185,11 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
     if has_structured_math_problem(state):
         expression = current_step_expression(state) or state.current_expression or state.main_problem
         if expression:
-            return expression.replace('*', 'Ãƒâ€”').replace('/', 'ÃƒÂ·')
+            return _display_ascii_math_expression(expression)
     for value in (state.current_question, current_step, state.current_step, state.active_problem):
         expression = extract_math_expression(value)
         if expression:
-            return expression.replace('*', 'Ã—').replace('/', 'Ã·')
+            return _display_ascii_math_expression(expression)
     return ''
 
 
@@ -206,12 +207,13 @@ def _display_ascii_math_expression(expression: str) -> str:
     return (
         str(expression or '')
         .replace('*', 'x')
-        .replace('×', 'x')
+        .replace('\u00d7', 'x')
         .replace('Ã—', 'x')
         .replace('Ãƒâ€”', 'x')
-        .replace('/', '÷')
-        .replace('Ã·', '÷')
-        .replace('ÃƒÂ·', '÷')
+        .replace('/', '/')
+        .replace('\u00f7', '/')
+        .replace('Ã·', '/')
+        .replace('ÃƒÂ·', '/')
         .strip()
     )
 
@@ -223,15 +225,27 @@ def _should_send_structured_roadmap(
     effective_message: str,
     previous_structured_problem_id: str,
 ) -> bool:
-    if subject != 'Math' or not has_structured_math_problem(current_state) or current_state.attempt_count != 0:
+    if subject != 'Math' or not has_structured_math_problem(current_state):
+        return False
+    incoming_problem = _normalized_full_math_problem(effective_message)
+    current_problem = _normalized_full_math_problem(current_state.main_problem)
+    fresh_structured_entry = bool(
+        current_state.problem_id
+        and current_state.problem_id != previous_structured_problem_id
+        and current_state.current_step_index == 0
+        and current_state.problem_status == 'awaiting_step'
+        and incoming_problem
+        and incoming_problem == current_problem
+    )
+    if fresh_structured_entry:
+        return True
+    if current_state.attempt_count != 0:
         return False
     if current_state.problem_id != previous_structured_problem_id:
         return True
     if not previous_state.main_problem.strip() or not current_state.main_problem.strip():
         return False
-    incoming_problem = _normalized_full_math_problem(effective_message)
     previous_problem = _normalized_full_math_problem(previous_state.main_problem)
-    current_problem = _normalized_full_math_problem(current_state.main_problem)
     if not incoming_problem or incoming_problem != previous_problem or incoming_problem != current_problem:
         return False
     return bool(
@@ -284,13 +298,13 @@ def _structured_future_step_redirect_reply(state: TutoringState, matched_step) -
 
 
 def _parse_simple_int_expression(expression: str) -> tuple[int, str, int] | None:
-    match = re.search(r'(-?\d+)\s*([+xX*/\-/÷×])\s*(-?\d+)', str(expression or ''))
+    match = re.search(r'(-?\d+)\s*([+xX*/\-/\u00f7\u00d7])\s*(-?\d+)', str(expression or ''))
     if not match:
         return None
     operator = match.group(2)
-    if operator in {'x', 'X', '*', '×'}:
+    if operator in {'x', 'X', '*', '\u00d7'}:
         operator = '*'
-    elif operator in {'/', '÷'}:
+    elif operator in {'/', '\u00f7'}:
         operator = '/'
     return int(match.group(1)), operator, int(match.group(3))
 
@@ -743,6 +757,7 @@ class VoiceService:
         )
         user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or effective_transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nNormalized math if useful: {effective_transcript}\n\nRespond as Ms. Alisia using the required tutoring method."
         structured_progression = has_structured_math_problem(next_state) and subject == 'Math'
+        action_intent = detect_action_intent(effective_transcript)
         special_local_reply = False
         if next_state.mode == 'resume_paused_problem_notice':
             final_state = next_state.model_copy(update={
@@ -782,6 +797,18 @@ class VoiceService:
             formatted_reply = build_structured_roadmap_reply(next_state)
             result_provider = 'local'
             result_model = 'deterministic-structured-roadmap'
+        elif structured_progression and action_intent in {'explain_again', 'clarify_prompt'}:
+            final_state = next_state
+            formatted_reply = build_structured_step_focus_reply(
+                next_state,
+                intro=(
+                    'No problem. Let me show exactly what this step is asking.'
+                    if action_intent == 'clarify_prompt'
+                    else 'No problem. Let me say it in a simpler way.'
+                ),
+            )
+            result_provider = 'local'
+            result_model = f'deterministic-structured-{action_intent}'
         elif matched_structured_step and matched_structured_step.step_id == next_state.current_step_id:
             final_state = next_state
             formatted_reply = build_structured_step_focus_reply(

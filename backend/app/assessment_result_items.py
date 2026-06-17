@@ -161,15 +161,15 @@ def _child_feedback(question: AssessmentQuestion, status: str) -> str:
         return 'Ms. Alisia will review this carefully before choosing the next step.'
     if question.validation_type == 'writing_rubric':
         if question.skill == 'complete sentence':
-            return 'Good try. Let’s practice writing one clear complete sentence.'
+            return "Good try. Let's practice writing one clear complete sentence."
         if question.skill == 'explanatory writing':
-            return 'Good try. Let’s practice explaining your idea in three complete sentences.'
+            return "Good try. Let's practice explaining your idea in three complete sentences."
         if question.skill == 'revision for detail':
-            return 'Good try. Let’s practice making a sentence stronger with clearer detail.'
+            return "Good try. Let's practice making a sentence stronger with clearer detail."
     if question.validation_type == 'exact_text':
-        return 'Good try. Let’s practice fixing the sentence so it has the right grammar and punctuation.'
+        return "Good try. Let's practice fixing the sentence so it has the right grammar and punctuation."
     if question.validation_type == 'keyword_text':
-        return 'Good try. Let’s go back to the main idea and look for the most important words.'
+        return "Good try. Let's go back to the main idea and look for the most important words."
     return question.child_incorrect_feedback
 
 

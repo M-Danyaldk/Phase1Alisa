@@ -141,7 +141,7 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
     if not current_step:
         return ''
 
-    intro = "Let's finish this step together." if reveal else "Yes, that's correct!"
+    intro = "Let's finish this part together." if reveal else "Yes, that's right!"
     result = next_state.step_results.get(current_step.step_id) or current_step.result or current_step.expected_answer
     lines = [intro, '']
     lines.extend(_structured_progress_lines(previous_state, current_step, result))
@@ -186,7 +186,7 @@ def build_structured_roadmap_reply(state: TutoringState) -> str:
         return ''
 
     lines = [
-        "Let's solve this one step by step.",
+        "We can solve this one step at a time.",
         '',
         f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
         '',
@@ -204,7 +204,7 @@ def build_structured_roadmap_reply(state: TutoringState) -> str:
         '',
         _step_answer_guidance(current_step),
         '',
-        'First, solve this part:',
+        "Let's start here:",
         _step_prompt(current_step),
     ])
     return '\n'.join(lines)
@@ -215,10 +215,13 @@ def build_structured_retry_reply(state: TutoringState, attempt_count: int) -> st
     if not current_step:
         return ''
 
-    opener = "Not quite yet. Let's try one small hint." if attempt_count <= 1 else "You're close. Let's make this step clearer."
-    hint = _structured_hint_for_step(current_step, stronger=attempt_count >= 2)
+    stronger = attempt_count >= 2
+    opener = 'Good try.'
+    hint_lines = _structured_hint_lines(current_step, stronger=stronger)
     lines = [
         opener,
+        '',
+        "Let's check that.",
         '',
         f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
         f'Current step: {current_step.label}',
@@ -228,11 +231,14 @@ def build_structured_retry_reply(state: TutoringState, attempt_count: int) -> st
         _child_friendly_step_explanation(current_step),
         '',
         _step_answer_guidance(current_step),
-        '',
-        f'Hint: {hint}',
+    ]
+    if hint_lines:
+        lines.extend([''])
+        lines.extend(hint_lines)
+    lines.extend([
         '',
         _step_prompt(current_step),
-    ]
+    ])
     return '\n'.join(lines)
 
 
@@ -323,7 +329,7 @@ def _remaining_step_labels(state: TutoringState, completed_step_id: str = '') ->
     return ', '.join(labels) if labels else 'None'
 
 
-def _structured_hint_for_step(step: TutorStepRecord, stronger: bool = False) -> str:
+def _structured_hint_lines(step: TutorStepRecord, stronger: bool = False) -> list[str]:
     expression = step.expression.replace(' ', '')
     if '+' in expression:
         whole_plus_fraction = re.fullmatch(r'(\d+/\d+)\+(\d+)', expression) or re.fullmatch(r'(\d+)\+(\d+/\d+)', expression)
@@ -333,62 +339,135 @@ def _structured_hint_for_step(step: TutorStepRecord, stronger: bool = False) -> 
             whole_part = whole_plus_fraction.group(2) if '/' in whole_plus_fraction.group(1) else whole_plus_fraction.group(1)
             denominator = fraction_part.split('/')[1]
             if stronger:
-                return f'Turn {whole_part} into {int(whole_part) * int(denominator)}/{denominator}, then add the top numbers.'
-            return f'Turn the whole number into a fraction with {denominator} on the bottom first.'
+                return [
+                    'We need matching pieces first.',
+                    f'Turn {whole_part} into {int(whole_part) * int(denominator)}/{denominator}.',
+                    'Then add the top numbers and keep the bottom number the same.',
+                ]
+            return [
+                'The whole number needs the same bottom number as the fraction first.',
+                f'Start by turning {whole_part} into a fraction with {denominator} on the bottom.',
+            ]
         if same_denominator and same_denominator.group(2) == same_denominator.group(4):
             denominator = same_denominator.group(2)
             if stronger:
-                return f'Add the top numbers and keep {denominator} as the bottom number.'
-            return 'If the bottom numbers match, add only the top numbers.'
-        return 'Solve the addition in this step before going back to the whole problem.'
+                return [
+                    'The bottom numbers already match.',
+                    f'Add the top numbers only and keep {denominator} on the bottom.',
+                ]
+            return [
+                'The bottom numbers already match, so do not change them.',
+                'Start by adding the top numbers only.',
+            ]
+        left_denominator = same_denominator.group(2) if same_denominator else ''
+        right_denominator = same_denominator.group(4) if same_denominator else ''
+        if stronger and left_denominator == '8' and right_denominator == '9':
+            return [
+                'We need the same bottom number first.',
+                '8 and 9 both fit into 72.',
+                'Now rename both fractions so they use 72 on the bottom.',
+            ]
+        if stronger:
+            return [
+                'We need the same bottom number first.',
+                f'Look for one number both {left_denominator} and {right_denominator} can fit into.',
+                'Then rename both fractions before you add.',
+            ]
+        return [
+            'The bottom numbers are different, so we cannot add yet.',
+            f'What number can both {left_denominator} and {right_denominator} fit into?',
+        ]
     if '-' in expression:
-        return 'Solve just this subtraction step before returning to the whole problem.'
+        if stronger:
+            left, right = expression.split('-', 1)
+            return [
+                'Stay on this subtraction step only.',
+                f'Start with {left}, then take away {right}.',
+            ]
+        return [
+            'Stay on this subtraction step only.',
+            'Start with the first number, then take away the second number.',
+        ]
     if '*' in expression:
         if re.fullmatch(r'(\d+)/(\d+)\*(\d+)/(\d+)', expression):
+            top_left, bottom_left, top_right, bottom_right = re.fullmatch(r'(\d+)/(\d+)\*(\d+)/(\d+)', expression).groups()
             if stronger:
-                return 'Multiply the top numbers together, then multiply the bottom numbers together.'
-            return 'For fraction multiplication, multiply top by top and bottom by bottom.'
-        return 'Multiply the numbers in this step first.'
+                return [
+                    f'Start with the top numbers: {top_left} x {top_right}.',
+                    f'Then do the bottom numbers: {bottom_left} x {bottom_right}.',
+                ]
+            return [
+                'For fraction multiplication, do the top numbers together first.',
+                'Then do the bottom numbers together.',
+            ]
+        if '/' in expression:
+            left_part, right_part = expression.split('/', 1)
+            left_display = _display_expression(left_part)
+            right_display = _display_expression(right_part)
+            if stronger:
+                return [
+                    f'First work out {left_display}.',
+                    f'After that, divide that result by {right_display}.',
+                ]
+            return [
+                'In this step, multiply first before dividing.',
+                f'Start with {left_display}.',
+            ]
+        if stronger:
+            return [
+                'Stay on this multiplication step only.',
+                'Multiply the two numbers in this step.',
+            ]
+        return [
+            'Stay on this multiplication step only.',
+            'Start by multiplying the numbers in this step.',
+        ]
     if '/' in expression and re.fullmatch(r'(\d+)/(\d+)/(\d+)/(\d+)', expression):
         if stronger:
-            return 'Keep the first fraction, flip the second fraction, then multiply.'
-        return 'For dividing fractions, change division to multiplication by the reciprocal.'
-    return 'Focus only on this one step first.'
+            return [
+                'Keep the first fraction the same.',
+                'Flip the second fraction, then multiply.',
+            ]
+        return [
+            'For dividing fractions, change the division into multiplication first.',
+            'Then flip the second fraction.',
+        ]
+    return ['Focus only on this one step first.']
 
 
 def _child_friendly_step_explanation(step: TutorStepRecord) -> str:
     expression = step.expression.replace(' ', '')
     if (step.description or '').lower().startswith('solve the parentheses'):
-        return 'We open the small box first. The parentheses show the part we should finish before using it in the bigger problem.'
+        return 'The parentheses are like a little box inside the big problem. We finish that box first, then bring its answer back to the whole problem.'
 
     whole_plus_fraction = re.fullmatch(r'(\d+/\d+)\+(\d+)', expression) or re.fullmatch(r'(\d+)\+(\d+/\d+)', expression)
     any_fraction_add = re.fullmatch(r'(\d+)/(\d+)\+(\d+)/(\d+)', expression)
 
     if whole_plus_fraction:
-        return 'Think about money. If one part is a whole amount and the other part is split into smaller pieces, we first turn the whole amount into the same kind of pieces so they can be added fairly.'
+        return 'Think about money, like dollars and coins. If one amount is whole and the other is split into smaller pieces, we first rename the whole amount into matching pieces so we can add them fairly.'
 
     if any_fraction_add:
         left_denominator = any_fraction_add.group(2)
         right_denominator = any_fraction_add.group(4)
         if left_denominator == right_denominator:
-            return 'Think about pizza slices from pizzas cut the same way. When the slice size matches, we only add how many slices we have.'
-        return 'Think about pizza slices from two pizzas cut in different ways. Before adding, we rename both into the same-size slices so the pieces match.'
+            return 'Think about pizza slices cut the same way. When the slice size already matches, we only add how many slices we have.'
+        return 'Think about pizza slices from two pizzas cut into different-size pieces. Before adding, we rename them into matching-size slices.'
 
     if '-' in expression:
-        return 'Think about spending coins from your pocket. Subtraction means some amount is leaving, so we carefully see what is left.'
+        return 'Think about spending some of your money at a store. Subtraction shows what is left after part of it is gone.'
 
     if '*' in expression:
         if re.fullmatch(r'(\d+)/(\d+)\*(\d+)/(\d+)', expression):
-            return 'Think about collecting game points in pairs. For fraction multiplication, we multiply the top numbers together and the bottom numbers together to make one new fraction.'
-        return 'Think about equal groups of stickers. Multiplication means the same amount is repeated, so we can count the groups step by step.'
+            return 'Think about game points on two score cards. For fraction multiplication, we multiply the top numbers together and the bottom numbers together to make one new fraction.'
+        return 'Think about equal groups of stickers. Multiplication means the same amount is repeated, so we count the groups step by step.'
 
     if '/' in expression and re.fullmatch(r'(\d+)/(\d+)/(\d+)/(\d+)', expression):
-        return 'Think about sharing snacks equally. Dividing fractions means we keep the first fraction, flip the second one, and then multiply.'
+        return 'Think about sharing snacks equally. For fraction division, we keep the first fraction, flip the second one, and then multiply.'
 
     if '/' in expression:
         return 'Think about sharing something equally with friends. Division asks how many equal groups we can make.'
 
-    return 'We will focus on just this small part first, then bring it back to the bigger problem.'
+    return 'We will solve this small part first, then place it back into the bigger problem.'
 
 
 def _sync_existing_state(state: TutoringState, normalized_problem: str) -> TutoringState:
@@ -604,17 +683,17 @@ def _step_prompt(step: TutorStepRecord | None) -> str:
 
 def _step_answer_guidance(step: TutorStepRecord) -> str:
     if _should_prefer_fraction_form(step):
-        return 'Answer form: keep your answer as a fraction so it fits neatly into the next step.'
+        return 'Answer form: keep your answer as a fraction for now so the next step stays easy to follow.'
     if _is_exact_whole_number_step(step):
-        return 'Answer form: use the exact whole number you get for this step.'
-    return 'Answer form: use the exact value from this step before going back to the whole problem.'
+        return 'Answer form: write the whole number you get for this step.'
+    return 'Answer form: write just the value for this step before going back to the whole problem.'
 
 
 def _result_format_followup(step: TutorStepRecord, result: str) -> str:
     if _should_prefer_fraction_form(step) and '/' in result:
-        return f'We will keep {result} in fraction form so the next fraction step stays clean.'
+        return f'We will keep {result} as a fraction so the next step is easier to follow.'
     if _should_prefer_fraction_form(step):
-        return f'We will keep this result as {step.expected_answer} so the next fraction step stays clean.'
+        return f'We will keep this result as {step.expected_answer} so the next step is easier to follow.'
     return ''
 
 

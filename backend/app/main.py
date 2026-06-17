@@ -53,6 +53,7 @@ from .tutoring_logic import (
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
+    detect_action_intent,
     detect_off_subject_request,
     update_tutoring_state_after_reply,
 )
@@ -622,6 +623,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     )
     user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or effective_message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nNormalized math if useful: {effective_message}\n\nRespond as Ms. Alisia using the required tutoring method."
     structured_progression = has_structured_math_problem(tutoring_state) and payload.subject == 'Math'
+    action_intent = detect_action_intent(effective_message)
     special_local_reply = False
     if tutoring_state.mode == 'resume_paused_problem_notice':
         formatted_reply = build_resume_paused_problem_reply(tutoring_state)
@@ -664,6 +666,19 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         next_state = tutoring_state
         result_provider = 'local'
         result_model = 'deterministic-structured-roadmap'
+        result_fallback_used = False
+    elif structured_progression and action_intent in {'explain_again', 'clarify_prompt'}:
+        formatted_reply = build_structured_step_focus_reply(
+            tutoring_state,
+            intro=(
+                'No problem. Let me show exactly what this step is asking.'
+                if action_intent == 'clarify_prompt'
+                else 'No problem. Let me say it in a simpler way.'
+            ),
+        )
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = f'deterministic-structured-{action_intent}'
         result_fallback_used = False
     elif matched_structured_step and matched_structured_step.step_id == tutoring_state.current_step_id:
         formatted_reply = build_structured_step_focus_reply(
@@ -1144,11 +1159,11 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
     if has_structured_math_problem(state):
         expression = current_step_expression(state) or state.current_expression or state.main_problem
         if expression:
-            return expression.replace('*', 'Ãƒâ€”').replace('/', 'ÃƒÂ·')
+            return _display_ascii_math_expression(expression)
     for value in (state.current_question, current_step, state.current_step, state.active_problem):
         expression = extract_math_expression(value)
         if expression:
-            return expression.replace('*', 'Ã—').replace('/', 'Ã·')
+            return _display_ascii_math_expression(expression)
     return ''
 
 
@@ -1166,12 +1181,13 @@ def _display_ascii_math_expression(expression: str) -> str:
     return (
         str(expression or '')
         .replace('*', 'x')
-        .replace('×', 'x')
+        .replace('\u00d7', 'x')
         .replace('Ã—', 'x')
         .replace('Ãƒâ€”', 'x')
-        .replace('/', '÷')
-        .replace('Ã·', '÷')
-        .replace('ÃƒÂ·', '÷')
+        .replace('/', '/')
+        .replace('\u00f7', '/')
+        .replace('Ã·', '/')
+        .replace('ÃƒÂ·', '/')
         .strip()
     )
 
@@ -1183,15 +1199,27 @@ def _should_send_structured_roadmap(
     effective_message: str,
     previous_structured_problem_id: str,
 ) -> bool:
-    if subject != 'Math' or not has_structured_math_problem(current_state) or current_state.attempt_count != 0:
+    if subject != 'Math' or not has_structured_math_problem(current_state):
+        return False
+    incoming_problem = _normalized_full_math_problem(effective_message)
+    current_problem = _normalized_full_math_problem(current_state.main_problem)
+    fresh_structured_entry = bool(
+        current_state.problem_id
+        and current_state.problem_id != previous_structured_problem_id
+        and current_state.current_step_index == 0
+        and current_state.problem_status == 'awaiting_step'
+        and incoming_problem
+        and incoming_problem == current_problem
+    )
+    if fresh_structured_entry:
+        return True
+    if current_state.attempt_count != 0:
         return False
     if current_state.problem_id != previous_structured_problem_id:
         return True
     if not previous_state.main_problem.strip() or not current_state.main_problem.strip():
         return False
-    incoming_problem = _normalized_full_math_problem(effective_message)
     previous_problem = _normalized_full_math_problem(previous_state.main_problem)
-    current_problem = _normalized_full_math_problem(current_state.main_problem)
     if not incoming_problem or incoming_problem != previous_problem or incoming_problem != current_problem:
         return False
     return bool(
@@ -1244,13 +1272,13 @@ def _structured_future_step_redirect_reply(state: TutoringState, matched_step) -
 
 
 def _parse_simple_int_expression(expression: str) -> tuple[int, str, int] | None:
-    match = re.search(r'(-?\d+)\s*([+xX*/\-/÷×])\s*(-?\d+)', str(expression or ''))
+    match = re.search(r'(-?\d+)\s*([+xX*/\-/\u00f7\u00d7])\s*(-?\d+)', str(expression or ''))
     if not match:
         return None
     operator = match.group(2)
-    if operator in {'x', 'X', '*', '×'}:
+    if operator in {'x', 'X', '*', '\u00d7'}:
         operator = '*'
-    elif operator in {'/', '÷'}:
+    elif operator in {'/', '\u00f7'}:
         operator = '/'
     return int(match.group(1)), operator, int(match.group(3))
 
@@ -1302,7 +1330,7 @@ def _direct_math_help_expression(message: str) -> str:
     )
     if not any(marker in text for marker in help_markers):
         return ''
-    match = re.search(r'(-?\d+(?:\.\d+)?)\s*([xX×*+\-/÷])\s*(-?\d+(?:\.\d+)?)', message)
+    match = re.search(r'(-?\d+(?:\.\d+)?)\s*([xX\u00d7*+\-/\u00f7])\s*(-?\d+(?:\.\d+)?)', message)
     if not match:
         return ''
     return _display_direct_math_expression(match.group(1), match.group(2), match.group(3))
@@ -1317,7 +1345,7 @@ def _direct_math_help_reply(expression: str) -> str:
 
 
 def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
-    multiplication_match = re.match(r'^\s*(\d+)\s*×\s*(\d+)\s*$', expression)
+    multiplication_match = re.match(r'^\s*(\d+)\s*\u00d7\s*(\d+)\s*$', expression)
     if multiplication_match:
         left = int(multiplication_match.group(1))
         right = int(multiplication_match.group(2))
@@ -1327,9 +1355,9 @@ def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
             base_product = base * right
             remainder_product = remainder * right
             return (
-                f"Break {expression} into easier parts. Start with {base} × {right}.\n\n"
-                f"What is {base} × {right}?",
-                f"{base} × {right} = {base_product}, and {remainder} × {right} = {remainder_product}.\n\n"
+                f"Break {expression} into easier parts. Start with {base} x {right}.\n\n"
+                f"What is {base} x {right}?",
+                f"{base} x {right} = {base_product}, and {remainder} x {right} = {remainder_product}.\n\n"
                 f"Now try adding {base_product} + {remainder_product}.",
             )
 
@@ -1346,12 +1374,12 @@ def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
                 f"Start with the number before the minus sign in {expression}.\n\nWhat happens when you take away {right}?",
                 f"Subtract in small parts if that helps. Now try the subtraction again for {expression}.",
             )
-        if operator in {'÷', '/'}:
+        if operator in {'\u00f7', '/'}:
             return (
                 f"Think of {expression} as sharing into equal groups.\n\nHow many groups of {right} fit into {left}?",
                 f"Try skip-counting by {right} until you reach {left}, then count how many jumps you made.",
             )
-        if operator == '×':
+        if operator == '\u00d7':
             return (
                 f"Think of {expression} as {left} equal groups of {right}.\n\nWhat is the first group worth?",
                 f"You can skip-count by {right}, {left} times. Try counting those jumps carefully.",
@@ -1364,34 +1392,34 @@ def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
 
 
 def _display_direct_math_expression(left: str, operator: str, right: str) -> str:
-    clean_operator = {'x': '×', 'X': '×', '*': '×', '/': '÷', '÷': '÷'}.get(operator, operator)
+    clean_operator = {'x': 'x', 'X': 'x', '*': 'x', '/': '/', '\u00f7': '/'}.get(operator, operator)
     return f'{left} {clean_operator} {right}'
 
 
 def _parse_display_math_expression(expression: str) -> tuple[int, str, int] | None:
-    match = re.match(r'^\s*(-?\d+)\s*([+−\-×xX*/÷])\s*(-?\d+)\s*$', expression)
+    match = re.match(r'^\s*(-?\d+)\s*([+\u2212\-\u00d7xX*/\u00f7])\s*(-?\d+)\s*$', expression)
     if not match:
         return None
-    operator = {'x': '×', 'X': '×', '*': '×', '/': '÷', '−': '-'}.get(match.group(2), match.group(2))
+    operator = {'x': '\u00d7', 'X': '\u00d7', '*': '\u00d7', '/': '\u00f7', '\u2212': '-'}.get(match.group(2), match.group(2))
     return int(match.group(1)), operator, int(match.group(3))
 
 
 def _similar_direct_math_problem(expression: str) -> str:
     parsed = _parse_display_math_expression(expression)
     if not parsed:
-        return '45 × 4'
+        return '45 x 4'
     left, operator, right = parsed
     if operator == '+':
         return f'{left + 2} + {right + 1}'
     if operator == '-':
         return f'{max(left + 3, right + 4)} - {right + 1}'
-    if operator == '÷':
+    if operator == '\u00f7':
         divisor = max(abs(right), 2)
         quotient = max(abs(left // divisor) + 1, 2)
-        return f'{divisor * quotient} ÷ {divisor}'
-    if operator == '×':
-        return f'{left + 1} × {right}'
-    return '45 × 4'
+        return f'{divisor * quotient} / {divisor}'
+    if operator == '\u00d7':
+        return f'{left + 1} x {right}'
+    return '45 x 4'
 
 
 def _grade_number(value: object) -> int | None:
