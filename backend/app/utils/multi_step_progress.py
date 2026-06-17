@@ -2,13 +2,14 @@ import hashlib
 import re
 
 from ..assessment_validation import format_fraction, normalize_math_text, safe_eval_expression
-from ..models import TutorStepRecord, TutoringState
+from ..models import TutorHelperBranch, TutorStepRecord, TutoringState
 
 NUMBER_TOKEN = r'(?<![\d/])-?\d+(?:/\d+)?(?![\d/])'
 
 
 def update_multi_step_progress(message: str, state: TutoringState) -> TutoringState:
-    problem = state.main_problem or state.full_problem or _extract_math_problem(message)
+    incoming_problem = _extract_math_problem(message)
+    problem = incoming_problem or state.main_problem or state.full_problem
     if not problem or not _is_multi_step_problem(problem):
         return state
 
@@ -17,42 +18,11 @@ def update_multi_step_progress(message: str, state: TutoringState) -> TutoringSt
         return state
 
     if state.problem_id and state.main_problem and _normalize_expression(state.main_problem) == normalized_problem and state.ordered_steps:
+        if incoming_problem and _normalize_expression(incoming_problem) == normalized_problem:
+            return _initialize_structured_problem_state(state, normalized_problem)
         return _sync_existing_state(state, normalized_problem)
 
-    steps = _plan_steps(normalized_problem)
-    if not steps:
-        return state
-
-    first_step = steps[0]
-    return state.model_copy(update={
-        'problem_id': _problem_id(normalized_problem),
-        'main_problem': normalized_problem,
-        'active_problem': normalized_problem,
-        'full_problem': normalized_problem,
-        'ordered_steps': steps,
-        'current_step_index': 0,
-        'current_step_id': first_step.step_id,
-        'completed_steps': [],
-        'current_expression': normalized_problem,
-        'remaining_steps': [step.description or step.expression for step in steps[1:]],
-        'completed_step_results': [],
-        'step_results': {},
-        'attempts_per_step': {},
-        'current_step': first_step.expression,
-        'current_question': _step_prompt(first_step),
-        'expected_answer': first_step.expected_answer,
-        'step_number': 1,
-        'attempt_count': 0,
-        'hint_given': False,
-        'answer_revealed': False,
-        'next_similar_question': '',
-        'return_step_index': 0,
-        'return_step_id': first_step.step_id,
-        'final_answer': '',
-        'problem_status': 'awaiting_step',
-        'mode': 'practice',
-        'status': 'waiting_for_student',
-    })
+    return _initialize_structured_problem_state(state, normalized_problem)
 
 
 def build_progress_tracker_directives(state: TutoringState) -> list[str]:
@@ -193,11 +163,14 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
     if next_step:
         lines.extend([
             '',
-            f'Current step: {next_step.label}',
+            f"Now let's move to {next_step.label}.",
+            '',
             f'{next_step.label}: {next_step.description or _display_expression(next_step.expression)}',
             '',
             'Easy idea:',
             _child_friendly_step_explanation(next_step),
+            '',
+            _step_answer_guidance(next_step),
             '',
             _step_prompt(next_step),
         ])
@@ -217,15 +190,19 @@ def build_structured_roadmap_reply(state: TutoringState) -> str:
         '',
         f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
         '',
-        'Plan:',
+        'Step roadmap:',
     ]
     lines.extend(_roadmap_lines(state))
     lines.extend([
         '',
-        f"{current_step.label}: {_display_expression(current_step.expression)}",
+        f"Now let's start with {current_step.label}.",
+        '',
+        f'{current_step.label}: {current_step.description or _display_expression(current_step.expression)}',
         '',
         'Easy idea:',
         _child_friendly_step_explanation(current_step),
+        '',
+        _step_answer_guidance(current_step),
         '',
         'First, solve this part:',
         _step_prompt(current_step),
@@ -250,10 +227,35 @@ def build_structured_retry_reply(state: TutoringState, attempt_count: int) -> st
         'Easy idea:',
         _child_friendly_step_explanation(current_step),
         '',
+        _step_answer_guidance(current_step),
+        '',
         f'Hint: {hint}',
         '',
         _step_prompt(current_step),
     ]
+    return '\n'.join(lines)
+
+
+def build_structured_step_focus_reply(state: TutoringState, intro: str = '') -> str:
+    current_step = _current_step_record(state)
+    if not current_step:
+        return ''
+
+    lines: list[str] = []
+    if intro.strip():
+        lines.extend([intro.strip(), ''])
+    lines.extend([
+        f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
+        f'Current step: {current_step.label}',
+        f'{current_step.label}: {_display_expression(current_step.expression)}',
+        '',
+        'Easy idea:',
+        _child_friendly_step_explanation(current_step),
+        '',
+        _step_answer_guidance(current_step),
+        '',
+        _step_prompt(current_step),
+    ])
     return '\n'.join(lines)
 
 
@@ -269,19 +271,42 @@ def _structured_progress_lines(state: TutoringState, step: TutorStepRecord, resu
     main_problem = _display_expression(state.main_problem or state.active_problem)
     if main_problem:
         lines.append(f'Main problem: {main_problem}')
-    lines.append(f'Step complete: {step.label}')
-    lines.append(f'{step.label}: {_display_expression(step.expression)} = {result}.')
-    remaining_labels = _remaining_step_labels(state, step.step_id)
-    lines.append(f'Steps left: {remaining_labels}')
+    lines.append(f'{step.label} complete: {_display_expression(step.expression)} = {result}')
+    guidance = _result_format_followup(step, result)
+    if guidance:
+        lines.append(guidance)
     return lines
 
 
 def _roadmap_lines(state: TutoringState) -> list[str]:
     lines: list[str] = []
+    current_step_id = state.current_step_id
     for step in state.ordered_steps:
-        summary = step.description or _display_expression(step.expression)
+        summary = _student_facing_roadmap_summary(step, is_current=step.step_id == current_step_id)
         lines.append(f'{step.label}: {summary}')
     return lines
+
+
+def _student_facing_roadmap_summary(step: TutorStepRecord, is_current: bool = False) -> str:
+    expression = _display_expression(step.expression)
+    compact = step.expression.replace(' ', '')
+    if is_current:
+        return f'Solve {expression}'
+    if (step.description or '').lower().startswith('solve the parentheses'):
+        return f'Solve {expression}'
+    if '*' in compact or ('/' in compact and re.fullmatch(r'(\d+)/(\d+)/(\d+)/(\d+)', compact)):
+        return f'Solve {expression}'
+    if '+' in compact:
+        whole_plus_fraction = re.fullmatch(r'(\d+/\d+)\+(\d+)', compact) or re.fullmatch(r'(\d+)\+(\d+/\d+)', compact)
+        fraction_add = re.fullmatch(r'(\d+)/(\d+)\+(\d+)/(\d+)', compact)
+        if whole_plus_fraction:
+            return 'Add the final results'
+        if fraction_add:
+            return 'Add the fraction results'
+        return 'Add the next results'
+    if '-' in compact:
+        return 'Finish the subtraction step'
+    return f'Solve {expression}'
 
 
 def _remaining_step_labels(state: TutoringState, completed_step_id: str = '') -> str:
@@ -378,6 +403,54 @@ def _sync_existing_state(state: TutoringState, normalized_problem: str) -> Tutor
         'expected_answer': current_step.expected_answer if current_step else state.expected_answer,
         'step_number': max(1, state.current_step_index + 1) if state.current_step_id else state.step_number,
         'problem_status': state.problem_status or 'awaiting_step',
+    })
+
+
+def _initialize_structured_problem_state(state: TutoringState, normalized_problem: str) -> TutoringState:
+    steps = _plan_steps(normalized_problem)
+    if not steps:
+        return state
+
+    first_step = steps[0]
+    return state.model_copy(update={
+        'problem_id': _problem_id(normalized_problem),
+        'main_problem': normalized_problem,
+        'active_problem': normalized_problem,
+        'full_problem': normalized_problem,
+        'ordered_steps': steps,
+        'current_step_index': 0,
+        'current_step_id': first_step.step_id,
+        'completed_steps': [],
+        'current_expression': normalized_problem,
+        'remaining_steps': [step.description or step.expression for step in steps[1:]],
+        'completed_step_results': [],
+        'step_results': {},
+        'attempts_per_step': {},
+        'current_step': first_step.expression,
+        'current_question': _step_prompt(first_step),
+        'expected_answer': first_step.expected_answer,
+        'student_answer': '',
+        'correctness_status': '',
+        'step_number': 1,
+        'attempt_count': 0,
+        'hint_given': False,
+        'answer_revealed': False,
+        'next_similar_question': '',
+        'helper_branch': TutorHelperBranch(),
+        'queued_followup_questions': [],
+        'pending_input_kind': '',
+        'pending_new_problem': '',
+        'paused_main_problem': '',
+        'paused_current_step': '',
+        'paused_current_question': '',
+        'paused_completed_steps': [],
+        'return_step_index': 0,
+        'return_step_id': first_step.step_id,
+        'final_answer': '',
+        'problem_status': 'awaiting_step',
+        'mode': 'practice',
+        'status': 'waiting_for_student',
+        'memory_note': f'We are working on {normalized_problem}.',
     })
 
 
@@ -527,6 +600,42 @@ def _step_prompt(step: TutorStepRecord | None) -> str:
     if not step:
         return ''
     return f'What is {_display_expression(step.expression)}?'
+
+
+def _step_answer_guidance(step: TutorStepRecord) -> str:
+    if _should_prefer_fraction_form(step):
+        return 'Answer form: keep your answer as a fraction so it fits neatly into the next step.'
+    if _is_exact_whole_number_step(step):
+        return 'Answer form: use the exact whole number you get for this step.'
+    return 'Answer form: use the exact value from this step before going back to the whole problem.'
+
+
+def _result_format_followup(step: TutorStepRecord, result: str) -> str:
+    if _should_prefer_fraction_form(step) and '/' in result:
+        return f'We will keep {result} in fraction form so the next fraction step stays clean.'
+    if _should_prefer_fraction_form(step):
+        return f'We will keep this result as {step.expected_answer} so the next fraction step stays clean.'
+    return ''
+
+
+def _should_prefer_fraction_form(step: TutorStepRecord) -> bool:
+    expression = step.expression.replace(' ', '')
+    updated_expression = (step.updated_expression or '').replace(' ', '')
+    if re.fullmatch(r'-?\d+/\d+', expression):
+        value = safe_eval_expression(expression)
+        return value is not None and value.denominator != 1
+    if re.fullmatch(r'(\d+)/(\d+)[+\-*](\d+)/(\d+)', expression):
+        return True
+    if re.fullmatch(r'(\d+/\d+)\+(\d+)', expression) or re.fullmatch(r'(\d+)\+(\d+/\d+)', expression):
+        return True
+    if '/' in expression and '/' in updated_expression:
+        return True
+    return False
+
+
+def _is_exact_whole_number_step(step: TutorStepRecord) -> bool:
+    value = safe_eval_expression(step.expression)
+    return value is not None and value.denominator == 1
 
 
 def _display_expression(expression: str) -> str:

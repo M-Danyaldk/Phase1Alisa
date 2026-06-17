@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .curriculum import curriculum_payload
 from .database import init_db
-from .assessment_validation import extract_math_expression
+from .assessment_validation import extract_math_expression, normalize_math_text
 from .assessment_selector import previous_versions_from_assessments, select_next_assessment_version
 from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatOpeningRequest, ChatOpeningResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
 from .prompts import compact_chat_system_prompt, tutor_opening_system_prompt
@@ -61,6 +61,7 @@ from .utils.multi_step_progress import (
     build_progress_tracker_directives,
     build_structured_roadmap_reply,
     build_structured_retry_reply,
+    build_structured_step_focus_reply,
     build_structured_step_reply,
     current_step_expression,
     has_structured_math_problem,
@@ -370,15 +371,25 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     if has_structured_math_problem(tutoring_state):
         active_task = tutoring_state.main_problem or active_task
         current_step = current_step_expression(tutoring_state) or current_step
-    should_send_structured_roadmap = (
-        payload.subject == 'Math'
-        and has_structured_math_problem(tutoring_state)
-        and tutoring_state.attempt_count == 0
-        and tutoring_state.problem_id != previous_structured_problem_id
+    should_send_structured_roadmap = _should_send_structured_roadmap(
+        payload.subject,
+        payload.tutoring_state,
+        tutoring_state,
+        effective_message,
+        previous_structured_problem_id,
     )
+    matched_structured_step = _matching_structured_step(tutoring_state, effective_message) if payload.subject == 'Math' else None
+    if matched_structured_step:
+        tutoring_state = tutoring_state.model_copy(update={
+            'student_answer': payload.message,
+            'attempt_count': 0,
+            'correctness_status': '',
+            'hint_given': False,
+            'answer_revealed': False,
+        })
     answer_checker = TutorAnswerChecker()
     direct_answer_check = answer_checker.check_direct_math_statement(effective_message) if payload.subject == 'Math' else None
-    if direct_answer_check and direct_answer_check.status != 'unclear':
+    if direct_answer_check and direct_answer_check.status != 'unclear' and not matched_structured_step:
         direct_attempt_count = _direct_math_attempt_count(payload.tutoring_state, direct_answer_check)
         tutoring_state = tutoring_state.model_copy(update={
             'current_subject': payload.subject,
@@ -479,7 +490,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
         )
     direct_help_expression = _direct_math_help_expression(effective_message) if payload.subject == 'Math' else ''
-    if direct_help_expression:
+    if direct_help_expression and not matched_structured_step:
         tutoring_state = tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'active_problem': direct_help_expression,
@@ -653,6 +664,21 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         next_state = tutoring_state
         result_provider = 'local'
         result_model = 'deterministic-structured-roadmap'
+        result_fallback_used = False
+    elif matched_structured_step and matched_structured_step.step_id == tutoring_state.current_step_id:
+        formatted_reply = build_structured_step_focus_reply(
+            tutoring_state,
+            intro="Yes, that is the right step to solve next.",
+        )
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = 'deterministic-structured-step-selection'
+        result_fallback_used = False
+    elif matched_structured_step:
+        formatted_reply = _structured_future_step_redirect_reply(tutoring_state, matched_structured_step)
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = 'deterministic-structured-step-redirect'
         result_fallback_used = False
     elif structured_progression and answer_check and answer_check.is_correct:
         next_state = advance_structured_math_problem(tutoring_state, answer_check.expected_answer or tutoring_state.expected_answer)
@@ -997,7 +1023,7 @@ def _correct_math_answer_reply(answer_check, state: TutoringState, current_step:
 
 
 def _text_answer_check_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
-    prompt = (state.current_question or current_step or state.current_step or 'that question').strip()
+    prompt = _clean_text_retry_prompt(state.current_question or current_step or state.current_step or 'that question')
     expected = (answer_check.expected_answer or state.expected_answer or '').strip()
     note = (answer_check.feedback_note or '').strip()
 
@@ -1026,6 +1052,20 @@ def _text_answer_check_reply(answer_check, state: TutoringState, current_step: s
         f"{note or 'A stronger answer needs clearer words, a complete idea, or better support.'}\n\n"
         "Now let's keep going one small step at a time."
     )
+
+
+def _clean_text_retry_prompt(prompt: str) -> str:
+    cleaned = str(prompt or '').strip()
+    for marker in (
+        'Try this same question again:',
+        'Try the same question one more time:',
+        'Try this same question again',
+        'Try the same question one more time',
+    ):
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, 1)[-1].strip()
+    cleaned = cleaned.strip(' "\'')
+    return cleaned or 'that question'
 
 
 def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
@@ -1133,6 +1173,73 @@ def _display_ascii_math_expression(expression: str) -> str:
         .replace('Ã·', '÷')
         .replace('ÃƒÂ·', '÷')
         .strip()
+    )
+
+
+def _should_send_structured_roadmap(
+    subject: str,
+    previous_state: TutoringState,
+    current_state: TutoringState,
+    effective_message: str,
+    previous_structured_problem_id: str,
+) -> bool:
+    if subject != 'Math' or not has_structured_math_problem(current_state) or current_state.attempt_count != 0:
+        return False
+    if current_state.problem_id != previous_structured_problem_id:
+        return True
+    if not previous_state.main_problem.strip() or not current_state.main_problem.strip():
+        return False
+    incoming_problem = _normalized_full_math_problem(effective_message)
+    previous_problem = _normalized_full_math_problem(previous_state.main_problem)
+    current_problem = _normalized_full_math_problem(current_state.main_problem)
+    if not incoming_problem or incoming_problem != previous_problem or incoming_problem != current_problem:
+        return False
+    return bool(
+        previous_state.completed_steps
+        or previous_state.completed_step_results
+        or previous_state.step_results
+        or previous_state.current_step_index > 0
+        or previous_state.problem_status == 'finished'
+    )
+
+
+def _normalized_full_math_problem(text: str) -> str:
+    normalized = normalize_math_text(text)
+    expression = extract_math_expression(normalized) or normalized
+    expression = re.sub(r'(?<![\d/])(-?\d+)\s*/\s*(-?\d+)(?![\d/])', r'\1/\2', expression)
+    expression = re.sub(r'\s+', ' ', expression).strip()
+    return expression
+
+
+def _normalize_math_match_text(text: str) -> str:
+    normalized = normalize_math_text(text)
+    expression = extract_math_expression(normalized) or normalized
+    expression = re.sub(r'\s+', '', expression)
+    return expression.strip().rstrip('?')
+
+
+def _matching_structured_step(state: TutoringState, message: str):
+    if not has_structured_math_problem(state):
+        return None
+    message_expression = _normalize_math_match_text(message)
+    if not message_expression or not any(operator in message_expression for operator in '+-*/()'):
+        return None
+    for step in state.ordered_steps:
+        if _normalize_math_match_text(step.expression) == message_expression:
+            return step
+    return None
+
+
+def _structured_future_step_redirect_reply(state: TutoringState, matched_step) -> str:
+    current_reply = build_structured_step_focus_reply(
+        state,
+        intro=f'{matched_step.label} is part of the roadmap, but it comes later.',
+    )
+    if not current_reply:
+        return ''
+    return (
+        f"{current_reply}\n\n"
+        "Let's finish the current step first, then we will move to that later step."
     )
 
 

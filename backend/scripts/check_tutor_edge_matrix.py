@@ -35,7 +35,7 @@ async def main() -> None:
         state = update_multi_step_progress(problem, TutoringState(current_subject='Math'))
         _expect(has_structured_math_problem(state), f'Edge matrix did not structure {problem!r}.', failures)
         roadmap = build_structured_roadmap_reply(state)
-        _expect('Main problem:' in roadmap and 'Plan:' in roadmap, f'Roadmap formatting broke for {problem!r}.', failures)
+        _expect('Main problem:' in roadmap and 'Step roadmap:' in roadmap, f'Roadmap formatting broke for {problem!r}.', failures)
 
         safety_counter = 0
         running = state
@@ -111,11 +111,26 @@ async def main() -> None:
     _expect(detect_off_subject_request('Math', 'how do leaves make food?', base), 'Math did not directly block a science interruption.', failures)
     _expect(detect_off_subject_request('ELA', '7/8 + 1/8', TutoringState(current_subject='ELA')), 'ELA did not block a math expression.', failures)
     _expect(detect_off_subject_request('Writing', '12 x 4', TutoringState(current_subject='Writing')), 'Writing did not block a math expression.', failures)
+    _expect(
+        not detect_off_subject_request('Writing', 'Write 3 sentences about why reading every day matters.', TutoringState(current_subject='Writing')),
+        'Writing mixed-case prompt was incorrectly treated as off-subject.',
+        failures,
+    )
+    _expect(
+        detect_off_subject_request('ELA', 'Write 3 sentences about why reading every day matters.', TutoringState(current_subject='ELA')),
+        'ELA mixed-case prompt was not redirected into writing.',
+        failures,
+    )
 
     _expect(subject_classifier.should_use_fallback('Math', 'how do machines work?', base), 'Subject fallback did not trigger for an uncertain non-math question.', failures)
     fallback_subject = await subject_classifier.classify_if_needed('Math', 'how do machines work?', base)
     _expect(fallback_subject.label == 'off_subject', f'Subject fallback did not classify uncertain non-math math interruption safely: {fallback_subject.label!r}.', failures)
     _expect(fallback_subject.confidence in {'low', 'medium', 'high'}, 'Subject fallback returned an invalid confidence.', failures)
+    _expect(
+        not subject_classifier.should_use_fallback('Writing', 'Write 3 sentences about why reading every day matters.', TutoringState(current_subject='Writing')),
+        'Writing subject fallback incorrectly triggered for a writing task that mentions reading.',
+        failures,
+    )
 
     # Intent fallback matrix for ambiguous mid-flow language.
     intent_classifier = TutorIntentClassifier()

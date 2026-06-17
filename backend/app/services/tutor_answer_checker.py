@@ -166,11 +166,11 @@ class TutorAnswerChecker:
             return matched
 
         if subject == 'Writing':
-            if lower.startswith('write one clear sentence'):
+            if self._matches_writing_single_sentence_prompt(lower):
                 return self._build_pseudo_question(subject, clean_question, 'writing_rubric', expected_answer or 'One complete sentence that stays on topic.', 'complete sentence')
-            if lower.startswith('write 3 sentences'):
+            if self._matches_writing_three_sentence_prompt(lower):
                 return self._build_pseudo_question(subject, clean_question, 'writing_rubric', expected_answer or 'Three connected explanatory sentences with a clear reason and details.', 'explanatory writing')
-            if lower.startswith('how can you make this sentence stronger'):
+            if self._matches_writing_revision_prompt(lower):
                 return self._build_pseudo_question(subject, clean_question, 'writing_rubric', expected_answer or 'A stronger sentence with more specific detail or vivid word choice.', 'revision for detail')
 
         if lower.startswith('fix this sentence:'):
@@ -180,6 +180,15 @@ class TutorAnswerChecker:
         if subject == 'ELA' and expected_answer.strip():
             return self._build_pseudo_question(subject, clean_question, 'keyword_text', expected_answer, 'reading comprehension')
         return None
+
+    def _matches_writing_single_sentence_prompt(self, lower: str) -> bool:
+        return lower.startswith('write one clear sentence')
+
+    def _matches_writing_three_sentence_prompt(self, lower: str) -> bool:
+        return bool(re.match(r'^write\s+(?:3|three)\s+sentences\b', lower))
+
+    def _matches_writing_revision_prompt(self, lower: str) -> bool:
+        return lower.startswith('how can you make this sentence stronger') or lower.startswith('make this sentence stronger')
 
     def _lookup_bank_question(self, subject: str, question: str) -> AssessmentQuestion | None:
         normalized = normalize_answer_text(question)

@@ -3,9 +3,14 @@ import asyncio
 from backend.app.assessment_bank import version_for
 from backend.app.assessment_result_items import build_question_results
 from backend.app.assessment_validation import validate_assessment_answer
-from backend.app.main import _text_answer_check_reply
+from backend.app.main import _matching_structured_step, _structured_future_step_redirect_reply, _text_answer_check_reply
 from backend.app.models import AssessmentRequest, ChatHistoryItem, StudentProfile, TutoringState
-from backend.app.services.tutor_answer_checker import TutorAnswerChecker
+from backend.app.services.voice_service import (
+    _matching_structured_step as _voice_matching_structured_step,
+    _should_send_structured_roadmap as _voice_should_send_structured_roadmap,
+    _structured_future_step_redirect_reply as _voice_structured_future_step_redirect_reply,
+)
+from backend.app.services.tutor_answer_checker import AnswerCheckResult, TutorAnswerChecker
 from backend.app.services.llm.router import LLMRouter
 from backend.app.services.tutor_intent_classifier import IntentClassificationResult, TutorIntentClassifier
 from backend.app.services.tutor_math_normalizer import MathNormalizationResult, TutorMathNormalizer
@@ -52,9 +57,10 @@ async def main() -> None:
         _expect(actual_steps == expected_steps, f'Step plan mismatch for {problem!r}: {actual_steps!r}.', failures)
         roadmap_reply = build_structured_roadmap_reply(state)
         _expect('Main problem:' in roadmap_reply, f'Roadmap reply missing main problem label for {problem!r}.', failures)
-        _expect('Plan:' in roadmap_reply, f'Roadmap reply missing plan label for {problem!r}.', failures)
+        _expect('Step roadmap:' in roadmap_reply, f'Roadmap reply missing roadmap label for {problem!r}.', failures)
         _expect(state.ordered_steps[0].label in roadmap_reply, f'Roadmap reply missing first step label for {problem!r}.', failures)
         _expect('Easy idea:' in roadmap_reply, f'Roadmap reply missing child-friendly explanation label for {problem!r}.', failures)
+        _expect("Now let's start with" in roadmap_reply, f'Roadmap reply did not announce the first step for {problem!r}.', failures)
         running = state
         previous = state
         for step in expected_steps:
@@ -64,8 +70,19 @@ async def main() -> None:
         final_reply = build_structured_step_reply(previous, running)
         _expect('Final answer:' in final_reply, f'Final structured reply missing final answer label for {problem!r}.', failures)
         step_completion_reply = build_structured_step_reply(state, advance_structured_math_problem(state, state.expected_answer))
+        _expect(f'{state.ordered_steps[0].label} complete:' in step_completion_reply, f'Step completion reply missing explicit completion label for {problem!r}.', failures)
         _expect('Now the problem becomes:' in step_completion_reply, f'Step completion reply missing updated problem label for {problem!r}.', failures)
+        _expect("Now let's move to" in step_completion_reply, f'Step completion reply missing next-step transition for {problem!r}.', failures)
         _expect('Easy idea:' in step_completion_reply, f'Step completion reply missing child-friendly explanation label for {problem!r}.', failures)
+        _expect('Answer form:' in step_completion_reply, f'Step completion reply missing answer-form guidance for {problem!r}.', failures)
+
+    roadmap_visibility_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (10 * 23/2)', TutoringState(current_subject='Math'))
+    roadmap_visibility_reply = build_structured_roadmap_reply(roadmap_visibility_state)
+    _expect('Step A: Solve 10/1 x 23/2' not in roadmap_visibility_reply, 'Roadmap should use the display expression form, not normalized internals.', failures)
+    _expect('Step A: Solve 10 x 23/2' in roadmap_visibility_reply, 'Roadmap did not show the current explicit Step A expression.', failures)
+    _expect('Step B: Solve 7/4 x 8/9' in roadmap_visibility_reply, 'Roadmap did not show the future explicit multiplication step.', failures)
+    _expect('Step C: Add the fraction results' in roadmap_visibility_reply, 'Roadmap revealed the future fraction-add expression instead of a safe label.', failures)
+    _expect('Step D: Add the final results' in roadmap_visibility_reply, 'Roadmap revealed the final transformed addition instead of a safe label.', failures)
 
     # Structured retry replies should stay anchored to the current step.
     retry_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
@@ -73,6 +90,7 @@ async def main() -> None:
     retry_one = build_structured_retry_reply(retry_state, 1)
     _expect('Main problem:' in retry_one and 'Current step: Step A' in retry_one, 'First structured retry reply did not include main problem and current step.', failures)
     _expect('Easy idea:' in retry_one, 'First structured retry reply did not include the child-friendly explanation block.', failures)
+    _expect('Answer form:' in retry_one, 'First structured retry reply did not include answer-form guidance.', failures)
     retry_two = build_structured_retry_reply(retry_state.model_copy(update={'attempt_count': 2}), 2)
     _expect('Hint:' in retry_two and 'Turn 9 into 81/9' in retry_two, 'Second structured retry reply did not give the stronger targeted hint.', failures)
     fraction_multiply_state = advance_structured_math_problem(retry_state, retry_state.expected_answer)
@@ -90,6 +108,9 @@ async def main() -> None:
     _, _, _, answered_state = build_chat_directives('88/9', history, answer_state)
     _expect(answered_state.attempt_count == 1, 'Short math reply was not counted as the first answer attempt.', failures)
     _expect(answered_state.attempts_per_step.get(answered_state.current_step_id or '') == 1, 'Per-step attempt memory did not update on short math reply.', failures)
+
+    _, _, _, phrase_answer_state = build_chat_directives('i think it is 88/9', history, answer_state)
+    _expect(phrase_answer_state.attempt_count == 1, 'Short phrased math reply was not counted as the first answer attempt.', failures)
 
     # Low-confidence intent fallback should classify ambiguous messages without taking over tutor control.
     classifier = TutorIntentClassifier()
@@ -115,6 +136,52 @@ async def main() -> None:
     related_intent = await classifier.classify_if_needed('Math', 'no i mean how did that become 89/9?', history, answer_state)
     _, _, _, llm_related_state = build_chat_directives('no i mean how did that become 89/9?', history, answer_state, assisted_intent_label=related_intent.label)
     _expect(llm_related_state.helper_branch.status == 'active', 'Intent fallback did not convert the ambiguous question into a related helper branch.', failures)
+
+    # Symbolic step echoes should be recognized as selecting the current step, not solving it.
+    roadmap_state = update_multi_step_progress('5/6 + 3/4 * 2/3', TutoringState(current_subject='Math'))
+    current_step_match = _matching_structured_step(roadmap_state, roadmap_state.current_step)
+    _expect(current_step_match is not None and current_step_match.step_id == roadmap_state.current_step_id, 'Current structured step expression was not recognized as the active step.', failures)
+    future_step_match = _matching_structured_step(roadmap_state, '5/6 + 1/2')
+    _expect(future_step_match is not None and future_step_match.step_id != roadmap_state.current_step_id, 'Future structured step expression was not recognized inside the roadmap.', failures)
+    redirect_reply = _structured_future_step_redirect_reply(roadmap_state, future_step_match)
+    _expect('comes later' in redirect_reply and 'Current step:' in redirect_reply, 'Future structured step redirect reply did not keep the tutor anchored on the current step.', failures)
+    voice_current_step_match = _voice_matching_structured_step(roadmap_state, roadmap_state.current_step)
+    _expect(voice_current_step_match is not None and voice_current_step_match.step_id == roadmap_state.current_step_id, 'Voice path did not recognize the active structured step expression.', failures)
+    voice_future_step_match = _voice_matching_structured_step(roadmap_state, '5/6 + 1/2')
+    _expect(voice_future_step_match is not None and voice_future_step_match.step_id != roadmap_state.current_step_id, 'Voice path did not recognize a future structured step expression.', failures)
+    voice_redirect_reply = _voice_structured_future_step_redirect_reply(roadmap_state, voice_future_step_match)
+    _expect('comes later' in voice_redirect_reply and 'Current step:' in voice_redirect_reply, 'Voice future structured step redirect reply did not stay anchored on the current step.', failures)
+
+    restarted_state = advance_structured_math_problem(roadmap_state, roadmap_state.expected_answer)
+    restarted_state = update_multi_step_progress('5/6 + 3/4 * 2/3', restarted_state)
+    _expect(restarted_state.current_step_index == 0, 'Re-entering the same full problem did not restart at the first step.', failures)
+    _expect(restarted_state.completed_steps == [], 'Re-entering the same full problem did not clear completed steps.', failures)
+    _expect(restarted_state.current_question == roadmap_state.current_question, 'Re-entering the same full problem did not restore the first question.', failures)
+    _expect(restarted_state.problem_status == 'awaiting_step', 'Re-entering the same full problem did not return to awaiting-step status.', failures)
+
+    finished_restart_state = update_multi_step_progress('12 + 3 * 4', TutoringState(current_subject='Math'))
+    while has_structured_math_problem(finished_restart_state):
+        finished_restart_state = advance_structured_math_problem(finished_restart_state, finished_restart_state.expected_answer)
+    finished_restart_state = update_multi_step_progress('12 + 3 * 4', finished_restart_state)
+    _expect(finished_restart_state.current_step_index == 0, 'Finished structured problem did not restart cleanly when entered again.', failures)
+    _expect(finished_restart_state.final_answer == '', 'Finished structured problem restart did not clear the old final answer.', failures)
+    _expect(
+        _voice_should_send_structured_roadmap(
+            'Math',
+            restarted_state.model_copy(update={
+                'completed_steps': ['Step A'],
+                'completed_step_results': {'step_a': '1/2'},
+                'step_results': {'step_a': '1/2'},
+                'current_step_index': 1,
+                'problem_status': 'awaiting_step',
+            }),
+            roadmap_state,
+            '5/6 + 3/4 * 2/3',
+            roadmap_state.problem_id,
+        ),
+        'Voice roadmap parity check did not trigger for re-entering the same finished or partially completed problem.',
+        failures,
+    )
 
     async def fake_switch_classifier(subject, message, history_items, state):
         return IntentClassificationResult(label='switch_request', confidence='high', reason='Student wants to do the new problem first.')
@@ -255,6 +322,44 @@ async def main() -> None:
     _expect('we finished the new problem' in resume_reply.lower(), 'Resume reply did not mention finishing the temporary switched problem.', failures)
     _expect('now let\'s return to your main problem' in resume_reply.lower(), 'Resume reply did not use the compact return wording.', failures)
 
+    # Non-math prompt lock should not rebuild the current question from stale assistant history.
+    stale_history = [ChatHistoryItem(role='msalisia', content='Try this same question again:\nWhat is the cat doing?')]
+    writing_state = TutoringState(current_subject='Writing')
+    _, _, rebuilt_step, rebuilt_state = build_chat_directives('Sitting on mat', stale_history, writing_state)
+    _expect(rebuilt_step == '', 'Writing flow incorrectly rebuilt the current step from assistant history.', failures)
+    _expect(rebuilt_state.current_question == '', 'Writing flow incorrectly locked a stale assistant question into state.', failures)
+
+    polluted_reply = _text_answer_check_reply(
+        AnswerCheckResult(status='incorrect', feedback_note='Look back at the sentence and answer only what it asks.'),
+        TutoringState(current_question='Try this same question again:\nWhat is the cat doing?', attempt_count=1),
+    )
+    _expect(polluted_reply.count('Try this same question again:') == 1, 'Text retry reply duplicated the retry wrapper when the stored prompt was polluted.', failures)
+    _expect('What is the cat doing?' in polluted_reply, 'Text retry reply lost the cleaned question prompt.', failures)
+
+    answer_checker = TutorAnswerChecker()
+    writing_three_prompt_check = answer_checker._check_local_text_prompt(
+        'Writing',
+        'Write three sentences that explain why practice builds skill.',
+        'Practice helps you improve. It helps you remember steps. It makes hard things easier over time.',
+        '',
+    )
+    _expect(
+        writing_three_prompt_check.status != 'unclear',
+        'Local Writing grader did not recognize the "write three sentences" wording variant.',
+        failures,
+    )
+    writing_revision_prompt_check = answer_checker._check_local_text_prompt(
+        'Writing',
+        'Make this sentence stronger: The lesson was good.',
+        'The lesson was exciting because we got to build a volcano.',
+        '',
+    )
+    _expect(
+        writing_revision_prompt_check.status != 'unclear',
+        'Local Writing grader did not recognize the shorter "make this sentence stronger" wording variant.',
+        failures,
+    )
+
     # Off-subject requests should be redirected back into the active subject.
     off_subject_math_state = answer_state
     _expect(detect_off_subject_request('Math', 'what is photosynthesis?', off_subject_math_state), 'Math tutor did not flag an obvious science question as off-subject.', failures)
@@ -270,6 +375,16 @@ async def main() -> None:
     _expect(detect_off_subject_request('Writing', 'What is the main idea of this passage?', TutoringState(current_subject='Writing')), 'Writing tutor did not flag an obvious reading prompt as off-subject.', failures)
     _expect(not detect_off_subject_request('ELA', 'What is the main idea of this passage?', TutoringState(current_subject='ELA')), 'Reading tutor incorrectly blocked a reading-comprehension prompt.', failures)
     _expect(not detect_off_subject_request('Writing', 'How can you make this sentence stronger?', TutoringState(current_subject='Writing')), 'Writing tutor incorrectly blocked a writing-revision prompt.', failures)
+    _expect(
+        not detect_off_subject_request('Writing', 'Write 3 sentences about why reading every day matters.', TutoringState(current_subject='Writing')),
+        'Writing tutor incorrectly blocked a writing prompt just because it mentioned reading.',
+        failures,
+    )
+    _expect(
+        detect_off_subject_request('ELA', 'Write 3 sentences about why reading every day matters.', TutoringState(current_subject='ELA')),
+        'ELA tutor did not redirect a writing prompt that happened to mention reading.',
+        failures,
+    )
     _expect(not detect_off_subject_request('Math', 'switch to reading', off_subject_math_state), 'Explicit subject switch should not be treated as an off-subject block.', failures)
 
     # Subject fallback should catch uncertain off-subject cases without overriding obvious in-subject prompts.
@@ -282,6 +397,11 @@ async def main() -> None:
     _expect(
         not subject_classifier.should_use_fallback('Math', 'what is numerator?', off_subject_math_state),
         'Subject fallback incorrectly triggered for an in-subject math definition question.',
+        failures,
+    )
+    _expect(
+        not subject_classifier.should_use_fallback('Writing', 'Write 3 sentences about why reading every day matters.', TutoringState(current_subject='Writing')),
+        'Writing subject fallback incorrectly triggered for a writing task that mentioned reading.',
         failures,
     )
 
@@ -325,6 +445,13 @@ async def main() -> None:
     ela_subject_result = await subject_classifier.classify_if_needed('ELA', 'can you help me with this thing?', TutoringState(current_subject='ELA'))
     _expect(ela_subject_result.label == 'off_subject', 'ELA subject fallback did not preserve the mocked off_subject label for an unresolved shared-language prompt.', failures)
 
+    local_writing_subject = await TutorSubjectClassifier().classify_if_needed(
+        'Writing',
+        'Write 3 sentences about why reading every day matters.',
+        TutoringState(current_subject='Writing'),
+    )
+    _expect(local_writing_subject.label in {'', 'ambiguous'}, 'Writing fallback unexpectedly overrode a direct in-subject writing prompt.', failures)
+
     # Helper branch and queued follow-up question flow.
     base_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
     _, helper_task, helper_step, helper_state = build_chat_directives('what is numerator?', [], base_state)
@@ -338,6 +465,7 @@ async def main() -> None:
     )
     _expect(returned_state.helper_branch.status == 'completed', 'Helper branch was not marked completed after reply.', failures)
     _expect(returned_state.current_question == base_state.current_question, 'Main problem was not restored after helper reply.', failures)
+    _expect(returned_state.current_step_id == base_state.current_step_id, 'Helper branch did not restore the exact structured current step ID.', failures)
     _, queued_task, queued_step, queued_state = build_chat_directives(
         'what is denominator?',
         [ChatHistoryItem(role='msalisia', content=returned_state.current_question)],

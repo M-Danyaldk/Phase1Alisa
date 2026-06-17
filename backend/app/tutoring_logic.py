@@ -261,12 +261,14 @@ def _looks_like_reading_task(message: str) -> bool:
         'theme',
         'passage',
         'story',
-        'reading',
         'vocabulary',
         'inference',
         'author',
         'setting',
         'plot',
+    )
+    weak_phrases = (
+        'reading',
     )
     starters = (
         'read this',
@@ -281,7 +283,13 @@ def _looks_like_reading_task(message: str) -> bool:
         'who is the main character',
         'what is the theme',
     )
-    return text.startswith(starters) or any(phrase in text for phrase in strong_phrases)
+    if text.startswith(starters):
+        return True
+    if any(phrase in text for phrase in strong_phrases):
+        return True
+    if any(phrase in text for phrase in weak_phrases):
+        return not _has_strong_writing_shape(text)
+    return False
 
 
 def _looks_like_writing_task(message: str) -> bool:
@@ -322,6 +330,40 @@ def _looks_like_writing_task(message: str) -> bool:
     return text.startswith(starters) or any(phrase in text for phrase in strong_phrases)
 
 
+def _has_strong_writing_shape(text: str) -> bool:
+    starters = (
+        'help me write',
+        'help me with this paragraph',
+        'help me with this sentence',
+        'can you help me with this paragraph',
+        'can you help me with this sentence',
+        'check my sentence',
+        'write ',
+        'rewrite ',
+        'revise ',
+        'edit ',
+        'fix this sentence',
+        'how can you make this sentence stronger',
+    )
+    strong_phrases = (
+        'write one clear sentence',
+        'write 3 sentences',
+        'write three sentences',
+        'fix this sentence',
+        'make this sentence stronger',
+        'how can you make this sentence stronger',
+        'complete sentence',
+        'topic sentence',
+        'revise',
+        'revision',
+        'rewrite',
+        'edit this',
+        'writing',
+        'essay',
+    )
+    return text.startswith(starters) or any(phrase in text for phrase in strong_phrases)
+
+
 def _looks_like_answer_to_current_math_step(message: str, current_question: str) -> bool:
     text = _normalized(message)
     if not current_question.strip() or not text:
@@ -331,6 +373,11 @@ def _looks_like_answer_to_current_math_step(message: str, current_question: str)
     if not any(char.isdigit() for char in message):
         return False
     if re.fullmatch(r'-?\d+(?:/\d+)?(?:\.\d+)?', text):
+        return True
+    if re.fullmatch(
+        r'(?:my answer|answer|answer is|it is|its|it\'s|i got|i think it is|i think)\s*-?\d+(?:/\d+)?(?:\.\d+)?',
+        text,
+    ):
         return True
     if len(text) > 32:
         return False
@@ -441,6 +488,15 @@ def _extract_last_assistant_question(history: list[ChatHistoryItem]) -> str:
         if item.role == 'msalisia' and '?' in item.content:
             return item.content.strip()
     return ''
+
+
+def _should_use_history_question_fallback(state: TutoringState) -> bool:
+    if state.problem_id or state.ordered_steps:
+        return True
+    if (state.current_subject or '').strip() == 'Math':
+        return True
+    active = state.active_problem or state.main_problem or state.full_problem
+    return detect_math_expression(active)
 
 
 def _same_question(left: str, right: str) -> bool:
@@ -570,7 +626,9 @@ def build_chat_directives(
     state = state or TutoringState()
     directives = _base_directives()
     active_problem = infer_active_problem(message, history, state)
-    current_step = state.current_step.strip() or _extract_last_assistant_question(history)
+    current_step = state.current_step.strip()
+    if not current_step and _should_use_history_question_fallback(state):
+        current_step = _extract_last_assistant_question(history)
     current_question = state.current_question.strip() or current_step
     direct_help = detect_direct_help_intent(message)
     confused = detect_confused_intent(message)
@@ -1075,10 +1133,10 @@ def detect_off_subject_request(subject: str, message: str, state: TutoringState 
             return False
         return any(word in text for word in GENERAL_KNOWLEDGE_WORDS)
     if subject == 'Writing':
-        if _looks_like_reading_task(message):
-            return True
         if _looks_like_writing_task(message):
             return False
+        if _looks_like_reading_task(message):
+            return True
         if any(word in text for word in WRITING_TOPIC_WORDS):
             return False
         return any(word in text for word in GENERAL_KNOWLEDGE_WORDS)

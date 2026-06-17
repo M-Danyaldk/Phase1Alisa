@@ -166,10 +166,10 @@ class LLMRouter:
             return json.dumps({'label': 'ambiguous', 'confidence': 'medium', 'reason': 'Local fallback could not fully place the message inside reading.'})
 
         if subject == 'Writing':
-            if reading_task:
-                return json.dumps({'label': 'off_subject', 'confidence': 'high', 'reason': 'The message is asking for reading work, not writing.'})
             if writing_task:
                 return json.dumps({'label': 'in_subject', 'confidence': 'high', 'reason': 'The message is still about writing.'})
+            if reading_task:
+                return json.dumps({'label': 'off_subject', 'confidence': 'high', 'reason': 'The message is asking for reading work, not writing.'})
             if any(word in message for word in writing_words):
                 return json.dumps({'label': 'in_subject', 'confidence': 'high', 'reason': 'The message is still about writing.'})
             if any(word in message for word in science_words):
@@ -263,12 +263,14 @@ class LLMRouter:
             'theme',
             'passage',
             'story',
-            'reading',
             'vocabulary',
             'inference',
             'author',
             'setting',
             'plot',
+        )
+        weak_phrases = (
+            'reading',
         )
         starters = (
             'read this',
@@ -283,7 +285,13 @@ class LLMRouter:
             'who is the main character',
             'what is the theme',
         )
-        return text.startswith(starters) or any(phrase in text for phrase in phrases)
+        if text.startswith(starters):
+            return True
+        if any(phrase in text for phrase in phrases):
+            return True
+        if any(phrase in text for phrase in weak_phrases):
+            return not self._has_strong_writing_shape(text)
+        return False
 
     def _looks_like_writing_task(self, message: str) -> bool:
         text = normalize_math_text(message).lower()
@@ -316,5 +324,38 @@ class LLMRouter:
             'edit ',
             'fix this sentence',
             'how can you make this sentence stronger',
+        )
+        return text.startswith(starters) or any(phrase in text for phrase in phrases)
+
+    def _has_strong_writing_shape(self, text: str) -> bool:
+        starters = (
+            'help me write',
+            'help me with this paragraph',
+            'help me with this sentence',
+            'can you help me with this paragraph',
+            'can you help me with this sentence',
+            'check my sentence',
+            'write ',
+            'rewrite ',
+            'revise ',
+            'edit ',
+            'fix this sentence',
+            'how can you make this sentence stronger',
+        )
+        phrases = (
+            'write one clear sentence',
+            'write 3 sentences',
+            'write three sentences',
+            'fix this sentence',
+            'make this sentence stronger',
+            'how can you make this sentence stronger',
+            'complete sentence',
+            'topic sentence',
+            'revise',
+            'revision',
+            'rewrite',
+            'edit this',
+            'writing',
+            'essay',
         )
         return text.startswith(starters) or any(phrase in text for phrase in phrases)
