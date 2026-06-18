@@ -361,11 +361,14 @@ function MathStepTracker({ state }: { state: TutoringState }) {
         const complete = step.status === 'complete' || Boolean(step.result);
         const active = !complete && step.step_id === currentStepId && !isFinished;
         const statusText = complete ? 'Done' : active ? 'Now' : 'Next';
+        const stepText = complete || active
+          ? step.expression || step.description || ''
+          : safeFutureStepText(step.expression || '', step.description || '');
         return <div key={step.step_id || `${step.label}-${index}`} className={classNames('math-step-pill', complete ? 'complete' : '', active ? 'active' : '')}>
           {complete ? <CheckCircle2 aria-hidden="true" /> : active ? <PlayCircle aria-hidden="true" /> : <Circle aria-hidden="true" />}
           <div>
             <span>{step.label || `Step ${index + 1}`} <em>{statusText}</em></span>
-            <strong>{displayMath(step.expression || step.description || '')}</strong>
+            <strong>{displayMath(stepText)}</strong>
           </div>
         </div>;
       })}
@@ -375,6 +378,18 @@ function MathStepTracker({ state }: { state: TutoringState }) {
 
 function displayMath(value: string): string {
   return String(value || '').replace(/\*/g, '×');
+}
+
+function safeFutureStepText(expression: string, description: string): string {
+  const compact = expression.replace(/\s+/g, '');
+  const cleanDescription = description.replace(/\s*->.*$/, '').trim();
+  if (/\d+\/\d+\+\d+\/\d+/.test(compact)) return 'Add the fraction results';
+  if (/\d+\/\d+\+\d+/.test(compact) || /\d+\+\d+\/\d+/.test(compact)) return 'Add the final results';
+  if (compact.includes('+')) return 'Add the next results';
+  if (compact.includes('-')) return 'Finish the subtraction step';
+  if (compact.includes('*')) return cleanDescription || 'Multiply the next part';
+  if (compact.includes('/')) return cleanDescription || 'Divide the next part';
+  return cleanDescription || 'Next step';
 }
 
 function formatRemaining(seconds: number): string {

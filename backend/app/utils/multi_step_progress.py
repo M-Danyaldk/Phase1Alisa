@@ -168,19 +168,19 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
     lines.extend(_structured_progress_lines(previous_state, current_step, result, reveal=reveal))
     working_lines = _structured_working_lines(current_step, result)
     if working_lines:
-        lines.extend(['', 'Work:'])
+        lines.extend(['', '**Work:**'])
         lines.extend(working_lines)
 
     if current_step.updated_expression:
         lines.extend([
             '',
-            f'Now the problem becomes: {_display_expression(current_step.updated_expression)}',
+            f'**Now the problem becomes:** {_display_expression(current_step.updated_expression)}',
         ])
 
     if next_state.problem_status == 'finished':
         lines.extend([
             '',
-            f'Final answer: {next_state.final_answer}.',
+            f'**Final answer:** {next_state.final_answer}.',
         ])
         return '\n'.join(lines)
 
@@ -188,11 +188,11 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
     if next_step:
         lines.extend([
             '',
-            f"Now let's move to {next_step.label}.",
+            f"Now let's move to **{next_step.label}**.",
             '',
-            f'{next_step.label}: {next_step.description or _display_expression(next_step.expression)}',
+            f'**{next_step.label}:** {next_step.description or _display_expression(next_step.expression)}',
             '',
-            'Easy idea:',
+            '**Easy idea:**',
             _child_friendly_step_explanation(next_step),
             '',
             _step_answer_guidance(next_step),
@@ -213,18 +213,18 @@ def build_structured_roadmap_reply(state: TutoringState) -> str:
     lines = [
         "We can solve this one step at a time.",
         '',
-        f"We're working on: {_display_expression(state.main_problem or state.active_problem)}",
+        f"**Main problem:** {_display_expression(state.main_problem or state.active_problem)}",
         '',
-        'Step roadmap:',
+        '**Step roadmap:**',
     ]
     lines.extend(_roadmap_lines(state))
     lines.extend([
         '',
-        f"Now let's start with {current_step.label}.",
+        f"Now let's start with **{current_step.label}**.",
         '',
-        f'This part: {current_step.description or _display_expression(current_step.expression)}',
+        f'**This part:** {current_step.description or _display_expression(current_step.expression)}',
         '',
-        'Easy idea:',
+        '**Easy idea:**',
         _child_friendly_step_explanation(current_step),
         '',
         _step_answer_guidance(current_step),
@@ -246,7 +246,7 @@ def build_structured_retry_reply(state: TutoringState, attempt_count: int) -> st
     lines = [
         opener,
         '',
-        f"Let's stay with {current_step.label}: {_display_expression(current_step.expression)}.",
+        f"Let's stay with **{current_step.label}:** {_display_expression(current_step.expression)}.",
         '',
         _step_answer_guidance(current_step),
     ]
@@ -270,11 +270,11 @@ def build_structured_step_focus_reply(state: TutoringState, intro: str = '') -> 
     if intro.strip():
         lines.extend([intro.strip(), ''])
     lines.extend([
-        f"We're working on: {_display_expression(state.main_problem or state.active_problem)}",
-        f'This part: {current_step.label}',
-        f'{current_step.label}: {_display_expression(current_step.expression)}',
+        f"**Main problem:** {_display_expression(state.main_problem or state.active_problem)}",
+        f'**This part:** {current_step.label}',
+        f'**{current_step.label}:** {_display_expression(current_step.expression)}',
         '',
-        'Easy idea:',
+        '**Easy idea:**',
         _child_friendly_step_explanation(current_step),
         '',
         _step_answer_guidance(current_step),
@@ -295,12 +295,12 @@ def _structured_progress_lines(state: TutoringState, step: TutorStepRecord, resu
     lines = []
     main_problem = _display_expression(state.main_problem or state.active_problem)
     if main_problem:
-        lines.append(f"We're working on: {main_problem}")
+        lines.append(f"**Main problem:** {main_problem}")
     if reveal:
-        lines.append(f'{step.label} answer: {_display_expression(step.expression)} = {result}')
+        lines.append(f'**{step.label} answer:** {_display_expression(step.expression)} = {result}')
         lines.append(f'Now we can use {result} and keep going.')
     else:
-        lines.append(f'{step.label} complete: {_display_expression(step.expression)} = {result}')
+        lines.append(f'**{step.label} complete:** {_display_expression(step.expression)} = {result}')
     guidance = _result_format_followup(step, result)
     if guidance:
         lines.append(guidance)

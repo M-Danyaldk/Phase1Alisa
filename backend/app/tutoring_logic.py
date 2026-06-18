@@ -1247,10 +1247,10 @@ def build_new_problem_clarification_reply(state: TutoringState) -> str:
         lines.append(f'This looks like a new math problem: {pending_problem}.')
         lines.append('')
     if current_problem:
-        lines.append(f'We are still working on: {current_problem}.')
+        lines.append(f'**Main problem:** {current_problem}.')
         lines.append('')
     if current_step:
-        lines.append(f'Current step: {current_step}')
+        lines.append(f'**Current step:** {current_step}')
         lines.append('')
     lines.append('Tell me which one you want:')
     lines.append('part of this problem, or a new problem?')
@@ -1279,14 +1279,14 @@ def build_resume_paused_problem_reply(state: TutoringState) -> str:
 
     lines = ['We finished the new problem.', '']
     if paused_problem:
-        lines.append(f"Now let's return to your main problem: {paused_problem}")
+        lines.append(f"**Now let's return to your main problem:** {paused_problem}")
         lines.append('')
     if completed:
         shown = ', '.join(completed[:3])
-        lines.append(f'We already completed: {shown}')
+        lines.append(f'**We already completed:** {shown}')
         lines.append('')
     if paused_question:
-        lines.append(f'Current step: {paused_question}')
+        lines.append(f'**Current step:** {paused_question}')
         lines.append('')
         lines.append("Let's keep going from here.")
     return '\n'.join(lines)
@@ -1448,23 +1448,27 @@ def update_tutoring_state_after_reply(
         )
 
     if switched_away_from_paused_problem and not next_step:
+        restored_problem = state.paused_main_problem.strip()
+        restored_step = state.paused_current_step.strip()
+        restored_question = state.paused_current_question.strip() or restored_step
+        restored_expected_answer = _paused_expected_answer(state)
         return TutoringState(
             **_clear_pending_problem_fields(_structured_state_fields(state)),
-            active_problem=state.active_problem,
+            active_problem=restored_problem or state.active_problem,
             current_subject=state.current_subject,
-            current_step='',
-            current_question='',
-            expected_answer='',
+            current_step=restored_step,
+            current_question=restored_question,
+            expected_answer=restored_expected_answer,
             student_answer=state.student_answer,
             correctness_status=state.correctness_status,
             skill=state.skill,
-            step_number=state.step_number,
+            step_number=state.step_number or max(1, state.current_step_index + 1),
             attempt_count=0,
             hint_given=False,
             answer_revealed=False,
             next_similar_question='',
-            mode='resume_paused_problem',
-            status='waiting_to_resume',
+            mode='resume_paused_problem_notice',
+            status='waiting_for_student',
             memory_note=_build_memory_note(state.active_problem, reply, state.memory_note),
         )
 

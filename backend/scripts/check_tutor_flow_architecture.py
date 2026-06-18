@@ -60,7 +60,7 @@ async def main() -> None:
         actual_steps = [step.expression for step in state.ordered_steps]
         _expect(actual_steps == expected_steps, f'Step plan mismatch for {problem!r}: {actual_steps!r}.', failures)
         roadmap_reply = build_structured_roadmap_reply(state)
-        _expect("We're working on:" in roadmap_reply, f'Roadmap reply missing main problem label for {problem!r}.', failures)
+        _expect('**Main problem:**' in roadmap_reply, f'Roadmap reply missing main problem label for {problem!r}.', failures)
         _expect('Step roadmap:' in roadmap_reply, f'Roadmap reply missing roadmap label for {problem!r}.', failures)
         _expect(state.ordered_steps[0].label in roadmap_reply, f'Roadmap reply missing first step label for {problem!r}.', failures)
         _expect('Easy idea:' in roadmap_reply, f'Roadmap reply missing child-friendly explanation label for {problem!r}.', failures)
@@ -133,7 +133,7 @@ async def main() -> None:
     retry_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
     retry_state = retry_state.model_copy(update={'attempt_count': 1})
     retry_one = build_structured_retry_reply(retry_state, 1)
-    _expect("Let's stay with Step A" in retry_one, 'First structured retry reply did not stay anchored to the current step.', failures)
+    _expect("Let's stay with **Step A:**" in retry_one, 'First structured retry reply did not stay anchored to the current step.', failures)
     _expect('For now, keep your answer as a fraction' in retry_one, 'First structured retry reply did not include child-friendly answer guidance.', failures)
     _expect('Good try.' in retry_one, 'First structured retry reply did not use the calmer retry wording.', failures)
     _expect('The whole number needs the same bottom number as the fraction first.' in retry_one, 'First structured retry reply did not point to the next move clearly.', failures)
@@ -185,7 +185,7 @@ async def main() -> None:
         explain_again_state,
         intro='No problem. Let me show exactly what this step is asking.',
     )
-    _expect('This part: Step A' in clarification_reply, 'Clarification same-step reply did not restate the current step.', failures)
+    _expect('**This part:** Step A' in clarification_reply, 'Clarification same-step reply did not restate the current step.', failures)
     _expect('What is 20 × 23/2?' in clarification_reply, 'Clarification same-step reply did not return to the original step question.', failures)
 
     # Short numeric reply should count as answer attempt, not a new problem.
@@ -426,14 +426,12 @@ async def main() -> None:
         'switch to 15 - 7 instead',
         '15 - 7 = 8.\n\nFinal answer: 8.',
     )
-    _expect(switched_finished_state.mode == 'resume_paused_problem', 'Finished switched problem did not enter paused-problem resume mode.', failures)
-    _, resumed_task, resumed_step, resumed_state = build_chat_directives('ok', [], switched_finished_state)
-    resume_reply = build_resume_paused_problem_reply(resumed_state)
-    _expect(resumed_state.mode == 'resume_paused_problem_notice', 'Paused problem did not reopen in resume notice mode.', failures)
-    _expect(resumed_task == switch_state.main_problem, 'Paused problem resume did not restore the original main problem.', failures)
-    _expect(resumed_step == switch_state.current_step, 'Paused problem resume did not restore the original current step.', failures)
-    _expect(resumed_state.expected_answer == switch_state.expected_answer, 'Paused problem resume did not restore the expected answer for the current step.', failures)
-    resumed_check = await TutorAnswerChecker().check('Math', resumed_state.current_question, switch_state.expected_answer, resumed_state.expected_answer)
+    resume_reply = build_resume_paused_problem_reply(switched_finished_state)
+    _expect(switched_finished_state.mode == 'resume_paused_problem_notice', 'Finished switched problem did not immediately prepare the paused-problem resume notice.', failures)
+    _expect(switched_finished_state.active_problem == switch_state.main_problem, 'Immediate paused problem resume did not restore the original main problem.', failures)
+    _expect(switched_finished_state.current_step == switch_state.current_step, 'Immediate paused problem resume did not restore the original current step.', failures)
+    _expect(switched_finished_state.expected_answer == switch_state.expected_answer, 'Immediate paused problem resume did not restore the expected answer for the current step.', failures)
+    resumed_check = await TutorAnswerChecker().check('Math', switched_finished_state.current_question, switch_state.expected_answer, switched_finished_state.expected_answer)
     _expect(resumed_check.status == 'correct', 'Paused problem resume could not grade the restored current step answer.', failures)
     _expect('we finished the new problem' in resume_reply.lower(), 'Resume reply did not mention finishing the temporary switched problem.', failures)
     _expect('now let\'s return to your main problem' in resume_reply.lower(), 'Resume reply did not use the compact return wording.', failures)

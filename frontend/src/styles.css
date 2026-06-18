@@ -716,6 +716,15 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
   .chat-input { grid-template-columns: 1fr; }
   .session-nudge { align-items: stretch; flex-direction: column; }
   .primary-button, .secondary-button { width: 100%; }
+  .chat-action-row { gap: 7px; padding: 10px 12px; align-items: center; }
+  .chat-action-row button { flex: 0 1 auto; width: auto; min-height: 34px; border-radius: 10px; padding: 7px 9px; line-height: 1.15; white-space: normal; }
+  .voice-panel { padding: 10px 12px; }
+  .voice-controls { align-items: flex-start; gap: 8px; }
+  .voice-controls p { flex: 1 1 100%; font-size: 13px; }
+  .voice-controls .secondary-button.compact { width: auto; min-height: 36px; border-radius: 10px; padding: 8px 10px; }
+  .chat-input { gap: 8px; padding: 12px; }
+  .chat-input textarea { min-height: 48px; max-height: 112px; border-radius: 12px; }
+  .chat-input .primary-button { width: 100%; min-height: 42px; border-radius: 12px; padding: 10px 14px; }
   .homework-parent-upload { grid-template-columns: 1fr; }
   .admin-shell .secondary-button.compact, .admin-shell .primary-button.compact-admin-action { width: auto; }
   .admin-shell .report-actions .secondary-button, .admin-shell .report-filter-actions .secondary-button { width: 100%; }

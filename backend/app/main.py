@@ -788,6 +788,19 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         )
     ):
         next_state = update_tutoring_state_after_reply(tutoring_state, effective_message, formatted_reply)
+        if next_state.mode == 'resume_paused_problem_notice':
+            resume_reply = build_resume_paused_problem_reply(next_state)
+            if resume_reply.strip():
+                formatted_reply = f'{formatted_reply}\n\n{resume_reply}'
+            next_state = next_state.model_copy(update={
+                'mode': 'practice' if (next_state.current_question or next_state.current_step) else 'solve',
+                'status': 'waiting_for_student' if (next_state.current_question or next_state.current_step) else 'solving',
+                'paused_main_problem': '',
+                'paused_current_step': '',
+                'paused_current_question': '',
+                'paused_expected_answer': '',
+                'paused_completed_steps': [],
+            })
     if chat_store and chat_user_id and chat_thread_id:
         try:
             await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(

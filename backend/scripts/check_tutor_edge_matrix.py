@@ -35,7 +35,7 @@ async def main() -> None:
         state = update_multi_step_progress(problem, TutoringState(current_subject='Math'))
         _expect(has_structured_math_problem(state), f'Edge matrix did not structure {problem!r}.', failures)
         roadmap = build_structured_roadmap_reply(state)
-        _expect("We're working on:" in roadmap and 'Step roadmap:' in roadmap, f'Roadmap formatting broke for {problem!r}.', failures)
+        _expect('**Main problem:**' in roadmap and 'Step roadmap:' in roadmap, f'Roadmap formatting broke for {problem!r}.', failures)
 
         safety_counter = 0
         running = state

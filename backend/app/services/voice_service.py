@@ -939,6 +939,19 @@ class VoiceService:
             )
         ):
             final_state = update_tutoring_state_after_reply(next_state, effective_transcript, formatted_reply)
+            if final_state.mode == 'resume_paused_problem_notice':
+                resume_reply = build_resume_paused_problem_reply(final_state)
+                if resume_reply.strip():
+                    formatted_reply = f'{formatted_reply}\n\n{resume_reply}'
+                final_state = final_state.model_copy(update={
+                    'mode': 'practice' if (final_state.current_question or final_state.current_step) else 'solve',
+                    'status': 'waiting_for_student' if (final_state.current_question or final_state.current_step) else 'solving',
+                    'paused_main_problem': '',
+                    'paused_current_step': '',
+                    'paused_current_question': '',
+                    'paused_expected_answer': '',
+                    'paused_completed_steps': [],
+                })
 
         if chat_store and chat_thread_id:
             try:
