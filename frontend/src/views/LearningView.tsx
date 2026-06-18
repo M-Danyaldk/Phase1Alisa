@@ -103,6 +103,12 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       status: 'idle',
     },
     queued_followup_questions: [],
+    pending_input_kind: '',
+    pending_new_problem: '',
+    paused_main_problem: '',
+    paused_current_step: '',
+    paused_current_question: '',
+    paused_completed_steps: [],
     return_step_index: 0,
     return_step_id: '',
     final_answer: '',
@@ -459,19 +465,20 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     await restoreThread(thread);
   }
 
-  async function send() {
-    if (!input.trim()) return;
+  async function send(messageOverride = '') {
+    const messageText = (messageOverride || input).trim();
+    if (!messageText) return;
     if (tutorDisabled) {
       setSessionNotice(sessionStatus?.message || DEFAULT_BRAIN_BREAK_MESSAGE);
       return;
     }
-    const detectedSubject = detectSubjectFromMessage(input);
+    const detectedSubject = detectSubjectFromMessage(messageText);
     const activeSubject = detectedSubject || subject;
     if (detectedSubject && detectedSubject !== subject) {
       applySubjectChange(detectedSubject);
     }
 
-    const userMsg: ChatMessage = { role: 'student', content: input, subject: activeSubject };
+    const userMsg: ChatMessage = { role: 'student', content: messageText, subject: activeSubject };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setLoading(true);
@@ -485,7 +492,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       const outgoingTopic = detectedSubject ? subjectDefaults[activeSubject] : topic;
       const outgoingTopicSource: TopicSource = detectedSubject ? 'default' : topicSource;
       await markStudentActivity('message_sent', activeSubject, outgoingTopic);
-      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, topic: outgoingTopic, topic_source: outgoingTopicSource, message: input, history: messages.slice(-4), tutoring_state: tutoringState, thread_id: thread?.id }, headers);
+      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, topic: outgoingTopic, topic_source: outgoingTopicSource, message: messageText, history: messages.slice(-4), tutoring_state: tutoringState, thread_id: thread?.id }, headers);
       setTutoringState(data.tutoring_state);
       if (accessToken && data.history_saved === false) {
         setHistorySetupPending(true);
@@ -502,7 +509,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
           child_id: childId || null,
           subject: activeSubject,
           topic: nextTopic,
-          title: input.trim().slice(0, 48),
+          title: messageText.slice(0, 48),
         });
         setTopic(nextTopic);
         setTopicSource('manual');
@@ -596,6 +603,11 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   function applyQuickAction(prompt: string) {
     handleLocalActivity();
     onInputFromAction(prompt);
+  }
+
+  function submitQuickAction(prompt: string) {
+    handleLocalActivity();
+    void send(prompt);
   }
 
   function onInputFromAction(prompt: string) {
@@ -693,6 +705,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         onBackHome={studentSession ? onBackHome : undefined}
         onNewChat={studentSession ? () => startNewChat() : undefined}
         onQuickAction={applyQuickAction}
+        onQuickSubmit={submitQuickAction}
         voiceAllowed={voiceAvailable}
         voiceDisabled={tutorDisabled}
         voiceProcessing={voiceProcessing}

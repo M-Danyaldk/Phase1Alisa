@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Home, Mic, Square } from 'lucide-react';
+import { CheckCircle2, Circle, Home, Mic, PlayCircle, Square } from 'lucide-react';
 import { classNames } from '../lib/classNames';
 import { MarkdownText } from './MarkdownText';
 import { ProblemReportButton } from './ProblemReportButton';
@@ -26,6 +26,7 @@ type Props = {
   onBackHome?: () => void;
   onNewChat?: () => void;
   onQuickAction: (prompt: string) => void;
+  onQuickSubmit?: (prompt: string) => void;
   onVoiceNotice?: (message: string) => void;
   onVoiceEnabledChange?: (enabled: boolean) => void;
   onVoiceSubmit?: (audio: Blob) => Promise<void>;
@@ -65,6 +66,7 @@ export function ChatWorkspace({
   onBackHome,
   onNewChat,
   onQuickAction,
+  onQuickSubmit,
   onVoiceNotice,
   onVoiceEnabledChange,
   onVoiceSubmit,
@@ -81,6 +83,7 @@ export function ChatWorkspace({
   const autoStopTimerRef = useRef<number | null>(null);
   const autoStoppedRef = useRef(false);
   const voiceUnavailable = inputDisabled || voiceDisabled || voiceProcessing;
+  const checkAnswerDraft = input.trim() ? `Check my answer: ${input.trim()}` : 'My answer is ';
 
   useEffect(() => {
     if (!voiceAllowed && voiceEnabled) {
@@ -203,6 +206,8 @@ export function ChatWorkspace({
         Start Over
       </button>}
     </div>
+    <MathStepTracker state={tutoringState} />
+    <ClarificationChoicePanel state={tutoringState} disabled={inputDisabled} onChoose={onQuickSubmit || onQuickAction} />
     {(brainBreakWarning || disabledMessage) && !brainBreak?.active && <div className="session-banner" role="status">
       <strong>{brainBreakWarning ? 'Brain Break reminder' : disabled ? 'Learning paused' : 'Learning connection'}</strong>
       <span>{brainBreakWarning || disabledMessage}</span>
@@ -233,7 +238,7 @@ export function ChatWorkspace({
     <div className="chat-action-row" aria-label="Learning helper actions">
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Give me one small hint.'); }} disabled={inputDisabled}>Hint</button>
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Explain again in simpler words.'); }} disabled={inputDisabled}>Explain again</button>
-      <button type="button" onClick={() => { onActivity?.(); onQuickAction('Check my answer: '); }} disabled={inputDisabled}>Check my answer</button>
+      <button type="button" onClick={() => { onActivity?.(); onQuickAction(checkAnswerDraft); }} disabled={inputDisabled}>Check my answer</button>
       <button type="button" onClick={() => { onActivity?.(); onQuickAction('Give me one short example.'); }} disabled={inputDisabled}>Give me an example</button>
       {reportContext && <ProblemReportButton
         accessToken={reportContext.accessToken}
@@ -297,6 +302,79 @@ export function ChatWorkspace({
       <button onClick={() => { onActivity?.(); onSend(); }} className="primary-button" disabled={inputDisabled || !input.trim()}>Send</button>
     </div>
   </section>;
+}
+
+function ClarificationChoicePanel({
+  state,
+  disabled,
+  onChoose,
+}: {
+  state: TutoringState;
+  disabled: boolean;
+  onChoose: (prompt: string) => void;
+}) {
+  if (state.mode !== 'clarify_new_problem' || !state.pending_new_problem) return null;
+  return <section className="clarify-choice-panel" aria-label="Choose how to continue">
+    <div>
+      <span>Choose next</span>
+      <strong>{displayMath(state.pending_new_problem)}</strong>
+    </div>
+    <div className="clarify-choice-actions">
+      <button type="button" onClick={() => onChoose('part of this problem')} disabled={disabled}>Continue current problem</button>
+      <button type="button" onClick={() => onChoose('new problem')} disabled={disabled}>Solve new problem first</button>
+    </div>
+  </section>;
+}
+
+function MathStepTracker({ state }: { state: TutoringState }) {
+  const steps = state.ordered_steps || [];
+  const hasMathPlan = Boolean((state.current_subject === 'Math' || steps.length) && steps.length && state.main_problem);
+  if (!hasMathPlan) return null;
+
+  const currentStepId = state.current_step_id || steps[state.current_step_index || 0]?.step_id || '';
+  const currentStep = steps.find(item => item.step_id === currentStepId) || steps[state.current_step_index || 0];
+  const completedCount = steps.filter(item => item.status === 'complete' || item.result).length;
+  const totalCount = steps.length;
+  const isFinished = state.problem_status === 'finished';
+  const currentLabel = isFinished ? 'Complete' : currentStep?.label || `Step ${Math.max(1, (state.current_step_index || 0) + 1)}`;
+  const currentText = isFinished
+    ? state.final_answer || state.current_expression || 'Finished'
+    : currentStep?.expression || state.current_step || state.current_question || 'Current step';
+
+  return <section className="math-step-tracker" aria-label="Math step tracker">
+    <div className="math-tracker-summary">
+      <div>
+        <span>Main problem</span>
+        <strong>{displayMath(state.main_problem || state.active_problem || '')}</strong>
+      </div>
+      <div>
+        <span>{currentLabel}</span>
+        <strong>{displayMath(currentText)}</strong>
+      </div>
+      <div>
+        <span>Progress</span>
+        <strong>{completedCount}/{totalCount}</strong>
+      </div>
+    </div>
+    <div className="math-step-list" aria-label="Roadmap steps">
+      {steps.map((step, index) => {
+        const complete = step.status === 'complete' || Boolean(step.result);
+        const active = !complete && step.step_id === currentStepId && !isFinished;
+        const statusText = complete ? 'Done' : active ? 'Now' : 'Next';
+        return <div key={step.step_id || `${step.label}-${index}`} className={classNames('math-step-pill', complete ? 'complete' : '', active ? 'active' : '')}>
+          {complete ? <CheckCircle2 aria-hidden="true" /> : active ? <PlayCircle aria-hidden="true" /> : <Circle aria-hidden="true" />}
+          <div>
+            <span>{step.label || `Step ${index + 1}`} <em>{statusText}</em></span>
+            <strong>{displayMath(step.expression || step.description || '')}</strong>
+          </div>
+        </div>;
+      })}
+    </div>
+  </section>;
+}
+
+function displayMath(value: string): string {
+  return String(value || '').replace(/\*/g, '×');
 }
 
 function formatRemaining(seconds: number): string {
