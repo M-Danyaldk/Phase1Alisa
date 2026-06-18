@@ -108,6 +108,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     paused_main_problem: '',
     paused_current_step: '',
     paused_current_question: '',
+    paused_expected_answer: '',
     paused_completed_steps: [],
     return_step_index: 0,
     return_step_id: '',

@@ -647,6 +647,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'paused_main_problem': '',
             'paused_current_step': '',
             'paused_current_question': '',
+            'paused_expected_answer': '',
             'paused_completed_steps': [],
         })
         result_provider = 'local'

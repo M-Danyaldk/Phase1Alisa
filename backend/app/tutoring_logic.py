@@ -514,6 +514,31 @@ def _clear_pending_problem_fields(structured_fields: dict) -> dict:
     return structured_fields
 
 
+def _current_expected_answer(state: TutoringState) -> str:
+    expected = state.expected_answer.strip()
+    if expected:
+        return expected
+
+    current_step_id = state.current_step_id or state.return_step_id
+    for step in state.ordered_steps:
+        if current_step_id and step.step_id == current_step_id and step.expected_answer.strip():
+            return step.expected_answer
+
+    current_step = state.current_step.strip()
+    for step in state.ordered_steps:
+        if current_step and _same_prompt(step.expression, current_step) and step.expected_answer.strip():
+            return step.expected_answer
+
+    return ''
+
+
+def _paused_expected_answer(state: TutoringState) -> str:
+    expected = state.paused_expected_answer.strip()
+    if expected:
+        return expected
+    return _current_expected_answer(state)
+
+
 def _append_queued_followup_question(state: TutoringState, message: str, subject: str = '') -> list[TutorQueuedQuestion]:
     question = message.strip()
     if not question:
@@ -681,6 +706,7 @@ def _structured_state_fields(state: TutoringState) -> dict:
         'paused_main_problem': state.paused_main_problem,
         'paused_current_step': state.paused_current_step,
         'paused_current_question': state.paused_current_question,
+        'paused_expected_answer': state.paused_expected_answer,
         'paused_completed_steps': state.paused_completed_steps,
         'return_step_index': state.return_step_index,
         'return_step_id': state.return_step_id,
@@ -756,6 +782,7 @@ def build_chat_directives(
         restored_problem = state.paused_main_problem.strip()
         restored_step = state.paused_current_step.strip()
         restored_question = state.paused_current_question.strip() or restored_step
+        restored_expected_answer = _paused_expected_answer(state)
         structured_fields = _structured_state_fields(state)
         next_state = TutoringState(
             **structured_fields,
@@ -763,7 +790,7 @@ def build_chat_directives(
             current_subject=state.current_subject,
             current_step=restored_step,
             current_question=restored_question,
-            expected_answer=state.expected_answer,
+            expected_answer=restored_expected_answer,
             student_answer=message,
             correctness_status='',
             skill=state.skill or skill,
@@ -890,6 +917,7 @@ def build_chat_directives(
             structured_fields['paused_main_problem'] = state.main_problem or state.active_problem
             structured_fields['paused_current_step'] = state.current_step
             structured_fields['paused_current_question'] = state.current_question or state.current_step
+            structured_fields['paused_expected_answer'] = _current_expected_answer(state)
             structured_fields['paused_completed_steps'] = list(state.completed_steps)
             next_state = TutoringState(
                 **structured_fields,
@@ -1119,6 +1147,7 @@ def build_chat_directives(
             structured_fields['paused_main_problem'] = state.main_problem or state.active_problem
             structured_fields['paused_current_step'] = state.current_step
             structured_fields['paused_current_question'] = state.current_question or state.current_step
+            structured_fields['paused_expected_answer'] = _current_expected_answer(state)
             structured_fields['paused_completed_steps'] = list(state.completed_steps)
             if active_problem == (state.main_problem or state.active_problem):
                 active_problem = message.strip()

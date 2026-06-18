@@ -90,6 +90,7 @@ class TutoringState(BaseModel):
     paused_main_problem: str = ''
     paused_current_step: str = ''
     paused_current_question: str = ''
+    paused_expected_answer: str = ''
     paused_completed_steps: list[str] = Field(default_factory=list)
     return_step_index: int = 0
     return_step_id: str = ''

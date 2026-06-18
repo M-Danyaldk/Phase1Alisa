@@ -2,7 +2,7 @@ import hashlib
 from math import gcd
 import re
 
-from ..assessment_validation import format_fraction, normalize_math_text, safe_eval_expression
+from ..assessment_validation import extract_numeric_value, format_fraction, normalize_math_text, safe_eval_expression
 from ..models import TutorHelperBranch, TutorStepRecord, TutoringState
 
 NUMBER_TOKEN = r'(?<![\d/])-?\d+(?:/\d+)?(?![\d/])'
@@ -64,7 +64,7 @@ def advance_structured_math_problem(state: TutoringState, resolved_answer: str =
     if not current_step:
         return state
 
-    result = resolved_answer or current_step.expected_answer
+    result = _canonical_step_result(current_step, resolved_answer)
     updated_steps: list[TutorStepRecord] = []
     for step in state.ordered_steps:
         if step.step_id == current_step.step_id:
@@ -135,6 +135,22 @@ def advance_structured_math_problem(state: TutoringState, resolved_answer: str =
         'mode': 'practice',
         'status': 'waiting_for_student',
     })
+
+
+def _canonical_step_result(step: TutorStepRecord, resolved_answer: str = '') -> str:
+    planned_answer = step.expected_answer.strip()
+    submitted_answer = resolved_answer.strip()
+    if not submitted_answer:
+        return planned_answer
+    if not planned_answer:
+        return submitted_answer
+
+    planned_value = extract_numeric_value(planned_answer)
+    submitted_value = extract_numeric_value(submitted_answer)
+    if planned_value is not None and submitted_value is not None and planned_value == submitted_value:
+        return planned_answer
+
+    return submitted_answer
 
 
 def build_structured_step_reply(previous_state: TutoringState, next_state: TutoringState, reveal: bool = False) -> str:

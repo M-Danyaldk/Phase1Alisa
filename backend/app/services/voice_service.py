@@ -812,6 +812,7 @@ class VoiceService:
                 'paused_main_problem': '',
                 'paused_current_step': '',
                 'paused_current_question': '',
+                'paused_expected_answer': '',
                 'paused_completed_steps': [],
             })
             formatted_reply = build_resume_paused_problem_reply(next_state)

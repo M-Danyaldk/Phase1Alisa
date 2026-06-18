@@ -85,6 +85,7 @@ export type TutoringState = {
   paused_main_problem?: string;
   paused_current_step?: string;
   paused_current_question?: string;
+  paused_expected_answer?: string;
   paused_completed_steps?: string[];
   return_step_index?: number;
   return_step_id?: string;
