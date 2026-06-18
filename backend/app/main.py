@@ -72,6 +72,7 @@ from .utils.tutor_response import format_student_reply, looks_incomplete_respons
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+CHAT_HISTORY_PUBLIC_ERROR = 'Chat history could not be saved.'
 MonitoringService().configure()
 app = FastAPI(title='MsAlisia Phase 1 MVP API', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_list(), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
@@ -190,7 +191,7 @@ async def chat_opening(payload: ChatOpeningRequest, authorization: str = Header(
         history_saved = True
     except Exception as exc:
         logger.warning('Chat opening history save failed: %s', exc)
-        history_error = str(exc)
+        history_error = CHAT_HISTORY_PUBLIC_ERROR
 
     return ChatOpeningResponse(
         reply=opening,
@@ -266,7 +267,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         chat_store = None
         chat_user_id = None
         chat_thread_id = payload.thread_id
-        history_error = str(exc)
+        history_error = CHAT_HISTORY_PUBLIC_ERROR
 
     effective_message = payload.message
     if payload.subject == 'Math':
@@ -311,7 +312,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 history_saved = True
             except Exception as exc:
                 logger.warning('Chat history save failed after subject boundary reply: %s', exc)
-                history_error = str(exc)
+                history_error = CHAT_HISTORY_PUBLIC_ERROR
         if payload.child_id:
             await SessionActivityService().exchange_complete(
                 child_user['id'],
@@ -389,7 +390,11 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'answer_revealed': False,
         })
     answer_checker = TutorAnswerChecker()
-    direct_answer_check = answer_checker.check_direct_math_statement(effective_message) if payload.subject == 'Math' else None
+    direct_answer_check = (
+        answer_checker.check_direct_math_statement(effective_message)
+        if payload.subject == 'Math' and not has_structured_math_problem(tutoring_state)
+        else None
+    )
     if direct_answer_check and direct_answer_check.status != 'unclear' and not matched_structured_step:
         direct_attempt_count = _direct_math_attempt_count(payload.tutoring_state, direct_answer_check)
         tutoring_state = tutoring_state.model_copy(update={
@@ -450,7 +455,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 history_saved = True
             except Exception as exc:
                 logger.warning('Chat history save failed after deterministic answer check: %s', exc)
-                history_error = str(exc)
+                history_error = CHAT_HISTORY_PUBLIC_ERROR
         if payload.child_id:
             await SessionActivityService().exchange_complete(
                 child_user['id'],
@@ -524,7 +529,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 history_saved = True
             except Exception as exc:
                 logger.warning('Chat history save failed after deterministic math help: %s', exc)
-                history_error = str(exc)
+                history_error = CHAT_HISTORY_PUBLIC_ERROR
         if payload.child_id:
             await SessionActivityService().exchange_complete(
                 child_user['id'],
@@ -563,15 +568,24 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             resolved_topic=resolved_topic,
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
-        )
+    )
     answer_check = None
     if tutoring_state.attempt_count > 0 and (tutoring_state.current_question or current_step):
+        base_check_question = _answer_check_question(tutoring_state, current_step)
+        if payload.subject == 'ELA':
+            check_question = _reading_context_question(base_check_question, payload.history)
+        elif payload.subject == 'Writing':
+            check_question = _writing_context_question(base_check_question, payload.history)
+        else:
+            check_question = base_check_question
         answer_check = await answer_checker.check(
             subject=payload.subject,
-            question=_answer_check_question(tutoring_state, current_step),
+            question=check_question,
             student_answer=effective_message,
             expected_answer=tutoring_state.expected_answer,
         )
+        if check_question != base_check_question and payload.subject in {'ELA', 'Writing'}:
+            tutoring_state = tutoring_state.model_copy(update={'current_question': check_question})
         tutoring_state = tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'student_answer': payload.message,
@@ -789,7 +803,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             history_saved = True
         except Exception as exc:
             logger.warning('Chat history save failed after LLM response: %s', exc)
-            history_error = str(exc)
+            history_error = CHAT_HISTORY_PUBLIC_ERROR
     if payload.child_id:
         await SessionActivityService().exchange_complete(
             child_user['id'],
@@ -991,8 +1005,8 @@ def _subjects_from_child(child: dict) -> list[str]:
 
 
 def _direct_math_attempt_count(state: TutoringState, answer_check) -> int:
-    previous_question = (state.current_question or state.current_step or '').strip()
-    current_question = (answer_check.checked_expression or '').strip()
+    previous_question = _normalize_math_match_text(state.current_question or state.current_step or '')
+    current_question = _normalize_math_match_text(answer_check.checked_expression or '')
     if answer_check.is_correct:
         return state.attempt_count
     if previous_question and current_question and previous_question == current_question:
@@ -1071,6 +1085,10 @@ def _text_answer_check_reply(answer_check, state: TutoringState, current_step: s
 
 def _clean_text_retry_prompt(prompt: str) -> str:
     cleaned = str(prompt or '').strip()
+    if 'finish this sentence' in cleaned.lower():
+        stem_match = re.search(r'["“]([^"”]*\.{3}[^"”]*)["”]', cleaned)
+        if stem_match:
+            return f'Try finishing this sentence:\n"{stem_match.group(1).strip()}"'
     for marker in (
         'Try this same question again:',
         'Try the same question one more time:',
@@ -1153,6 +1171,38 @@ def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
         ]
         if part
     )
+
+
+def _reading_context_question(question: str, history: list) -> str:
+    clean_question = str(question or '').strip()
+    if not clean_question or '"' in clean_question or '“' in clean_question:
+        return clean_question
+    lower_question = clean_question.lower()
+    reading_starters = ('who ', 'what ', 'where ', 'when ', 'why ', 'how ', 'which ')
+    if not (lower_question.startswith(reading_starters) or 'main idea' in lower_question or 'infer' in lower_question):
+        return clean_question
+
+    for item in reversed(history or []):
+        content = str(getattr(item, 'content', '') or '').strip()
+        lower = content.lower()
+        if ('quick question' in lower or clean_question.lower() in lower) and re.search(r'["“][^"”]+["”]', content):
+            return f'{content}\n\nCurrent question: {clean_question}'
+    return clean_question
+
+
+def _writing_context_question(question: str, history: list) -> str:
+    clean_question = str(question or '').strip()
+    if not clean_question or '"' in clean_question or '“' in clean_question:
+        return clean_question
+    if 'finish this sentence' not in clean_question.lower():
+        return clean_question
+
+    for item in reversed(history or []):
+        content = str(getattr(item, 'content', '') or '').strip()
+        lower = content.lower()
+        if 'finish this sentence' in lower and re.search(r'["“][^"”]*\.{3}[^"”]*["”]', content):
+            return f'{content}\n\nCurrent question: {clean_question}'
+    return clean_question
 
 
 def _display_math_expression_from_state(state: TutoringState, current_step: str = '') -> str:
@@ -1355,9 +1405,9 @@ def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
             base_product = base * right
             remainder_product = remainder * right
             return (
-                f"Break {expression} into easier parts. Start with {base} x {right}.\n\n"
-                f"What is {base} x {right}?",
-                f"{base} x {right} = {base_product}, and {remainder} x {right} = {remainder_product}.\n\n"
+                f"Break {expression} into easier parts. Start with {base} × {right}.\n\n"
+                f"What is {base} × {right}?",
+                f"{base} × {right} = {base_product}, and {remainder} × {right} = {remainder_product}.\n\n"
                 f"Now try adding {base_product} + {remainder_product}.",
             )
 
@@ -1392,7 +1442,7 @@ def _direct_math_hint_steps(expression: str) -> tuple[str, str]:
 
 
 def _display_direct_math_expression(left: str, operator: str, right: str) -> str:
-    clean_operator = {'x': 'x', 'X': 'x', '*': 'x', '/': '/', '\u00f7': '/'}.get(operator, operator)
+    clean_operator = {'x': '×', 'X': '×', '*': '×', '/': '÷', '\u00f7': '÷'}.get(operator, operator)
     return f'{left} {clean_operator} {right}'
 
 
@@ -1418,7 +1468,7 @@ def _similar_direct_math_problem(expression: str) -> str:
         quotient = max(abs(left // divisor) + 1, 2)
         return f'{divisor * quotient} / {divisor}'
     if operator == '\u00d7':
-        return f'{left + 1} x {right}'
+        return f'{left + 1} × {right}'
     return '45 x 4'
 
 
@@ -1536,12 +1586,12 @@ def _child_score_feedback(result: AssessmentResult, subject: str, practice_next:
     if review_count and not incorrect_count and not partial_count:
         return {
             'performance_label': 'Ready for a Closer Look',
-            'score_summary': f'{review_count}/{total} answer{"s" if review_count != 1 else ""} ready for Ms. Alisia',
+            'score_summary': f'{review_count}/{total} answer{"s" if review_count != 1 else ""} ready for review',
             'celebration_title': 'Great work!',
             'celebration_message': f'You just finished your {subject} check-in!',
             'next_step_message': f'Up next, Ms. Alisia will look at your work and help with {practice_next}.',
             'encouragement': 'Nice effort. Ms. Alisia will look at your work gently and help with the next step.',
-            'badge_label': 'Nice Start',
+            'badge_label': 'Review Ready',
         }
 
     if correct >= max(1, total - 1):

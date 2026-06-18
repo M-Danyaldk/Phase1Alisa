@@ -3,12 +3,14 @@ import asyncio
 from backend.app.assessment_bank import version_for
 from backend.app.assessment_result_items import build_question_results
 from backend.app.assessment_validation import validate_assessment_answer
-from backend.app.main import _matching_structured_step, _should_send_structured_roadmap, _structured_future_step_redirect_reply, _text_answer_check_reply
+from backend.app.main import _matching_structured_step, _reading_context_question, _should_send_structured_roadmap, _structured_future_step_redirect_reply, _text_answer_check_reply, _writing_context_question
 from backend.app.models import AssessmentRequest, ChatHistoryItem, StudentProfile, TutoringState
 from backend.app.services.voice_service import (
     _matching_structured_step as _voice_matching_structured_step,
+    _reading_context_question as _voice_reading_context_question,
     _should_send_structured_roadmap as _voice_should_send_structured_roadmap,
     _structured_future_step_redirect_reply as _voice_structured_future_step_redirect_reply,
+    _writing_context_question as _voice_writing_context_question,
 )
 from backend.app.services.tutor_answer_checker import AnswerCheckResult, TutorAnswerChecker
 from backend.app.services.llm.router import LLMRouter
@@ -58,7 +60,7 @@ async def main() -> None:
         actual_steps = [step.expression for step in state.ordered_steps]
         _expect(actual_steps == expected_steps, f'Step plan mismatch for {problem!r}: {actual_steps!r}.', failures)
         roadmap_reply = build_structured_roadmap_reply(state)
-        _expect('Main problem:' in roadmap_reply, f'Roadmap reply missing main problem label for {problem!r}.', failures)
+        _expect("We're working on:" in roadmap_reply, f'Roadmap reply missing main problem label for {problem!r}.', failures)
         _expect('Step roadmap:' in roadmap_reply, f'Roadmap reply missing roadmap label for {problem!r}.', failures)
         _expect(state.ordered_steps[0].label in roadmap_reply, f'Roadmap reply missing first step label for {problem!r}.', failures)
         _expect('Easy idea:' in roadmap_reply, f'Roadmap reply missing child-friendly explanation label for {problem!r}.', failures)
@@ -76,13 +78,13 @@ async def main() -> None:
         _expect('Now the problem becomes:' in step_completion_reply, f'Step completion reply missing updated problem label for {problem!r}.', failures)
         _expect("Now let's move to" in step_completion_reply, f'Step completion reply missing next-step transition for {problem!r}.', failures)
         _expect('Easy idea:' in step_completion_reply, f'Step completion reply missing child-friendly explanation label for {problem!r}.', failures)
-        _expect('Answer form:' in step_completion_reply, f'Step completion reply missing answer-form guidance for {problem!r}.', failures)
+        _expect('For now, keep your answer as a fraction' in step_completion_reply or 'Write the whole number' in step_completion_reply or 'Write just the value' in step_completion_reply, f'Step completion reply missing answer guidance for {problem!r}.', failures)
 
     roadmap_visibility_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (10 * 23/2)', TutoringState(current_subject='Math'))
     roadmap_visibility_reply = build_structured_roadmap_reply(roadmap_visibility_state)
-    _expect('Step A: Solve 10/1 x 23/2' not in roadmap_visibility_reply, 'Roadmap should use the display expression form, not normalized internals.', failures)
-    _expect('Step A: Solve 10 x 23/2' in roadmap_visibility_reply, 'Roadmap did not show the current explicit Step A expression.', failures)
-    _expect('Step B: Solve 7/4 x 8/9' in roadmap_visibility_reply, 'Roadmap did not show the future explicit multiplication step.', failures)
+    _expect('Step A: Solve 10/1 × 23/2' not in roadmap_visibility_reply, 'Roadmap should use the display expression form, not normalized internals.', failures)
+    _expect('Step A: Solve 10 × 23/2' in roadmap_visibility_reply, 'Roadmap did not show the current explicit Step A expression.', failures)
+    _expect('Step B: Solve 7/4 × 8/9' in roadmap_visibility_reply, 'Roadmap did not show the future explicit multiplication step.', failures)
     _expect('Step C: Add the fraction results' in roadmap_visibility_reply, 'Roadmap revealed the future fraction-add expression instead of a safe label.', failures)
     _expect('Step D: Add the final results' in roadmap_visibility_reply, 'Roadmap revealed the final transformed addition instead of a safe label.', failures)
 
@@ -131,42 +133,40 @@ async def main() -> None:
     retry_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
     retry_state = retry_state.model_copy(update={'attempt_count': 1})
     retry_one = build_structured_retry_reply(retry_state, 1)
-    _expect('Main problem:' in retry_one and 'Current step: Step A' in retry_one, 'First structured retry reply did not include main problem and current step.', failures)
-    _expect('Easy idea:' in retry_one, 'First structured retry reply did not include the child-friendly explanation block.', failures)
-    _expect('Answer form:' in retry_one, 'First structured retry reply did not include answer-form guidance.', failures)
-    _expect('Good try.' in retry_one and "Let's check that." in retry_one, 'First structured retry reply did not use the calmer retry wording.', failures)
+    _expect("Let's stay with Step A" in retry_one, 'First structured retry reply did not stay anchored to the current step.', failures)
+    _expect('For now, keep your answer as a fraction' in retry_one, 'First structured retry reply did not include child-friendly answer guidance.', failures)
+    _expect('Good try.' in retry_one, 'First structured retry reply did not use the calmer retry wording.', failures)
     _expect('The whole number needs the same bottom number as the fraction first.' in retry_one, 'First structured retry reply did not point to the next move clearly.', failures)
     retry_two = build_structured_retry_reply(retry_state.model_copy(update={'attempt_count': 2}), 2)
     _expect('We need matching pieces first.' in retry_two and 'Turn 9 into 81/9.' in retry_two, 'Second structured retry reply did not give the stronger targeted hint.', failures)
     fraction_multiply_case = update_multi_step_progress('7/4 * 8/9 + 1/2', TutoringState(current_subject='Math'))
-    _expect('game points' in build_structured_retry_reply(fraction_multiply_case.model_copy(update={'attempt_count': 1}), 1).lower(), 'Fraction multiplication explanation did not use the game-points example.', failures)
+    _expect('For fraction multiplication, do the top numbers together first.' in build_structured_retry_reply(fraction_multiply_case.model_copy(update={'attempt_count': 1}), 1), 'Fraction multiplication retry did not give a compact top/bottom hint.', failures)
     fraction_multiply_retry_two = build_structured_retry_reply(fraction_multiply_case.model_copy(update={'attempt_count': 2}), 2)
-    _expect('Start with the top numbers: 7 x 8.' in fraction_multiply_retry_two, 'Fraction multiplication second hint did not scaffold the top numbers first.', failures)
+    _expect('Start with the top numbers: 7 × 8.' in fraction_multiply_retry_two, 'Fraction multiplication second hint did not scaffold the top numbers first.', failures)
     fraction_add_case = update_multi_step_progress('9/8 + 14/9 + 1', TutoringState(current_subject='Math'))
     fraction_add_retry_one = build_structured_retry_reply(fraction_add_case.model_copy(update={'attempt_count': 1}), 1)
-    _expect('pizza' in fraction_add_retry_one.lower(), 'Unlike-denominator addition explanation did not use the pizza example.', failures)
     _expect('The bottom numbers are different, so we cannot add yet.' in fraction_add_retry_one, 'Unlike-denominator addition first hint did not point to the denominator mismatch.', failures)
     fraction_add_retry_two = build_structured_retry_reply(fraction_add_case.model_copy(update={'attempt_count': 2}), 2)
     _expect('8 and 9 both fit into 72.' in fraction_add_retry_two, 'Unlike-denominator addition second hint did not give the stronger common-bottom scaffold.', failures)
     whole_plus_fraction_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (10 * 23/2)', TutoringState(current_subject='Math'))
     while whole_plus_fraction_state.current_step != '193/72 + 115':
         whole_plus_fraction_state = advance_structured_math_problem(whole_plus_fraction_state, whole_plus_fraction_state.expected_answer)
-    _expect('money' in build_structured_retry_reply(whole_plus_fraction_state.model_copy(update={'attempt_count': 1}), 1).lower(), 'Whole-number-plus-fraction explanation did not use the money example.', failures)
+    _expect('The whole number needs the same bottom number as the fraction first.' in build_structured_retry_reply(whole_plus_fraction_state.model_copy(update={'attempt_count': 1}), 1), 'Whole-number-plus-fraction retry did not point to the fraction rename.', failures)
     parentheses_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (20 * 23/2)', TutoringState(current_subject='Math'))
     parentheses_retry_one = build_structured_retry_reply(parentheses_state.model_copy(update={'attempt_count': 1}), 1)
-    _expect('In this step, multiply first before dividing.' in parentheses_retry_one, 'Parentheses first hint did not point to the multiplication-first move.', failures)
-    _expect('Start with 20 x 23.' in parentheses_retry_one, 'Parentheses first hint did not point to the immediate next move.', failures)
+    _expect('First do 20 × 23 = 460.' in parentheses_retry_one, 'Parentheses first hint did not show the immediate multiplication result.', failures)
+    _expect('What is 460 ÷ 2?' in parentheses_retry_one, 'Parentheses first hint did not ask the aligned next question.', failures)
     parentheses_retry_two = build_structured_retry_reply(parentheses_state.model_copy(update={'attempt_count': 2}), 2)
-    _expect('First work out 20 x 23.' in parentheses_retry_two and 'After that, divide that result by 2.' in parentheses_retry_two, 'Parentheses second hint did not give the stronger scaffold.', failures)
+    _expect('First do 20 × 23 = 460.' in parentheses_retry_two and 'What is 460 ÷ 2?' in parentheses_retry_two, 'Parentheses second hint did not keep the aligned next question.', failures)
 
     explain_again_state = update_multi_step_progress('9/8 + 7/4 * 8/9 + (20 * 23/2)', TutoringState(current_subject='Math'))
     explain_again_reply = build_structured_step_focus_reply(
         explain_again_state,
         intro='No problem. Let me say it in a simpler way.',
     )
-    _expect('20 x 23/2' in explain_again_reply, 'Explain-again same-step reply did not stay anchored to the real current step.', failures)
-    _expect('What is 20 x 23/2?' in explain_again_reply, 'Explain-again same-step reply did not end with the original current-step question.', failures)
-    _expect('What is 20 x 23?' not in explain_again_reply, 'Explain-again same-step reply drifted into a hidden micro-step question.', failures)
+    _expect('20 × 23/2' in explain_again_reply, 'Explain-again same-step reply did not stay anchored to the real current step.', failures)
+    _expect('What is 20 × 23/2?' in explain_again_reply, 'Explain-again same-step reply did not end with the original current-step question.', failures)
+    _expect('What is 20 × 23?' not in explain_again_reply, 'Explain-again same-step reply drifted into a hidden micro-step question.', failures)
     _expect(detect_action_intent('which step?') == 'clarify_prompt', 'Clarification phrase was not recognized as a clarification action.', failures)
     _expect(detect_action_intent('what do you mean') == 'clarify_prompt', 'Clarification wording was not classified as clarify_prompt.', failures)
     clarification_history = [ChatHistoryItem(role='msalisia', content=explain_again_state.current_question)]
@@ -182,8 +182,8 @@ async def main() -> None:
         explain_again_state,
         intro='No problem. Let me show exactly what this step is asking.',
     )
-    _expect('Current step: Step A' in clarification_reply, 'Clarification same-step reply did not restate the current step.', failures)
-    _expect('What is 20 x 23/2?' in clarification_reply, 'Clarification same-step reply did not return to the original step question.', failures)
+    _expect('This part: Step A' in clarification_reply, 'Clarification same-step reply did not restate the current step.', failures)
+    _expect('What is 20 × 23/2?' in clarification_reply, 'Clarification same-step reply did not return to the original step question.', failures)
 
     # Short numeric reply should count as answer attempt, not a new problem.
     answer_state = update_multi_step_progress('5/6 + 7/8 * (8/9 + 9)', TutoringState(current_subject='Math'))
@@ -254,13 +254,13 @@ async def main() -> None:
     future_step_match = _matching_structured_step(roadmap_state, '5/6 + 1/2')
     _expect(future_step_match is not None and future_step_match.step_id != roadmap_state.current_step_id, 'Future structured step expression was not recognized inside the roadmap.', failures)
     redirect_reply = _structured_future_step_redirect_reply(roadmap_state, future_step_match)
-    _expect('comes later' in redirect_reply and 'Current step:' in redirect_reply, 'Future structured step redirect reply did not keep the tutor anchored on the current step.', failures)
+    _expect('comes later' in redirect_reply and 'This part:' in redirect_reply, 'Future structured step redirect reply did not keep the tutor anchored on the current step.', failures)
     voice_current_step_match = _voice_matching_structured_step(roadmap_state, roadmap_state.current_step)
     _expect(voice_current_step_match is not None and voice_current_step_match.step_id == roadmap_state.current_step_id, 'Voice path did not recognize the active structured step expression.', failures)
     voice_future_step_match = _voice_matching_structured_step(roadmap_state, '5/6 + 1/2')
     _expect(voice_future_step_match is not None and voice_future_step_match.step_id != roadmap_state.current_step_id, 'Voice path did not recognize a future structured step expression.', failures)
     voice_redirect_reply = _voice_structured_future_step_redirect_reply(roadmap_state, voice_future_step_match)
-    _expect('comes later' in voice_redirect_reply and 'Current step:' in voice_redirect_reply, 'Voice future structured step redirect reply did not stay anchored on the current step.', failures)
+    _expect('comes later' in voice_redirect_reply and 'This part:' in voice_redirect_reply, 'Voice future structured step redirect reply did not stay anchored on the current step.', failures)
 
     restarted_state = advance_structured_math_problem(roadmap_state, roadmap_state.expected_answer)
     restarted_state = update_multi_step_progress('5/6 + 3/4 * 2/3', restarted_state)
@@ -693,15 +693,55 @@ async def main() -> None:
         ('Writing', 'Write 3 sentences that explain why practice builds skill.', 'Practice is good. Practice is good. Practice is good.', 'incorrect'),
         ('Writing', 'How can you make this sentence stronger: The lesson was good.?', 'The lesson was helpful because the teacher showed clear examples.', 'correct'),
         ('Writing', 'How can you make this sentence stronger: The lesson was good.?', 'The lesson was good.', 'partially_correct'),
+        ('Writing', '**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!', 'I like recess because I can run with my friends.', 'correct'),
+        ('Writing', '**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!', 'I can run with my friends.', 'correct'),
+        ('Writing', '**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!', 'i am good in running', 'partially_correct'),
+        ('Writing', '**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!', 'yes I like races', 'incorrect'),
+        ('Writing', '**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!', 'yes', 'incorrect'),
+        ('Writing', '**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!', 'no', 'incorrect'),
         ('ELA', 'Read this short passage: Mia watered the class plant. After that, the plant looked healthy. What is the main idea?', 'One helpful action made things better.', 'correct'),
         ('ELA', 'Read this short passage: Mia watered the class plant. After that, the plant looked healthy. What is the main idea?', 'It is about rain and weather.', 'incorrect'),
         ('ELA', 'Read this short passage: Mia watered the class plant. After that, the plant looked healthy. What can you infer about Mia?', 'Mia was responsible and used a helpful strategy.', 'correct'),
         ('ELA', 'Read this short passage: Mia watered the class plant. After that, the plant looked healthy. What can you infer about Mia?', 'Mia was sleepy and careless.', 'incorrect'),
         ('ELA', 'Fix this sentence: she dont want to go', 'She does not want to go.', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"The dog ran to the park."\n\nQuick question: What did the dog do?', 'dog are running to park', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"The dog ran to the park."\n\nQuick question: What did the dog do?', 'the dog slept', 'incorrect'),
+        ('ELA', 'Here is a simple sentence:\n"The dog ran to the park."\n\nQuick question: What did the dog do?', 'the dog ran', 'partially_correct'),
+        ('ELA', 'Here is a simple sentence:\n"The dog ran to the park."\n\nQuick question: Where did the dog go?', 'to the park', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"The dog ran to the park."\n\nQuick question: Where did the dog go?', 'to school', 'incorrect'),
+        ('ELA', 'Here is a simple sentence:\n"Mia watered the plant."\n\nQuick question: Who watered the plant?', 'Mia', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"After lunch, Sam read a book."\n\nQuick question: When did Sam read a book?', 'after lunch', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"Mia wore a coat because it was cold."\n\nQuick question: Why did Mia wear a coat?', 'because it was cold', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"First Ben washed his hands, then he ate lunch."\n\nQuick question: What happened first?', 'Ben washed his hands', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"First Ben washed his hands, then he ate lunch."\n\nQuick question: What happened next?', 'he ate lunch', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"The tiny puppy slept in the basket."\n\nQuick question: What does tiny mean?', 'small', 'correct'),
+        ('ELA', 'Here is a simple sentence:\n"The tiny puppy slept in the basket."\n\nQuick question: What does tiny mean?', 'tiny', 'partially_correct'),
     ]
     for subject, prompt, answer, expected_status in tutor_cases:
         checked = await checker.check(subject, prompt, answer)
         _expect(checked.status == expected_status, f'Live tutor check mismatch for {subject} prompt {prompt!r}: got {checked.status!r}, expected {expected_status!r}.', failures)
+        if 'The dog ran to the park' in prompt:
+            _expect('dog are running' not in checked.feedback_note, 'Simple reading checker echoed the student grammar error as the original sentence.', failures)
+
+    reading_history = [ChatHistoryItem(role='msalisia', content='Here is a simple sentence:\n"The dog ran to the park."\n\nQuick question: What did the dog do?')]
+    context_question = _reading_context_question('What did the dog do?', reading_history)
+    voice_context_question = _voice_reading_context_question('What did the dog do?', reading_history)
+    _expect('"The dog ran to the park."' in context_question, 'Text chat reading check did not restore the source sentence from recent history.', failures)
+    _expect('"The dog ran to the park."' in voice_context_question, 'Voice reading check did not restore the source sentence from recent history.', failures)
+    where_context_question = _reading_context_question('Where did the dog go?', reading_history)
+    voice_where_context_question = _voice_reading_context_question('Where did the dog go?', reading_history)
+    _expect('"The dog ran to the park."' in where_context_question, 'Text chat reading check did not restore source sentence for a where question.', failures)
+    _expect('"The dog ran to the park."' in voice_where_context_question, 'Voice reading check did not restore source sentence for a where question.', failures)
+
+    writing_history = [ChatHistoryItem(role='msalisia', content='**Can you finish this sentence for me?**\n\n"I like recess because..."\n\nJust add whatever reason makes sense to you!')]
+    writing_context_question = _writing_context_question('Can you finish this sentence for me?', writing_history)
+    voice_writing_context_question = _voice_writing_context_question('Can you finish this sentence for me?', writing_history)
+    _expect('"I like recess because..."' in writing_context_question, 'Text chat writing check did not restore the sentence-completion stem.', failures)
+    _expect('"I like recess because..."' in voice_writing_context_question, 'Voice writing check did not restore the sentence-completion stem.', failures)
+    completion_check = await checker.check('Writing', writing_context_question, 'I can run with my friends.')
+    refusal_check = await checker.check('Writing', writing_context_question, 'no')
+    _expect(completion_check.status == 'correct', 'Sentence-completion checker did not accept a valid completion-only answer.', failures)
+    _expect(refusal_check.status == 'incorrect', 'Sentence-completion checker did not reject a yes/no style answer.', failures)
 
     text_state = TutoringState(
         current_subject='Writing',

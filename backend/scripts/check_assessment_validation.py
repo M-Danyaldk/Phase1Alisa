@@ -71,8 +71,8 @@ async def main() -> None:
         writing_g4_v1.questions[0],
         'The park is my favorite place because I can play soccer there.',
     )
-    if adequate_writing.status != 'needs_review':
-        failures.append(f'Adequate writing returned {adequate_writing.status}, expected needs_review.')
+    if adequate_writing.status != 'correct':
+        failures.append(f'Adequate writing returned {adequate_writing.status}, expected correct.')
 
     all_correct_validation_types = {'numeric', 'numeric_or_fraction', 'exact_text', 'keyword_text'}
     checked_questions = 0
@@ -104,7 +104,7 @@ async def main() -> None:
     print('- Reported Mia pages question accepts 6, 6 days, six, and six days.')
     print('- Wrong known-answer math returns incorrect.')
     print('- Reading vocabulary and grammar deterministic checks pass.')
-    print('- Writing uses deterministic minimum checks and needs_review for adequate open writing.')
+    print('- Writing uses deterministic minimum checks and can mark confident simple writing correct.')
     print(f'- Bank self-check passed for {checked_questions} non-writing questions.')
 
 

@@ -1,4 +1,5 @@
 import hashlib
+from math import gcd
 import re
 
 from ..assessment_validation import format_fraction, normalize_math_text, safe_eval_expression
@@ -141,10 +142,18 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
     if not current_step:
         return ''
 
-    intro = "Let's finish this part together." if reveal else "Yes, that's right!"
+    intro = (
+        f'Nice effort. The answer for this step is {current_step.expected_answer}.'
+        if reveal
+        else "Yes, that's right!"
+    )
     result = next_state.step_results.get(current_step.step_id) or current_step.result or current_step.expected_answer
     lines = [intro, '']
-    lines.extend(_structured_progress_lines(previous_state, current_step, result))
+    lines.extend(_structured_progress_lines(previous_state, current_step, result, reveal=reveal))
+    working_lines = _structured_working_lines(current_step, result)
+    if working_lines:
+        lines.extend(['', 'Work:'])
+        lines.extend(working_lines)
 
     if current_step.updated_expression:
         lines.extend([
@@ -188,7 +197,7 @@ def build_structured_roadmap_reply(state: TutoringState) -> str:
     lines = [
         "We can solve this one step at a time.",
         '',
-        f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
+        f"We're working on: {_display_expression(state.main_problem or state.active_problem)}",
         '',
         'Step roadmap:',
     ]
@@ -197,7 +206,7 @@ def build_structured_roadmap_reply(state: TutoringState) -> str:
         '',
         f"Now let's start with {current_step.label}.",
         '',
-        f'{current_step.label}: {current_step.description or _display_expression(current_step.expression)}',
+        f'This part: {current_step.description or _display_expression(current_step.expression)}',
         '',
         'Easy idea:',
         _child_friendly_step_explanation(current_step),
@@ -221,24 +230,18 @@ def build_structured_retry_reply(state: TutoringState, attempt_count: int) -> st
     lines = [
         opener,
         '',
-        "Let's check that.",
-        '',
-        f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
-        f'Current step: {current_step.label}',
-        f'{current_step.label}: {_display_expression(current_step.expression)}',
-        '',
-        'Easy idea:',
-        _child_friendly_step_explanation(current_step),
+        f"Let's stay with {current_step.label}: {_display_expression(current_step.expression)}.",
         '',
         _step_answer_guidance(current_step),
     ]
     if hint_lines:
         lines.extend([''])
         lines.extend(hint_lines)
-    lines.extend([
-        '',
-        _step_prompt(current_step),
-    ])
+    if not (hint_lines and hint_lines[-1].strip().endswith('?')):
+        lines.extend([
+            '',
+            _step_prompt(current_step),
+        ])
     return '\n'.join(lines)
 
 
@@ -251,8 +254,8 @@ def build_structured_step_focus_reply(state: TutoringState, intro: str = '') -> 
     if intro.strip():
         lines.extend([intro.strip(), ''])
     lines.extend([
-        f'Main problem: {_display_expression(state.main_problem or state.active_problem)}',
-        f'Current step: {current_step.label}',
+        f"We're working on: {_display_expression(state.main_problem or state.active_problem)}",
+        f'This part: {current_step.label}',
         f'{current_step.label}: {_display_expression(current_step.expression)}',
         '',
         'Easy idea:',
@@ -272,16 +275,113 @@ def current_step_expression(state: TutoringState) -> str:
     return state.current_step or state.current_question or ''
 
 
-def _structured_progress_lines(state: TutoringState, step: TutorStepRecord, result: str) -> list[str]:
+def _structured_progress_lines(state: TutoringState, step: TutorStepRecord, result: str, reveal: bool = False) -> list[str]:
     lines = []
     main_problem = _display_expression(state.main_problem or state.active_problem)
     if main_problem:
-        lines.append(f'Main problem: {main_problem}')
-    lines.append(f'{step.label} complete: {_display_expression(step.expression)} = {result}')
+        lines.append(f"We're working on: {main_problem}")
+    if reveal:
+        lines.append(f'{step.label} answer: {_display_expression(step.expression)} = {result}')
+        lines.append(f'Now we can use {result} and keep going.')
+    else:
+        lines.append(f'{step.label} complete: {_display_expression(step.expression)} = {result}')
     guidance = _result_format_followup(step, result)
     if guidance:
         lines.append(guidance)
     return lines
+
+
+def _structured_working_lines(step: TutorStepRecord, result: str = '') -> list[str]:
+    expression = step.expression.replace(' ', '')
+    result = result or step.expected_answer
+
+    fraction_multiply = re.fullmatch(r'(\d+)/(\d+)\*(\d+)/(\d+)', expression)
+    if fraction_multiply:
+        top_left, bottom_left, top_right, bottom_right = map(int, fraction_multiply.groups())
+        numerator = top_left * top_right
+        denominator = bottom_left * bottom_right
+        simplified = format_fraction(safe_eval_expression(f'{numerator}/{denominator}')) or result
+        return [
+            f'{top_left} × {top_right} = {numerator}',
+            f'{bottom_left} × {bottom_right} = {denominator}',
+            f'{numerator}/{denominator} = {simplified}',
+        ]
+
+    fraction_add = re.fullmatch(r'(\d+)/(\d+)\+(\d+)/(\d+)', expression)
+    if fraction_add:
+        left_top, left_bottom, right_top, right_bottom = map(int, fraction_add.groups())
+        common_bottom = _least_common_multiple(left_bottom, right_bottom)
+        left_scaled = left_top * (common_bottom // left_bottom)
+        right_scaled = right_top * (common_bottom // right_bottom)
+        total_top = left_scaled + right_scaled
+        simplified = format_fraction(safe_eval_expression(f'{total_top}/{common_bottom}')) or result
+        if left_bottom == right_bottom:
+            lines = [
+                f'{left_top} + {right_top} = {total_top}',
+                f'Keep the bottom number: {common_bottom}',
+            ]
+            if simplified != f'{total_top}/{common_bottom}':
+                lines.append(f'{total_top}/{common_bottom} = {simplified}')
+            return lines
+        lines = [
+            f'{left_top}/{left_bottom} = {left_scaled}/{common_bottom}',
+            f'{right_top}/{right_bottom} = {right_scaled}/{common_bottom}',
+            f'{left_scaled}/{common_bottom} + {right_scaled}/{common_bottom} = {total_top}/{common_bottom}',
+        ]
+        if simplified != f'{total_top}/{common_bottom}':
+            lines.append(f'{total_top}/{common_bottom} = {simplified}')
+        return lines
+
+    whole_plus_fraction = re.fullmatch(r'(\d+)\+(\d+)/(\d+)', expression)
+    if whole_plus_fraction:
+        whole, numerator, denominator = map(int, whole_plus_fraction.groups())
+        converted_whole = whole * denominator
+        total_top = converted_whole + numerator
+        simplified = format_fraction(safe_eval_expression(f'{total_top}/{denominator}')) or result
+        lines = [
+            f'{whole} = {converted_whole}/{denominator}',
+            f'{converted_whole}/{denominator} + {numerator}/{denominator} = {total_top}/{denominator}',
+        ]
+        if simplified != f'{total_top}/{denominator}':
+            lines.append(f'{total_top}/{denominator} = {simplified}')
+        return lines
+
+    fraction_plus_whole = re.fullmatch(r'(\d+)/(\d+)\+(\d+)', expression)
+    if fraction_plus_whole:
+        numerator, denominator, whole = map(int, fraction_plus_whole.groups())
+        converted_whole = whole * denominator
+        total_top = numerator + converted_whole
+        simplified = format_fraction(safe_eval_expression(f'{total_top}/{denominator}')) or result
+        lines = [
+            f'{whole} = {converted_whole}/{denominator}',
+            f'{numerator}/{denominator} + {converted_whole}/{denominator} = {total_top}/{denominator}',
+        ]
+        if simplified != f'{total_top}/{denominator}':
+            lines.append(f'{total_top}/{denominator} = {simplified}')
+        return lines
+
+    multiply_divide = re.fullmatch(r'(\d+)\*(\d+)/(\d+)', expression)
+    if multiply_divide:
+        left, middle, divisor = map(int, multiply_divide.groups())
+        product = left * middle
+        simplified = format_fraction(safe_eval_expression(f'{product}/{divisor}')) or result
+        return [
+            f'{left} × {middle} = {product}',
+            f'{product}/{divisor} = {simplified}',
+        ]
+
+    simple_binary = re.fullmatch(r'(-?\d+)\s*([+\-*/])\s*(-?\d+)', expression)
+    if simple_binary:
+        left_text, operator, right_text = simple_binary.groups()
+        display_operator = {'*': '×', '/': '÷'}.get(operator, operator)
+        value = format_fraction(safe_eval_expression(expression)) or result
+        return [f'{left_text} {display_operator} {right_text} = {value}']
+
+    return []
+
+
+def _least_common_multiple(left: int, right: int) -> int:
+    return abs(left * right) // gcd(left, right) if left and right else 0
 
 
 def _roadmap_lines(state: TutoringState) -> list[str]:
@@ -393,8 +493,8 @@ def _structured_hint_lines(step: TutorStepRecord, stronger: bool = False) -> lis
             top_left, bottom_left, top_right, bottom_right = re.fullmatch(r'(\d+)/(\d+)\*(\d+)/(\d+)', expression).groups()
             if stronger:
                 return [
-                    f'Start with the top numbers: {top_left} x {top_right}.',
-                    f'Then do the bottom numbers: {bottom_left} x {bottom_right}.',
+                    f'Start with the top numbers: {top_left} × {top_right}.',
+                    f'Then do the bottom numbers: {bottom_left} × {bottom_right}.',
                 ]
             return [
                 'For fraction multiplication, do the top numbers together first.',
@@ -404,10 +504,29 @@ def _structured_hint_lines(step: TutorStepRecord, stronger: bool = False) -> lis
             left_part, right_part = expression.split('/', 1)
             left_display = _display_expression(left_part)
             right_display = _display_expression(right_part)
+            left_value = safe_eval_expression(left_part)
+            product_line = ''
+            next_question = ''
+            if left_value is not None and left_value.denominator == 1:
+                product = format_fraction(left_value)
+                product_line = f'First do {left_display} = {product}.'
+                next_question = f'What is {product} ÷ {right_display}?'
             if stronger:
+                if product_line and next_question:
+                    return [
+                        product_line,
+                        f'Then use that in the full step: {product} ÷ {right_display}.',
+                        next_question,
+                    ]
                 return [
                     f'First work out {left_display}.',
                     f'After that, divide that result by {right_display}.',
+                ]
+            if product_line and next_question:
+                return [
+                    product_line,
+                    f'Then use that in the full step: {product} ÷ {right_display}.',
+                    next_question,
                 ]
             return [
                 'In this step, multiply first before dividing.',
@@ -683,10 +802,10 @@ def _step_prompt(step: TutorStepRecord | None) -> str:
 
 def _step_answer_guidance(step: TutorStepRecord) -> str:
     if _should_prefer_fraction_form(step):
-        return 'Answer form: keep your answer as a fraction for now so the next step stays easy to follow.'
+        return 'For now, keep your answer as a fraction so the next step stays easy to follow.'
     if _is_exact_whole_number_step(step):
-        return 'Answer form: write the whole number you get for this step.'
-    return 'Answer form: write just the value for this step before going back to the whole problem.'
+        return 'Write the whole number you get for this step.'
+    return 'Write just the value for this step before going back to the whole problem.'
 
 
 def _result_format_followup(step: TutorStepRecord, result: str) -> str:
@@ -719,7 +838,7 @@ def _is_exact_whole_number_step(step: TutorStepRecord) -> bool:
 
 def _display_expression(expression: str) -> str:
     text = str(expression or '').strip()
-    text = text.replace('*', ' x ')
+    text = text.replace('*', ' × ')
     text = re.sub(r'(?<!\d)/(?!\d)', ' / ', text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()

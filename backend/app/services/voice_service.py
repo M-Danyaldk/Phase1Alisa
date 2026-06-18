@@ -49,6 +49,7 @@ from ..utils.multi_step_progress import (
 from ..utils.tutor_response import format_student_reply, looks_incomplete_response
 
 logger = logging.getLogger(__name__)
+CHAT_HISTORY_PUBLIC_ERROR = 'Chat history could not be saved.'
 
 VOICE_FALLBACK_MESSAGE = 'No problem - we will use chat instead!'
 UNCLEAR_TRANSCRIPT_MESSAGE = 'I could not hear that clearly. Could you try again?'
@@ -97,6 +98,10 @@ def _text_answer_check_reply(answer_check, state: TutoringState, current_step: s
 
 def _clean_text_retry_prompt(prompt: str) -> str:
     cleaned = str(prompt or '').strip()
+    if 'finish this sentence' in cleaned.lower():
+        stem_match = re.search(r'["“]([^"”]*\.{3}[^"”]*)["”]', cleaned)
+        if stem_match:
+            return f'Try finishing this sentence:\n"{stem_match.group(1).strip()}"'
     for marker in (
         'Try this same question again:',
         'Try the same question one more time:',
@@ -179,6 +184,38 @@ def _answer_check_question(state: TutoringState, current_step: str = '') -> str:
         ]
         if part
     )
+
+
+def _reading_context_question(question: str, history: list[ChatHistoryItem] | None) -> str:
+    clean_question = str(question or '').strip()
+    if not clean_question or '"' in clean_question or '“' in clean_question:
+        return clean_question
+    lower_question = clean_question.lower()
+    reading_starters = ('who ', 'what ', 'where ', 'when ', 'why ', 'how ', 'which ')
+    if not (lower_question.startswith(reading_starters) or 'main idea' in lower_question or 'infer' in lower_question):
+        return clean_question
+
+    for item in reversed(history or []):
+        content = str(getattr(item, 'content', '') or '').strip()
+        lower = content.lower()
+        if ('quick question' in lower or clean_question.lower() in lower) and re.search(r'["“][^"”]+["”]', content):
+            return f'{content}\n\nCurrent question: {clean_question}'
+    return clean_question
+
+
+def _writing_context_question(question: str, history: list[ChatHistoryItem] | None) -> str:
+    clean_question = str(question or '').strip()
+    if not clean_question or '"' in clean_question or '“' in clean_question:
+        return clean_question
+    if 'finish this sentence' not in clean_question.lower():
+        return clean_question
+
+    for item in reversed(history or []):
+        content = str(getattr(item, 'content', '') or '').strip()
+        lower = content.lower()
+        if 'finish this sentence' in lower and re.search(r'["“][^"”]*\.{3}[^"”]*["”]', content):
+            return f'{content}\n\nCurrent question: {clean_question}'
+    return clean_question
 
 
 def _display_math_expression_from_state(state: TutoringState, current_step: str = '') -> str:
@@ -578,7 +615,7 @@ class VoiceService:
         except Exception as exc:
             logger.warning('Voice chat history setup failed before LLM response: %s', exc)
             chat_store = None
-            history_error = str(exc)
+            history_error = CHAT_HISTORY_PUBLIC_ERROR
 
         effective_transcript = transcript
         if subject == 'Math':
@@ -626,7 +663,7 @@ class VoiceService:
                     history_saved = True
                 except Exception as exc:
                     logger.warning('Voice chat history save failed after subject boundary reply: %s', exc)
-                    history_error = str(exc)
+                    history_error = CHAT_HISTORY_PUBLIC_ERROR
 
             await learning_memory_service.record_exchange_summary(
                 parent_id=parent_id,
@@ -700,12 +737,21 @@ class VoiceService:
             })
         answer_check = None
         if next_state.attempt_count > 0 and (next_state.current_question or current_step):
+            base_check_question = _answer_check_question(next_state, current_step)
+            if subject == 'ELA':
+                check_question = _reading_context_question(base_check_question, history)
+            elif subject == 'Writing':
+                check_question = _writing_context_question(base_check_question, history)
+            else:
+                check_question = base_check_question
             answer_check = await TutorAnswerChecker().check(
                 subject=subject,
-                question=_answer_check_question(next_state, current_step),
+                question=check_question,
                 student_answer=effective_transcript,
                 expected_answer=next_state.expected_answer,
             )
+            if check_question != base_check_question and subject in {'ELA', 'Writing'}:
+                next_state = next_state.model_copy(update={'current_question': check_question})
             next_state = next_state.model_copy(update={
                 'current_subject': subject,
                 'student_answer': transcript,
@@ -910,7 +956,7 @@ class VoiceService:
                 history_saved = True
             except Exception as exc:
                 logger.warning('Voice chat history save failed after LLM response: %s', exc)
-                history_error = str(exc)
+                history_error = CHAT_HISTORY_PUBLIC_ERROR
 
         await learning_memory_service.record_exchange_summary(
             parent_id=parent_id,

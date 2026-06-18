@@ -1123,7 +1123,7 @@ def build_chat_directives(
             if active_problem == (state.main_problem or state.active_problem):
                 active_problem = message.strip()
         if (new_problem and not answer_to_current_math_step) or direct_help:
-            if direct_question_override and current_step:
+            if direct_question_override and (current_step or current_question):
                 directives.append('The student asked a new direct question, so answer that question before returning to any earlier quick question.')
             directives.append('The student asked a real question. Solve or explain that question first in short easy steps.')
             directives.append('Do not turn the student’s main question into a quiz before helping.')
