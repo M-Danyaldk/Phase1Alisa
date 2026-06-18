@@ -211,7 +211,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .context-subjects { display: grid; gap: 9px; border-top: 1px solid var(--border); padding-top: 14px; }
 .context-subjects span { padding: 10px 12px; border-radius: 14px; background: #faf7ff; color: var(--muted); font-size: 13px; line-height: 1.35; }
 .chat-card { padding: 0; overflow: hidden; }
-.chat-workspace { display: grid; grid-template-rows: auto auto auto minmax(520px, 1fr) auto auto; min-height: calc(100vh - 210px); }
+.chat-workspace { display: flex; flex-direction: column; min-height: calc(100vh - 210px); }
 .chat-topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.82); }
 .tutor-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .tutor-avatar { width: 44px; height: 44px; border-radius: 16px; display: grid; place-items: center; background: linear-gradient(135deg, var(--purple-soft), var(--gold-soft)); color: var(--purple-dark); font-size: 22px; font-weight: 900; flex: 0 0 auto; }
@@ -254,7 +254,7 @@ h4 { margin: 18px 0 6px; color: var(--purple-dark); }
 .brain-break-lockout { display: grid; gap: 8px; background: #eaf8f0; border-color: #c9ead8; color: var(--success); }
 .brain-break-lockout span { font-weight: 900; }
 .dashboard-notice { margin: 0; border: 1px solid #c9ead8; border-radius: 14px; padding: 10px 12px; background: #eaf8f0; }
-.chat-window { overflow: auto; padding: 24px; display: grid; align-content: start; gap: 14px; background: linear-gradient(180deg, rgba(255,255,255,.75), rgba(245,238,255,.54)); }
+.chat-window { flex: 1 1 auto; min-height: 360px; overflow: auto; padding: 24px; display: grid; align-content: start; gap: 14px; background: linear-gradient(180deg, rgba(255,255,255,.75), rgba(245,238,255,.54)); }
 .chat-bubble { max-width: 78%; padding: 14px 16px; border-radius: 20px; }
 .chat-bubble p { margin: 0; line-height: 1.55; white-space: pre-wrap; }
 .chat-bubble small { display: block; margin-top: 8px; color: var(--muted); }

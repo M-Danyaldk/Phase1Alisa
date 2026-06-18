@@ -368,9 +368,16 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     )
     tutoring_state = tutoring_state.model_copy(update={'current_subject': payload.subject})
     previous_structured_problem_id = payload.tutoring_state.problem_id
-    if tutoring_state.mode != 'clarify_new_problem':
+    side_problem_active = bool(
+        tutoring_state.paused_main_problem.strip()
+        and tutoring_state.active_problem.strip()
+        and tutoring_state.active_problem.strip() != tutoring_state.paused_main_problem.strip()
+        and tutoring_state.mode == 'solve'
+        and tutoring_state.status == 'solving'
+    )
+    if tutoring_state.mode != 'clarify_new_problem' and not side_problem_active:
         tutoring_state = update_multi_step_progress(effective_message, tutoring_state)
-    if has_structured_math_problem(tutoring_state):
+    if has_structured_math_problem(tutoring_state) and not side_problem_active:
         active_task = tutoring_state.main_problem or active_task
         current_step = current_step_expression(tutoring_state) or current_step
     should_send_structured_roadmap = _should_send_structured_roadmap(
