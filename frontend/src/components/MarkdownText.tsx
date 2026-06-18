@@ -4,8 +4,16 @@ function renderInlineBold(text: string) {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={index}>{part.slice(2, -2)}</strong>;
     }
-    return <span key={index}>{part}</span>;
+    return <span key={index}>{formatMathDisplayText(part)}</span>;
   });
+}
+
+function formatMathDisplayText(text: string) {
+  return text
+    .replace(/(?<=\d)\s*([+\-])\s*(?=\d)/g, ' $1 ')
+    .replace(/(?<=\d)\s*\*(?=\d)/g, ' × ')
+    .replace(/\*/g, '×')
+    .replace(/->/g, '→');
 }
 
 export function MarkdownText({ text }: { text: string }) {

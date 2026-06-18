@@ -1,6 +1,7 @@
 import hashlib
 import re
 
+from .assessment_validation import extract_math_expression, format_fraction, normalize_math_text, safe_eval_expression
 from .models import ChatHistoryItem, TutorHelperBranch, TutorQueuedQuestion, TutoringState
 
 DIRECT_HELP_PHRASES = [
@@ -1244,13 +1245,13 @@ def build_new_problem_clarification_reply(state: TutoringState) -> str:
 
     lines = []
     if pending_problem:
-        lines.append(f'This looks like a new math problem: {pending_problem}.')
+        lines.append(f'This looks like a new math problem: {_display_math_text(pending_problem)}.')
         lines.append('')
     if current_problem:
-        lines.append(f'**Main problem:** {current_problem}.')
+        lines.append(f'**Main problem:** {_display_math_text(current_problem)}.')
         lines.append('')
     if current_step:
-        lines.append(f'**Current step:** {current_step}')
+        lines.append(f'**Current step:** {_display_math_text(current_step)}')
         lines.append('')
     lines.append('Tell me which one you want:')
     lines.append('part of this problem, or a new problem?')
@@ -1260,16 +1261,34 @@ def build_new_problem_clarification_reply(state: TutoringState) -> str:
 def build_switch_confirmation_reply(state: TutoringState, new_problem: str) -> str:
     previous_problem = (state.paused_main_problem or state.main_problem or state.active_problem or '').strip()
     lines = [
-        f'Okay, we can solve this new problem first: {new_problem.strip()}',
+        f'Okay, we can solve this new problem first: {_display_math_text(new_problem.strip())}',
         '',
     ]
     if previous_problem:
         lines.extend([
-            f'After that, I will bring you back to: {previous_problem}',
+            f'After that, I will bring you back to: {_display_math_text(previous_problem)}',
             '',
         ])
     lines.append("Let's start with the new problem now.")
     return '\n'.join(lines)
+
+
+def build_temporary_math_problem_reply(new_problem: str) -> str:
+    expression = extract_math_expression(normalize_math_text(new_problem))
+    if not expression:
+        return ''
+
+    value = safe_eval_expression(expression)
+    if value is None:
+        return ''
+
+    display_expression = _display_math_text(expression)
+    answer = format_fraction(value)
+    return '\n'.join([
+        f"Okay, let's solve this new problem first: {display_expression}",
+        '',
+        f'{display_expression} = {answer}',
+    ])
 
 
 def build_resume_paused_problem_reply(state: TutoringState) -> str:
@@ -1279,17 +1298,25 @@ def build_resume_paused_problem_reply(state: TutoringState) -> str:
 
     lines = ['We finished the new problem.', '']
     if paused_problem:
-        lines.append(f"**Now let's return to your main problem:** {paused_problem}")
+        lines.append(f"**Now let's return to your main problem:** {_display_math_text(paused_problem)}")
         lines.append('')
     if completed:
-        shown = ', '.join(completed[:3])
+        shown = _display_math_text(', '.join(completed[:3]))
         lines.append(f'**We already completed:** {shown}')
         lines.append('')
     if paused_question:
-        lines.append(f'**Current step:** {paused_question}')
+        lines.append(f'**Current step:** {_display_math_text(paused_question)}')
         lines.append('')
         lines.append("Let's keep going from here.")
     return '\n'.join(lines)
+
+
+def _display_math_text(text: str) -> str:
+    text = str(text or '')
+    text = text.replace('->', '→')
+    text = re.sub(r'(?<=\d)\s*([+\-])\s*(?=\d)', r' \1 ', text)
+    text = re.sub(r'(?<=\d)\s*\*(?=\d)', ' × ', text)
+    return re.sub(r'(?<!\*)\*(?!\*)', '×', text)
 
 
 def detect_off_subject_request(subject: str, message: str, state: TutoringState | None = None) -> bool:

@@ -31,6 +31,7 @@ from ..tutoring_logic import (
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
+    build_temporary_math_problem_reply,
     detect_action_intent,
     detect_off_subject_request,
     update_tutoring_state_after_reply,
@@ -841,10 +842,23 @@ class VoiceService:
             and next_state.mode == 'solve'
             and next_state.status == 'solving'
         ):
-            final_state = next_state
-            formatted_reply = build_switch_confirmation_reply(next_state, next_state.active_problem)
+            formatted_reply = build_temporary_math_problem_reply(next_state.active_problem) or build_switch_confirmation_reply(next_state, next_state.active_problem)
+            final_state = update_tutoring_state_after_reply(next_state, effective_transcript, formatted_reply)
+            if final_state.mode == 'resume_paused_problem_notice':
+                resume_reply = build_resume_paused_problem_reply(final_state)
+                if resume_reply.strip():
+                    formatted_reply = f'{formatted_reply}\n\n{resume_reply}'
+                final_state = final_state.model_copy(update={
+                    'mode': 'practice' if (final_state.current_question or final_state.current_step) else 'solve',
+                    'status': 'waiting_for_student' if (final_state.current_question or final_state.current_step) else 'solving',
+                    'paused_main_problem': '',
+                    'paused_current_step': '',
+                    'paused_current_question': '',
+                    'paused_expected_answer': '',
+                    'paused_completed_steps': [],
+                })
             result_provider = 'local'
-            result_model = 'deterministic-switch-confirmation'
+            result_model = 'deterministic-temporary-math-problem-return'
             special_local_reply = True
         elif should_send_structured_roadmap:
             final_state = next_state

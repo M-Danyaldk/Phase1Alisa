@@ -53,6 +53,7 @@ from .tutoring_logic import (
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
+    build_temporary_math_problem_reply,
     detect_action_intent,
     detect_off_subject_request,
     update_tutoring_state_after_reply,
@@ -677,10 +678,23 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         and tutoring_state.mode == 'solve'
         and tutoring_state.status == 'solving'
     ):
-        formatted_reply = build_switch_confirmation_reply(tutoring_state, tutoring_state.active_problem)
-        next_state = tutoring_state
+        formatted_reply = build_temporary_math_problem_reply(tutoring_state.active_problem) or build_switch_confirmation_reply(tutoring_state, tutoring_state.active_problem)
+        next_state = update_tutoring_state_after_reply(tutoring_state, effective_message, formatted_reply)
+        if next_state.mode == 'resume_paused_problem_notice':
+            resume_reply = build_resume_paused_problem_reply(next_state)
+            if resume_reply.strip():
+                formatted_reply = f'{formatted_reply}\n\n{resume_reply}'
+            next_state = next_state.model_copy(update={
+                'mode': 'practice' if (next_state.current_question or next_state.current_step) else 'solve',
+                'status': 'waiting_for_student' if (next_state.current_question or next_state.current_step) else 'solving',
+                'paused_main_problem': '',
+                'paused_current_step': '',
+                'paused_current_question': '',
+                'paused_expected_answer': '',
+                'paused_completed_steps': [],
+            })
         result_provider = 'local'
-        result_model = 'deterministic-switch-confirmation'
+        result_model = 'deterministic-temporary-math-problem-return'
         result_fallback_used = False
         special_local_reply = True
     elif should_send_structured_roadmap:
