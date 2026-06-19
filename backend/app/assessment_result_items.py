@@ -30,7 +30,7 @@ def build_question_results(payload: AssessmentRequest) -> list[AssessmentQuestio
                 validation_type=validation.validation_type,
                 confidence=validation.confidence,
                 feedback_note=validation.feedback_note,
-                child_feedback=_child_feedback(bank_question, validation.status),
+                child_feedback=_child_feedback(bank_question, validation.status, validation.feedback_note),
                 next_topic_if_incorrect=bank_question.next_topic_if_incorrect,
             ))
             continue
@@ -136,7 +136,7 @@ def _fallback_result(
     )
 
 
-def _child_feedback(question: AssessmentQuestion, status: str) -> str:
+def _child_feedback(question: AssessmentQuestion, status: str, feedback_note: str = '') -> str:
     if status == 'correct':
         if question.validation_type == 'writing_rubric':
             if question.skill == 'complete sentence':
@@ -170,6 +170,8 @@ def _child_feedback(question: AssessmentQuestion, status: str) -> str:
         return "Good try. Let's practice fixing the sentence so it has the right grammar and punctuation."
     if question.validation_type == 'keyword_text':
         return "Good try. Let's go back to the main idea and look for the most important words."
+    if question.skill == 'fraction comparison' and feedback_note:
+        return f'Good try. {feedback_note}'
     return question.child_incorrect_feedback
 
 

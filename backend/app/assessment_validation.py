@@ -227,7 +227,36 @@ def _validate_numeric(question: AssessmentQuestion, answer: str) -> AnswerValida
         return _result(question, answer, 'needs_review', 'low', 'Could not parse one of the numeric answers safely.')
     if expected_value == student_value:
         return _result(question, answer, 'correct', 'high', f'Numeric answer matches {format_fraction(expected_value)}.')
+    if question.skill == 'fraction comparison':
+        comparison_note = _fraction_comparison_feedback(question.question, question.expected_answer)
+        if comparison_note:
+            return _result(question, answer, 'incorrect', 'high', comparison_note)
     return _result(question, answer, 'incorrect', 'high', f'Expected {format_fraction(expected_value)}.')
+
+
+def _fraction_comparison_feedback(question_text: str, expected_answer: str) -> str:
+    fractions = re.findall(r'-?\d+\s*/\s*-?\d+', str(question_text or ''))
+    if len(fractions) < 2:
+        return ''
+    values: list[tuple[str, Fraction]] = []
+    for fraction_text in fractions[:2]:
+        try:
+            values.append((fraction_text.replace(' ', ''), Fraction(fraction_text.replace(' ', ''))))
+        except ZeroDivisionError:
+            return ''
+    if len(values) < 2:
+        return ''
+    left, right = values
+    expected_display = str(expected_answer or '').strip() or format_fraction(max(left[1], right[1]))
+    return (
+        f'{expected_display} is larger because '
+        f'{left[0]} = {_decimal_label(left[1])} and {right[0]} = {_decimal_label(right[1])}.'
+    )
+
+
+def _decimal_label(value: Fraction) -> str:
+    decimal = value.numerator / value.denominator
+    return f'{decimal:.3f}'.rstrip('0').rstrip('.')
 
 
 def _validate_exact_text(question: AssessmentQuestion, answer: str) -> AnswerValidationResult:

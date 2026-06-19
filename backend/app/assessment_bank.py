@@ -489,7 +489,7 @@ def _math_word_problem_question(grade: int, version: int, values: tuple) -> Asse
         if grade == 4 and version == 1:
             question = 'A book has 48 pages. Mia reads 8 pages each day. How many days will it take?'
         else:
-            question = f'There are {total} {item}. If {group_size} {item} go in each {group}, how many {group} are needed?'
+            question = f'There are {total} {item}. If {group_size} {item} go in each {_singular_unit(group)}, how many {group} are needed?'
         skill = 'division word problems'
     return _question(
         subject='Math',
@@ -534,9 +534,40 @@ def _question(
         accepted_answers=accepted_answers,
         rubric=rubric,
         next_topic_if_incorrect=next_topic,
-        child_correct_feedback=f'Great job. You handled this {skill} question correctly.',
-        child_incorrect_feedback=f'Good try. We will practice {next_topic} together one step at a time.',
+        child_correct_feedback=f'Great job. You solved this {_child_skill_label(skill)} correctly.',
+        child_incorrect_feedback=f'Good try. We will practice {_child_skill_label(next_topic)} together one step at a time.',
     )
+
+
+def _singular_unit(word: str) -> str:
+    irregular = {
+        'shelves': 'shelf',
+    }
+    clean = str(word or '').strip()
+    lowered = clean.lower()
+    if lowered in irregular:
+        return irregular[lowered]
+    if lowered.endswith('ies') and len(clean) > 3:
+        return clean[:-3] + 'y'
+    if lowered.endswith(('ches', 'shes', 'xes', 'zes')) and len(clean) > 2:
+        return clean[:-2]
+    if lowered.endswith('s') and not lowered.endswith('ss') and len(clean) > 1:
+        return clean[:-1]
+    return clean
+
+
+def _child_skill_label(skill: str) -> str:
+    labels = {
+        'division word problems': 'division word problem',
+        'volume word problems': 'volume word problem',
+        'measurement word problems': 'measurement word problem',
+        'multi-step word problems': 'multi-step word problem',
+        'fraction comparison': 'fraction comparison problem',
+        'fraction operations': 'fraction problem',
+        'integer operations': 'integer problem',
+        'ratios': 'ratio problem',
+    }
+    return labels.get(str(skill or '').strip(), str(skill or 'skill').strip() or 'skill')
 
 
 def _numeric_acceptance(answer: str) -> tuple[str, ...]:

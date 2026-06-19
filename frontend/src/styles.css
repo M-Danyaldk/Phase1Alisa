@@ -48,6 +48,7 @@ main { padding: 40px; overflow: auto; }
 .section-header h2 { margin: 8px 0 8px; font-size: clamp(30px, 5vw, 52px); line-height: .98; color: var(--purple-dark); letter-spacing: -0.04em; }
 .section-header p { margin: 0; max-width: 760px; color: var(--muted); line-height: 1.65; }
 .hero-grid, .assessment-grid, .learning-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(320px, .7fr); gap: 22px; }
+.assessment-grid.completed { grid-template-columns: minmax(280px, .75fr) minmax(420px, 1.25fr); align-items: start; }
 .admin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .report-actions { display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
 .report-metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
@@ -138,6 +139,11 @@ main { padding: 40px; overflow: auto; }
 .card-grid.four { grid-template-columns: repeat(4, 1fr); }
 .card-icon { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 16px; background: var(--purple-soft); color: var(--purple-dark); margin-bottom: 16px; }
 .form-card { display: grid; gap: 18px; }
+.submitted-answer-list { display: grid; gap: 10px; }
+.submitted-answer-item { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: #fbf8ff; }
+.submitted-answer-item span { color: var(--gold); font-size: 12px; font-weight: 900; }
+.submitted-answer-item strong { color: var(--purple-dark); font-size: 14px; line-height: 1.35; }
+.submitted-answer-item p { margin: 0; color: var(--text); line-height: 1.45; overflow-wrap: anywhere; }
 label { display: grid; gap: 8px; color: var(--purple-dark); font-weight: 800; }
 input, select, textarea { border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; background: white; color: var(--text); outline: none; }
 input:disabled, select:disabled, textarea:disabled { background: #f8f4ff; color: var(--muted); cursor: not-allowed; }

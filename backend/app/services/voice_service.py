@@ -171,8 +171,8 @@ def _tutor_practice_choice_intent(state: TutoringState, effective_message: str) 
     text = ' '.join(str(effective_message or '').lower().split())
     if not text:
         return 'unclear'
-    yes_markers = ('yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'give me one', 'another', 'another one', 'more', 'more practice', 'start', 'continue', 'try one', 'one more')
-    no_markers = ('no', 'nope', 'done', 'stop', 'not now', 'thats all', "that's all", 'finish', 'finished', 'end')
+    yes_markers = ('y', 'ye', 'ya', 'yah', 'yes', 'yes please', 'yeah', 'yep', 'yup', 'ok', 'okay', 'please', 'sure', 'give me one', 'another', 'another one', 'more', 'more practice', 'start', 'continue', 'try one', 'one more')
+    no_markers = ('n', 'nah', 'no', 'no thanks', 'no thank you', 'nope', 'done', 'stop', 'not now', 'thats all', "that's all", 'finish', 'finished', 'end')
     if any(_choice_marker_matches(text, marker) for marker in no_markers):
         return 'no'
     if any(_choice_marker_matches(text, marker) for marker in yes_markers):
@@ -1246,6 +1246,38 @@ class VoiceService:
             formatted_reply = build_new_problem_clarification_reply(next_state)
             result_provider = 'local'
             result_model = 'deterministic-new-problem-clarification'
+            special_local_reply = True
+        elif (
+            subject == 'Math'
+            and tutoring_state.problem_status not in {'finished', 'idle'}
+            and next_state.paused_main_problem
+            and next_state.active_problem.strip()
+            and next_state.active_problem.strip() != next_state.paused_main_problem.strip()
+            and next_state.mode == 'solve'
+            and next_state.status == 'solving'
+            and not extract_math_expression(next_state.active_problem)
+        ):
+            final_state = next_state.model_copy(update={
+                'current_subject': subject,
+                'active_problem': next_state.paused_main_problem,
+                'current_step': next_state.paused_current_step or next_state.current_step,
+                'current_question': next_state.paused_current_question or next_state.current_question or next_state.paused_current_step,
+                'expected_answer': next_state.paused_expected_answer or next_state.expected_answer,
+                'student_answer': transcript,
+                'correctness_status': '',
+                'attempt_count': 0,
+                'hint_given': False,
+                'mode': 'practice' if (next_state.paused_current_question or next_state.paused_current_step or next_state.current_question or next_state.current_step) else 'solve',
+                'status': 'waiting_for_student',
+                'paused_main_problem': '',
+                'paused_current_step': '',
+                'paused_current_question': '',
+                'paused_expected_answer': '',
+                'paused_completed_steps': [],
+            })
+            formatted_reply = build_subject_boundary_reply(subject, final_state)
+            result_provider = 'local'
+            result_model = 'deterministic-subject-boundary-temporary-guard'
             special_local_reply = True
         elif (
             subject == 'Math'

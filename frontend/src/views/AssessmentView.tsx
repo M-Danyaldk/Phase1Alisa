@@ -117,12 +117,24 @@ export function AssessmentView({
     </div>
     {!studentSession && <p className="error-note">Quick Check-Ins are only available from the student classroom.</p>}
     {error && <p className="error-note">{error}</p>}
-    <div className="assessment-grid">
+    <div className={`assessment-grid${assessmentComplete ? ' completed' : ''}`}>
       <div className="form-card">
-        <h3>{subjectLabel(subject)} Quick Check-In</h3>
+        <h3>{assessmentComplete ? 'Submitted Answers' : `${subjectLabel(subject)} Quick Check-In`}</h3>
         {loadingQuestions && <p className="muted-copy">Loading check-in...</p>}
-        {!loadingQuestions && questions.map((q, idx) => <label key={selection?.questions[idx]?.id || q}>{q}<textarea value={answers[idx] || ''} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Type your answer..." disabled={assessmentComplete} /></label>)}
-        <button className="primary-button" onClick={submit} disabled={loading || loadingQuestions || !studentSession || assessmentComplete || !questions.length}>{loading ? 'Getting results...' : assessmentComplete ? 'All Done!' : studentSession ? 'Show My Results' : 'Log In First'}</button>
+        {!loadingQuestions && !assessmentComplete && questions.map((q, idx) => <label key={selection?.questions[idx]?.id || q}>{q}<textarea value={answers[idx] || ''} onChange={e => setAnswers(answers.map((a, i) => i === idx ? e.target.value : a))} placeholder="Type your answer..." disabled={assessmentComplete} /></label>)}
+        {!loadingQuestions && assessmentComplete && <div className="submitted-answer-list">
+          {(result?.question_results?.length ? result.question_results : questions.map((question, index) => ({
+            question_id: selection?.questions[index]?.id || question,
+            position: index + 1,
+            question,
+            student_answer: answers[index] || '',
+          }))).map(item => <div className="submitted-answer-item" key={item.question_id || `${item.position}-${item.question}`}>
+            <span>Q{item.position}</span>
+            <strong>{item.question}</strong>
+            <p>{item.student_answer || 'No answer entered'}</p>
+          </div>)}
+        </div>}
+        {!assessmentComplete && <button className="primary-button" onClick={submit} disabled={loading || loadingQuestions || !studentSession || !questions.length}>{loading ? 'Getting results...' : studentSession ? 'Show My Results' : 'Log In First'}</button>}
         <ProblemReportButton
           accessToken={accessToken}
           childId={childId}

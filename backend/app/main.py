@@ -880,6 +880,39 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         and tutoring_state.active_problem.strip() != tutoring_state.paused_main_problem.strip()
         and tutoring_state.mode == 'solve'
         and tutoring_state.status == 'solving'
+        and not extract_math_expression(tutoring_state.active_problem)
+    ):
+        next_state = tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'active_problem': tutoring_state.paused_main_problem,
+            'current_step': tutoring_state.paused_current_step or tutoring_state.current_step,
+            'current_question': tutoring_state.paused_current_question or tutoring_state.current_question or tutoring_state.paused_current_step,
+            'expected_answer': tutoring_state.paused_expected_answer or tutoring_state.expected_answer,
+            'student_answer': payload.message,
+            'correctness_status': '',
+            'attempt_count': 0,
+            'hint_given': False,
+            'mode': 'practice' if (tutoring_state.paused_current_question or tutoring_state.paused_current_step or tutoring_state.current_question or tutoring_state.current_step) else 'solve',
+            'status': 'waiting_for_student',
+            'paused_main_problem': '',
+            'paused_current_step': '',
+            'paused_current_question': '',
+            'paused_expected_answer': '',
+            'paused_completed_steps': [],
+        })
+        formatted_reply = build_subject_boundary_reply(payload.subject, next_state)
+        result_provider = 'local'
+        result_model = 'deterministic-subject-boundary-temporary-guard'
+        result_fallback_used = False
+        special_local_reply = True
+    elif (
+        payload.subject == 'Math'
+        and payload.tutoring_state.problem_status not in {'finished', 'idle'}
+        and tutoring_state.paused_main_problem
+        and tutoring_state.active_problem.strip()
+        and tutoring_state.active_problem.strip() != tutoring_state.paused_main_problem.strip()
+        and tutoring_state.mode == 'solve'
+        and tutoring_state.status == 'solving'
     ):
         formatted_reply = build_temporary_math_problem_reply(tutoring_state.active_problem) or build_switch_confirmation_reply(tutoring_state, tutoring_state.active_problem)
         next_state = update_tutoring_state_after_reply(tutoring_state, effective_message, formatted_reply)
@@ -1259,11 +1292,18 @@ def _tutor_practice_choice_intent(state: TutoringState, effective_message: str) 
     if not text:
         return 'unclear'
     yes_markers = (
+        'y',
+        'ye',
+        'ya',
+        'yah',
         'yes',
+        'yes please',
         'yeah',
         'yep',
+        'yup',
         'ok',
         'okay',
+        'please',
         'sure',
         'give me one',
         'another',
@@ -1276,7 +1316,11 @@ def _tutor_practice_choice_intent(state: TutoringState, effective_message: str) 
         'one more',
     )
     no_markers = (
+        'n',
+        'nah',
         'no',
+        'no thanks',
+        'no thank you',
         'nope',
         'done',
         'stop',
