@@ -43,8 +43,25 @@ from .services.learning_profile_service import LearningProfileService
 from .services.monitoring_service import MonitoringService
 from .services.session_activity_service import SessionActivityService
 from .services.tutor_answer_checker import TutorAnswerChecker
-from .services.tutor_intent_classifier import TutorIntentClassifier
+from .services.tutor_emotional_support import (
+    apply_emotional_support,
+    build_emotional_choice_reply,
+    build_emotional_support_plan,
+    build_emotional_support_reply,
+    build_safety_followup_reply,
+    detect_emotional_support_choice,
+    resolve_emotional_support_choice,
+)
+from .services.tutor_intent_classifier import NON_ANSWER_INTENTS, TutorIntentClassifier
 from .services.tutor_math_normalizer import TutorMathNormalizer
+from .services.tutor_math_response_guard import TutorMathResponseGuard
+from .services.tutor_word_problem import (
+    StructuredWordProblem,
+    TutorWordProblemInterpreter,
+    apply_word_problem_state,
+    build_word_problem_clarification_reply,
+    build_word_problem_start_reply,
+)
 from .services.tutor_subject_classifier import TutorSubjectClassifier
 from .services.topic_resolver import TopicResolver
 from .tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
@@ -71,6 +88,22 @@ from .utils.multi_step_progress import (
     update_multi_step_progress,
 )
 from .utils.tutor_response import format_student_reply, looks_incomplete_response
+from .utils.task_lifecycle import (
+    abandon_active_task,
+    can_resume_paused_task,
+    complete_active_task,
+    ensure_task_lifecycle,
+    pause_active_task,
+    reconcile_task_lifecycle,
+    resume_latest_paused_task,
+    transition_to_task,
+)
+from .utils.attempt_policy import (
+    ensure_answer_attempt_registered,
+    preserve_attempt_progress,
+    register_answer_attempt,
+    reset_attempt_display,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -212,6 +245,7 @@ async def chat_opening(payload: ChatOpeningRequest, authorization: str = Header(
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
     child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
+    payload = payload.model_copy(update={'tutoring_state': ensure_task_lifecycle(payload.tutoring_state)})
     if payload.child_id:
         await SessionActivityService().ensure_can_tutor(child_user['id'], payload.child_id)
         await SessionActivityService().record_activity(
@@ -272,10 +306,35 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         history_error = CHAT_HISTORY_PUBLIC_ERROR
 
     effective_message = payload.message
+    word_problem = StructuredWordProblem(original_text=payload.message)
+    word_problem_candidate = False
     if payload.subject == 'Math':
-        normalization = await TutorMathNormalizer().normalize_if_needed(payload.subject, payload.message, payload.tutoring_state)
-        if normalization.normalized_expression:
-            effective_message = normalization.normalized_expression
+        word_problem_interpreter = TutorWordProblemInterpreter()
+        word_problem_input = payload.message
+        pending_word_problem = (
+            payload.tutoring_state.pending_new_problem
+            if payload.tutoring_state.pending_input_kind == 'ambiguous_word_problem'
+            else ''
+        )
+        if pending_word_problem:
+            word_problem_input = f'{pending_word_problem} The requested result is: {payload.message}.'
+        word_problem_candidate = word_problem_interpreter.is_candidate(payload.subject, word_problem_input)
+        word_problem = await word_problem_interpreter.interpret_if_needed(payload.subject, word_problem_input)
+        if word_problem.accepted and pending_word_problem:
+            word_problem = word_problem.model_copy(update={'original_text': pending_word_problem})
+        if word_problem.accepted:
+            effective_message = word_problem.expression
+        else:
+            normalization = await TutorMathNormalizer().normalize_if_needed(payload.subject, payload.message, payload.tutoring_state)
+            if normalization.normalized_expression:
+                effective_message = normalization.normalized_expression
+
+    intent_assist = await TutorIntentClassifier().classify_if_needed(
+        payload.subject,
+        effective_message,
+        payload.history,
+        payload.tutoring_state,
+    )
 
     subject_assist = await TutorSubjectClassifier().classify_if_needed(
         payload.subject,
@@ -289,14 +348,16 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         and TutorSubjectClassifier().should_use_fallback(payload.subject, effective_message, payload.tutoring_state)
     )
 
-    if detect_off_subject_request(payload.subject, effective_message, payload.tutoring_state) or subject_assist.label == 'off_subject' or uncertain_subject_boundary:
-        next_state = payload.tutoring_state.model_copy(update={
+    if (
+        detect_off_subject_request(payload.subject, effective_message, payload.tutoring_state)
+        or subject_assist.label == 'off_subject'
+        or uncertain_subject_boundary
+    ) and not word_problem_candidate and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
+        next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'student_answer': payload.message,
-            'attempt_count': 0,
-            'hint_given': False,
             'correctness_status': '',
-        })
+        }))
         formatted_reply = build_subject_boundary_reply(payload.subject, next_state)
         if chat_store and chat_user_id and chat_thread_id:
             try:
@@ -354,6 +415,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
         )
+
+    non_answer_intent = intent_assist.label in NON_ANSWER_INTENTS
 
     practice_choice = _tutor_practice_choice_intent(payload.tutoring_state, effective_message) if payload.subject == 'Math' else ''
     if practice_choice in {'yes', 'no', 'unclear'}:
@@ -463,7 +526,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
         )
 
-    if _should_start_tutor_math_practice(payload, effective_message):
+    if not non_answer_intent and _should_start_tutor_math_practice(payload, effective_message):
         practice_question = select_tutor_math_question(
             prompt_student.grade,
             topic=resolved_topic,
@@ -529,18 +592,22 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         )
 
     router = LLMRouter()
-    intent_assist = await TutorIntentClassifier().classify_if_needed(
-        payload.subject,
-        effective_message,
-        payload.history,
-        payload.tutoring_state,
-    )
     directives, active_task, current_step, tutoring_state = build_chat_directives(
         effective_message,
         payload.history,
         payload.tutoring_state,
         assisted_intent_label=intent_assist.label,
     )
+    if intent_assist.label in {
+        'related_question',
+        'help_request',
+        'emotion',
+        'pause',
+        'resume',
+        'meta_feedback',
+        'clarification_about_context',
+    }:
+        tutoring_state = preserve_attempt_progress(payload.tutoring_state, tutoring_state)
     tutoring_state = tutoring_state.model_copy(update={'current_subject': payload.subject})
     previous_structured_problem_id = payload.tutoring_state.problem_id
     side_problem_active = bool(
@@ -550,8 +617,26 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         and tutoring_state.mode == 'solve'
         and tutoring_state.status == 'solving'
     )
-    if tutoring_state.mode != 'clarify_new_problem' and not side_problem_active:
+    if word_problem.accepted and not side_problem_active:
+        tutoring_state = tutoring_state.model_copy(update={
+            'pending_input_kind': '',
+            'pending_new_problem': '',
+            'mode': 'solve',
+            'status': 'solving',
+        })
         tutoring_state = update_multi_step_progress(effective_message, tutoring_state)
+    elif tutoring_state.mode != 'clarify_new_problem' and not side_problem_active:
+        tutoring_state = update_multi_step_progress(effective_message, tutoring_state)
+    word_problem_started = bool(
+        word_problem.accepted
+        and (
+            payload.tutoring_state.word_problem_schema.get('original_text') != word_problem.original_text
+            or not payload.tutoring_state.active_task_id
+            or payload.tutoring_state.problem_status in {'finished', 'idle'}
+        )
+    )
+    if word_problem_started and not side_problem_active:
+        tutoring_state = apply_word_problem_state(payload.tutoring_state, tutoring_state, word_problem)
     if has_structured_math_problem(tutoring_state) and not side_problem_active:
         active_task = tutoring_state.main_problem or active_task
         current_step = current_step_expression(tutoring_state) or current_step
@@ -564,25 +649,24 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     )
     matched_structured_step = _matching_structured_step(tutoring_state, effective_message) if payload.subject == 'Math' else None
     if matched_structured_step:
-        tutoring_state = tutoring_state.model_copy(update={
+        tutoring_state = preserve_attempt_progress(payload.tutoring_state, tutoring_state).model_copy(update={
             'student_answer': payload.message,
-            'attempt_count': 0,
             'correctness_status': '',
-            'hint_given': False,
-            'answer_revealed': False,
         })
     answer_checker = TutorAnswerChecker()
     direct_answer_check = (
         answer_checker.check_direct_math_statement(effective_message)
         if (
             payload.subject == 'Math'
+            and not word_problem_started
             and not has_structured_math_problem(tutoring_state)
             and not _is_tutor_practice_question_state(payload.tutoring_state)
         )
         else None
     )
     if direct_answer_check and direct_answer_check.status != 'unclear' and not matched_structured_step:
-        direct_attempt_count = _direct_math_attempt_count(payload.tutoring_state, direct_answer_check)
+        tutoring_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state)
+        direct_attempt_count = tutoring_state.attempt_count
         tutoring_state = tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'current_step': direct_answer_check.checked_expression,
@@ -697,6 +781,14 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             'mode': 'practice',
             'status': 'waiting_for_student',
         })
+        tutoring_state = transition_to_task(
+            payload.tutoring_state,
+            tutoring_state,
+            direct_help_expression,
+            subject='Math',
+            source='direct_expression',
+            previous='pause',
+        )
         formatted_reply = _direct_math_help_reply(direct_help_expression)
         next_state = tutoring_state
         if chat_store and chat_user_id and chat_thread_id:
@@ -829,16 +921,60 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     user = f"Recent chat:\n{history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or effective_message}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {payload.message}\n\nNormalized math if useful: {effective_message}\n\nRespond as Ms. Alisia using the required tutoring method."
     structured_progression = has_structured_math_problem(tutoring_state) and payload.subject == 'Math'
     action_intent = detect_action_intent(effective_message)
+    emotional_choice = detect_emotional_support_choice(payload.message, payload.tutoring_state)
     special_local_reply = False
-    if _is_tutor_practice_question_state(payload.tutoring_state):
-        practice_attempt_count = (
-            payload.tutoring_state.attempt_count
-            if action_intent == 'hint'
-            else min(payload.tutoring_state.attempt_count + 1, 3)
-        )
-        practice_state = payload.tutoring_state.model_copy(update={
+    if payload.tutoring_state.emotional_support_mode == 'safety':
+        next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
+            'student_answer': payload.message,
+            'correctness_status': '',
+            'mode': 'safety_support',
+            'status': 'waiting_for_trusted_adult',
+        }))
+        formatted_reply = build_safety_followup_reply()
+        result_provider = 'local'
+        result_model = 'deterministic-safety-support-lock'
+        result_fallback_used = False
+        special_local_reply = True
+    elif intent_assist.label == 'emotion':
+        emotion_plan = build_emotional_support_plan(payload.tutoring_state, payload.message, intent_assist.emotion)
+        next_state = apply_emotional_support(payload.tutoring_state, payload.message, emotion_plan)
+        formatted_reply = build_emotional_support_reply(emotion_plan, next_state)
+        result_provider = 'local'
+        result_model = 'deterministic-emotional-support'
+        result_fallback_used = False
+        special_local_reply = True
+    elif emotional_choice:
+        next_state = resolve_emotional_support_choice(payload.tutoring_state, emotional_choice)
+        formatted_reply = build_emotional_choice_reply(next_state, emotional_choice)
+        result_provider = 'local'
+        result_model = f'deterministic-emotional-choice-{emotional_choice}'
+        result_fallback_used = False
+        special_local_reply = True
+    elif intent_assist.label == 'pause':
+        next_state = pause_active_task(_preserved_interruption_state(payload.tutoring_state, payload.subject, payload.message))
+        next_state = next_state.model_copy(update={'mode': 'paused', 'status': 'paused'})
+        formatted_reply = _pause_interruption_reply(next_state)
+        result_provider = 'local'
+        result_model = 'deterministic-student-pause'
+        result_fallback_used = False
+        special_local_reply = True
+    elif intent_assist.label == 'resume':
+        next_state = resume_latest_paused_task(payload.tutoring_state)
+        formatted_reply = _resume_task_reply(next_state)
+        result_provider = 'local'
+        result_model = 'deterministic-task-resume'
+        result_fallback_used = False
+        special_local_reply = True
+    elif intent_assist.label == 'topic_switch' and payload.subject == 'Math':
+        next_state = _math_topic_switch_state(payload.tutoring_state, payload.message, intent_assist.requested_topic)
+        formatted_reply = _math_topic_switch_reply(intent_assist.requested_topic)
+        result_provider = 'local'
+        result_model = 'deterministic-math-topic-switch'
+        result_fallback_used = False
+        special_local_reply = True
+    elif _should_grade_tutor_practice(payload.tutoring_state, intent_assist.label):
+        practice_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state).model_copy(update={
             'current_subject': payload.subject,
-            'attempt_count': practice_attempt_count,
         })
         formatted_reply, next_state = _tutor_practice_answer_reply(
             practice_state,
@@ -848,6 +984,20 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         )
         result_provider = 'local'
         result_model = 'deterministic-tutor-math-practice-check'
+        result_fallback_used = False
+        special_local_reply = True
+    elif word_problem_candidate and not word_problem.accepted:
+        formatted_reply = build_word_problem_clarification_reply()
+        next_state = payload.tutoring_state.model_copy(update={
+            'current_subject': 'Math',
+            'student_answer': payload.message,
+            'pending_input_kind': 'ambiguous_word_problem',
+            'pending_new_problem': payload.message,
+            'mode': 'clarify_word_problem',
+            'status': 'waiting_for_student',
+        })
+        result_provider = 'local'
+        result_model = 'deterministic-word-problem-clarification'
         result_fallback_used = False
         special_local_reply = True
     elif tutoring_state.mode == 'resume_paused_problem_notice':
@@ -876,6 +1026,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         payload.subject == 'Math'
         and payload.tutoring_state.problem_status not in {'finished', 'idle'}
         and tutoring_state.paused_main_problem
+        and can_resume_paused_task(tutoring_state)
         and tutoring_state.active_problem.strip()
         and tutoring_state.active_problem.strip() != tutoring_state.paused_main_problem.strip()
         and tutoring_state.mode == 'solve'
@@ -909,6 +1060,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         payload.subject == 'Math'
         and payload.tutoring_state.problem_status not in {'finished', 'idle'}
         and tutoring_state.paused_main_problem
+        and can_resume_paused_task(tutoring_state)
         and tutoring_state.active_problem.strip()
         and tutoring_state.active_problem.strip() != tutoring_state.paused_main_problem.strip()
         and tutoring_state.mode == 'solve'
@@ -931,6 +1083,13 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             })
         result_provider = 'local'
         result_model = 'deterministic-temporary-math-problem-return'
+        result_fallback_used = False
+        special_local_reply = True
+    elif word_problem_started and not has_structured_math_problem(tutoring_state):
+        formatted_reply = build_word_problem_start_reply(word_problem)
+        next_state = tutoring_state
+        result_provider = 'local'
+        result_model = 'deterministic-structured-word-problem'
         result_fallback_used = False
         special_local_reply = True
     elif should_send_structured_roadmap:
@@ -1033,6 +1192,16 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_provider = result.provider
         result_model = result.model
         result_fallback_used = result.fallback_used
+    math_response_guard = TutorMathResponseGuard()
+    math_guard_result = None
+    if payload.subject == 'Math':
+        math_guard_result = math_response_guard.validate(
+            formatted_reply,
+            tutoring_state,
+            intent_label=intent_assist.label,
+            source=result_model,
+        )
+        formatted_reply = math_guard_result.text
     if not special_local_reply and not (
         tutoring_state.mode not in {'clarify_new_problem', 'resume_paused_problem_notice'}
         and not should_send_structured_roadmap
@@ -1058,6 +1227,9 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 'paused_expected_answer': '',
                 'paused_completed_steps': [],
             })
+    next_state = reconcile_task_lifecycle(next_state)
+    if math_guard_result is not None:
+        next_state = math_response_guard.apply_metadata(next_state, math_guard_result, result_model)
     if chat_store and chat_user_id and chat_thread_id:
         try:
             await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
@@ -1392,7 +1564,7 @@ def _tutor_math_question_state(
         state.recent_tutor_practice_question_ids,
         practice_question.id,
     )
-    return state.model_copy(update={
+    next_state = state.model_copy(update={
         'current_subject': subject,
         'active_problem': practice_question.question,
         'current_step': practice_question.question,
@@ -1419,6 +1591,15 @@ def _tutor_math_question_state(
         'problem_status': 'tutor_practice',
         'memory_note': f'Tutor practice question: {practice_question.question}',
     })
+    return transition_to_task(
+        state,
+        next_state,
+        practice_question.question,
+        subject=subject,
+        topic=practice_question.topic,
+        source='practice_bank',
+        previous='abandon',
+    )
 
 
 def _is_tutor_practice_question_state(state: TutoringState) -> bool:
@@ -1428,6 +1609,10 @@ def _is_tutor_practice_question_state(state: TutoringState) -> bool:
         and bool(state.current_question.strip())
         and bool(state.expected_answer.strip())
     )
+
+
+def _should_grade_tutor_practice(state: TutoringState, intent_label: str) -> bool:
+    return _is_tutor_practice_question_state(state) and intent_label == 'answer_current_step'
 
 
 def _tutor_practice_answer_reply(
@@ -1515,7 +1700,7 @@ def _finished_tutor_practice_state(
     expected_answer: str,
     revealed: bool = False,
 ) -> TutoringState:
-    return state.model_copy(update={
+    finished_state = state.model_copy(update={
         'active_problem': '',
         'current_step': '',
         'current_question': '',
@@ -1531,12 +1716,77 @@ def _finished_tutor_practice_state(
         'status': 'waiting_for_student',
         'memory_note': f'Finished tutor practice question: {state.current_question}',
     })
+    return complete_active_task(finished_state)
 
 
 def _next_recent_tutor_practice_ids(previous_ids: list[str] | tuple[str, ...] | None, question_id: str) -> list[str]:
     clean_ids = [str(item) for item in (previous_ids or ()) if str(item).strip() and str(item) != question_id]
     clean_ids.append(question_id)
     return clean_ids[-10:]
+
+
+def _preserved_interruption_state(state: TutoringState, subject: str, student_message: str) -> TutoringState:
+    return state.model_copy(update={
+        'current_subject': subject,
+        'student_answer': student_message,
+        'correctness_status': '',
+        'hint_given': state.hint_given,
+        'answer_revealed': state.answer_revealed,
+    })
+
+
+def _emotion_interruption_reply(emotion: str, state: TutoringState) -> str:
+    plan = build_emotional_support_plan(state, state.student_answer, emotion)
+    return build_emotional_support_reply(plan, state)
+
+
+def _pause_interruption_reply(state: TutoringState) -> str:
+    if state.current_question or state.current_step or state.active_problem:
+        return 'Of course. Your Math problem is saved. Come back when you are ready, and we can continue from the same place.'
+    return 'Of course. Take the time you need, and come back when you are ready.'
+
+
+def _resume_task_reply(state: TutoringState) -> str:
+    problem = state.main_problem or state.active_problem
+    question = state.current_question or state.current_step
+    if problem and question:
+        return f"Welcome back. Let's continue your saved Math problem.\n\n**Problem:** {problem}\n\n**Current step:** {question}"
+    if problem:
+        return f"Welcome back. Let's continue your saved Math problem:\n\n{problem}"
+    return "Welcome back. Your earlier Math problem is already finished, so we can start something new."
+
+
+def _math_topic_switch_state(state: TutoringState, student_message: str, requested_topic: str) -> TutoringState:
+    abandoned = abandon_active_task(state)
+    return TutoringState(
+        active_task_id=abandoned.active_task_id,
+        task_records=abandoned.task_records,
+        current_subject='Math',
+        student_answer=student_message,
+        skill=requested_topic,
+        recent_tutor_practice_question_ids=list(state.recent_tutor_practice_question_ids),
+        problem_status='idle',
+        mode='solve',
+        status='idle',
+        memory_note=f'Student requested Math topic: {requested_topic}.',
+    )
+
+
+def _math_topic_switch_reply(requested_topic: str) -> str:
+    labels = {
+        'fraction': 'fractions',
+        'decimal': 'decimals',
+        'multiplication': 'multiplication',
+        'division': 'division',
+        'addition': 'addition',
+        'subtraction': 'subtraction',
+        'geometry': 'geometry',
+    }
+    label = labels.get(requested_topic, requested_topic or 'that Math topic')
+    return (
+        f'Sure—we can move to {label}. The earlier practice question will not count as a wrong answer.\n\n'
+        f'Send me your {label} question, or say **give me a {label} question**.'
+    )
 
 
 def _display_tutor_math_question(question: str) -> str:
@@ -1593,9 +1843,12 @@ def _direct_math_attempt_count(state: TutoringState, answer_check) -> int:
     current_question = _normalize_math_match_text(answer_check.checked_expression or '')
     if answer_check.is_correct:
         return state.attempt_count
-    if previous_question and current_question and previous_question == current_question:
-        return min(state.attempt_count + 1, 3)
-    return 1
+    attempt_state = state
+    if not previous_question or not current_question or previous_question != current_question:
+        attempt_state = reset_attempt_display(state).model_copy(update={
+            'current_question': answer_check.checked_expression or state.current_question,
+        })
+    return register_answer_attempt(attempt_state).attempt_count
 
 
 def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
@@ -1804,6 +2057,8 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
 def _is_substep_of_active_problem(state: TutoringState, current_step: str = '') -> bool:
     if has_structured_math_problem(state):
         return bool(state.main_problem and state.current_step_id)
+    if state.problem_kind == 'word_problem' and not state.ordered_steps:
+        return False
     active = (state.active_problem or '').strip().lower().rstrip('?')
     step = (state.current_question or current_step or state.current_step or '').strip().lower().rstrip('?')
     if not active or not step or active == step:

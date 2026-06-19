@@ -52,8 +52,23 @@ export type TutorQueuedQuestion = {
   status?: string;
 };
 
+export type TutorTaskRecord = {
+  task_id: string;
+  subject: string;
+  topic?: string;
+  problem_text: string;
+  source?: string;
+  status: 'active' | 'paused' | 'completed' | 'abandoned';
+  final_answer?: string;
+  snapshot?: Record<string, unknown>;
+};
+
 export type TutoringState = {
+  active_task_id?: string;
+  task_records?: TutorTaskRecord[];
   problem_id?: string;
+  problem_kind?: string;
+  word_problem_schema?: Record<string, unknown>;
   main_problem?: string;
   active_problem: string;
   current_subject?: string;
@@ -77,6 +92,17 @@ export type TutoringState = {
   attempt_count: number;
   hint_given?: boolean;
   answer_revealed: boolean;
+  emotion_label?: string;
+  emotion_intensity?: string;
+  emotional_support_count?: number;
+  emotional_support_mode?: string;
+  emotional_return_mode?: string;
+  emotional_return_status?: string;
+  last_response_kind?: string;
+  last_response_source?: string;
+  last_response_validated?: boolean;
+  last_response_repaired?: boolean;
+  last_response_violations?: string[];
   next_similar_question?: string;
   tutor_practice_question_id?: string;
   tutor_practice_grade?: number;

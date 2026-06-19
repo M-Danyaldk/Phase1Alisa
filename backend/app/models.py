@@ -1,4 +1,4 @@
-from typing import Literal, Optional, List
+from typing import Any, Literal, Optional, List
 from pydantic import BaseModel, Field
 
 from .curriculum import LAUNCH_GRADES
@@ -57,8 +57,23 @@ class TutorQueuedQuestion(BaseModel):
     status: str = 'queued'
 
 
+class TutorTaskRecord(BaseModel):
+    task_id: str
+    subject: str = 'Math'
+    topic: str = ''
+    problem_text: str = ''
+    source: str = 'student'
+    status: Literal['active', 'paused', 'completed', 'abandoned'] = 'active'
+    final_answer: str = ''
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
 class TutoringState(BaseModel):
+    active_task_id: str = ''
+    task_records: list[TutorTaskRecord] = Field(default_factory=list)
     problem_id: str = ''
+    problem_kind: str = ''
+    word_problem_schema: dict[str, Any] = Field(default_factory=dict)
     main_problem: str = ''
     active_problem: str = ''
     current_subject: str = ''
@@ -82,6 +97,17 @@ class TutoringState(BaseModel):
     attempt_count: int = 0
     hint_given: bool = False
     answer_revealed: bool = False
+    emotion_label: str = ''
+    emotion_intensity: str = ''
+    emotional_support_count: int = 0
+    emotional_support_mode: str = ''
+    emotional_return_mode: str = ''
+    emotional_return_status: str = ''
+    last_response_kind: str = ''
+    last_response_source: str = ''
+    last_response_validated: bool = False
+    last_response_repaired: bool = False
+    last_response_violations: list[str] = Field(default_factory=list)
     next_similar_question: str = ''
     tutor_practice_question_id: str = ''
     tutor_practice_grade: int = 0

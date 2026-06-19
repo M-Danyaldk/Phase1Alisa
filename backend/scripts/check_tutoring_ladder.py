@@ -2,10 +2,16 @@ from backend.app.models import ChatHistoryItem, TutoringState
 from backend.app.tutoring_logic import build_chat_directives
 from backend.app.main import _answer_check_question, _correct_math_answer_reply, _direct_math_attempt_count, _direct_math_check_reply, _direct_math_help_expression, _direct_math_help_reply, _is_substep_of_active_problem, _substep_correct_finish_reply, _substep_reveal_continue_reply
 from backend.app.services.tutor_answer_checker import TutorAnswerChecker
+from backend.app.assessment_validation import extract_numeric_value
 
 
 def main() -> None:
     failures: list[str] = []
+    if any(extract_numeric_value(answer) != -2 for answer in ('-2', 'negative two', 'minus two')):
+        failures.append('Signed numeric answers were not preserved by the shared Math parser.')
+    negative_check = TutorAnswerChecker()._check_math('What is 10 - 12?', '-2', '-2')
+    if not negative_check.is_correct:
+        failures.append('A correct negative tutor answer was marked incorrect.')
     history = [ChatHistoryItem(role='msalisia', content='What is 90 + 12?')]
 
     directives, _, _, direct_state = build_chat_directives(

@@ -4,6 +4,8 @@ import re
 
 from ..assessment_validation import extract_numeric_value, format_fraction, normalize_math_text, safe_eval_expression
 from ..models import TutorHelperBranch, TutorStepRecord, TutoringState
+from .task_lifecycle import active_task, complete_active_task, sync_active_task, transition_to_task
+from .attempt_policy import attempt_count_for
 
 NUMBER_TOKEN = r'(?<![\d/])-?\d+(?:/\d+)?(?![\d/])'
 
@@ -71,7 +73,7 @@ def advance_structured_math_problem(state: TutoringState, resolved_answer: str =
             updated_steps.append(step.model_copy(update={
                 'result': result,
                 'status': 'complete',
-                'attempts': state.attempts_per_step.get(step.step_id, state.attempt_count),
+                'attempts': attempt_count_for(state, step.step_id),
             }))
         else:
             updated_steps.append(step)
@@ -87,7 +89,7 @@ def advance_structured_math_problem(state: TutoringState, resolved_answer: str =
 
     next_index = state.current_step_index + 1
     if next_index >= len(updated_steps):
-        return state.model_copy(update={
+        finished_state = state.model_copy(update={
             'ordered_steps': updated_steps,
             'completed_steps': completed_steps,
             'completed_step_results': completed_step_results,
@@ -109,11 +111,12 @@ def advance_structured_math_problem(state: TutoringState, resolved_answer: str =
             'mode': 'solve',
             'status': 'finished',
         })
+        return complete_active_task(finished_state)
 
     next_step = updated_steps[next_index]
     updated_steps[next_index] = next_step.model_copy(update={'status': 'in_progress'})
     next_step = updated_steps[next_index]
-    return state.model_copy(update={
+    return sync_active_task(state.model_copy(update={
         'ordered_steps': updated_steps,
         'completed_steps': completed_steps,
         'completed_step_results': completed_step_results,
@@ -134,7 +137,7 @@ def advance_structured_math_problem(state: TutoringState, resolved_answer: str =
         'problem_status': 'awaiting_step',
         'mode': 'practice',
         'status': 'waiting_for_student',
-    })
+    }))
 
 
 def _canonical_step_result(step: TutorStepRecord, resolved_answer: str = '') -> str:
@@ -607,7 +610,7 @@ def _child_friendly_step_explanation(step: TutorStepRecord) -> str:
 
 def _sync_existing_state(state: TutoringState, normalized_problem: str) -> TutoringState:
     current_step = _current_step_record(state)
-    return state.model_copy(update={
+    return sync_active_task(state.model_copy(update={
         'main_problem': normalized_problem,
         'active_problem': normalized_problem,
         'full_problem': normalized_problem,
@@ -617,7 +620,7 @@ def _sync_existing_state(state: TutoringState, normalized_problem: str) -> Tutor
         'expected_answer': current_step.expected_answer if current_step else state.expected_answer,
         'step_number': max(1, state.current_step_index + 1) if state.current_step_id else state.step_number,
         'problem_status': state.problem_status or 'awaiting_step',
-    })
+    }))
 
 
 def _initialize_structured_problem_state(state: TutoringState, normalized_problem: str) -> TutoringState:
@@ -626,7 +629,7 @@ def _initialize_structured_problem_state(state: TutoringState, normalized_proble
         return state
 
     first_step = steps[0]
-    return state.model_copy(update={
+    next_state = state.model_copy(update={
         'problem_id': _problem_id(normalized_problem),
         'main_problem': normalized_problem,
         'active_problem': normalized_problem,
@@ -654,10 +657,11 @@ def _initialize_structured_problem_state(state: TutoringState, normalized_proble
         'queued_followup_questions': [],
         'pending_input_kind': '',
         'pending_new_problem': '',
-        'paused_main_problem': '',
-        'paused_current_step': '',
-        'paused_current_question': '',
-        'paused_completed_steps': [],
+        'paused_main_problem': state.paused_main_problem,
+        'paused_current_step': state.paused_current_step,
+        'paused_current_question': state.paused_current_question,
+        'paused_expected_answer': state.paused_expected_answer,
+        'paused_completed_steps': list(state.paused_completed_steps),
         'return_step_index': 0,
         'return_step_id': first_step.step_id,
         'final_answer': '',
@@ -666,6 +670,17 @@ def _initialize_structured_problem_state(state: TutoringState, normalized_proble
         'status': 'waiting_for_student',
         'memory_note': f'We are working on {normalized_problem}.',
     })
+    current_task = active_task(state)
+    if current_task and ' '.join(current_task.problem_text.lower().split()) == ' '.join(normalized_problem.lower().split()):
+        return sync_active_task(next_state)
+    return transition_to_task(
+        state,
+        next_state,
+        normalized_problem,
+        subject=state.current_subject or 'Math',
+        source='structured_expression',
+        previous='pause',
+    )
 
 
 def _current_step_record(state: TutoringState) -> TutorStepRecord | None:

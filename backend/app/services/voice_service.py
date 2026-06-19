@@ -22,8 +22,25 @@ from .llm.router import LLMRouter
 from .session_activity_service import SessionActivityService
 from .topic_resolver import TopicResolver
 from .tutor_answer_checker import TutorAnswerChecker
-from .tutor_intent_classifier import TutorIntentClassifier
+from .tutor_emotional_support import (
+    apply_emotional_support,
+    build_emotional_choice_reply,
+    build_emotional_support_plan,
+    build_emotional_support_reply,
+    build_safety_followup_reply,
+    detect_emotional_support_choice,
+    resolve_emotional_support_choice,
+)
+from .tutor_intent_classifier import NON_ANSWER_INTENTS, TutorIntentClassifier
 from .tutor_math_normalizer import TutorMathNormalizer
+from .tutor_math_response_guard import TutorMathResponseGuard
+from .tutor_word_problem import (
+    StructuredWordProblem,
+    TutorWordProblemInterpreter,
+    apply_word_problem_state,
+    build_word_problem_clarification_reply,
+    build_word_problem_start_reply,
+)
 from .tutor_subject_classifier import TutorSubjectClassifier
 from ..tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
 from ..tutoring_logic import (
@@ -49,6 +66,14 @@ from ..utils.multi_step_progress import (
     update_multi_step_progress,
 )
 from ..utils.tutor_response import format_student_reply, looks_incomplete_response
+from ..utils.task_lifecycle import (
+    complete_active_task,
+    ensure_task_lifecycle,
+    pause_active_task,
+    reconcile_task_lifecycle,
+    transition_to_task,
+)
+from ..utils.attempt_policy import ensure_answer_attempt_registered, preserve_attempt_progress
 
 logger = logging.getLogger(__name__)
 CHAT_HISTORY_PUBLIC_ERROR = 'Chat history could not be saved.'
@@ -219,7 +244,7 @@ def _tutor_math_question_state(
     practice_question: TutorMathPracticeQuestion,
 ) -> TutoringState:
     recent_practice_ids = _next_recent_tutor_practice_ids(state.recent_tutor_practice_question_ids, practice_question.id)
-    return state.model_copy(update={
+    next_state = state.model_copy(update={
         'current_subject': subject,
         'active_problem': practice_question.question,
         'current_step': practice_question.question,
@@ -246,6 +271,15 @@ def _tutor_math_question_state(
         'problem_status': 'tutor_practice',
         'memory_note': f'Tutor practice question: {practice_question.question}',
     })
+    return transition_to_task(
+        state,
+        next_state,
+        practice_question.question,
+        subject=subject,
+        topic=practice_question.topic,
+        source='voice_practice_bank',
+        previous='abandon',
+    )
 
 
 def _is_tutor_practice_question_state(state: TutoringState) -> bool:
@@ -314,7 +348,7 @@ def _finished_tutor_practice_state(
     expected_answer: str,
     revealed: bool = False,
 ) -> TutoringState:
-    return state.model_copy(update={
+    finished_state = state.model_copy(update={
         'active_problem': '',
         'current_step': '',
         'current_question': '',
@@ -328,6 +362,7 @@ def _finished_tutor_practice_state(
         'status': 'waiting_for_student',
         'memory_note': f'Finished tutor practice question: {state.current_question}',
     })
+    return complete_active_task(finished_state)
 
 
 def _next_recent_tutor_practice_ids(previous_ids: list[str] | tuple[str, ...] | None, question_id: str) -> list[str]:
@@ -461,6 +496,8 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
 def _is_substep_of_active_problem(state: TutoringState, current_step: str = '') -> bool:
     if has_structured_math_problem(state):
         return bool(state.main_problem and state.current_step_id)
+    if state.problem_kind == 'word_problem' and not state.ordered_steps:
+        return False
     active = (state.active_problem or '').strip().lower().rstrip('?')
     step = (state.current_question or current_step or state.current_step or '').strip().lower().rstrip('?')
     if not active or not step or active == step:
@@ -796,6 +833,7 @@ class VoiceService:
         tutoring_state: TutoringState,
         thread_id: str | None,
     ) -> dict:
+        tutoring_state = ensure_task_lifecycle(tutoring_state)
         child_id = child['id']
         assessment_context = await LearningProfileService().context_for_child_subject(child_id, subject)
         learning_memory_service = LearningMemoryService()
@@ -846,10 +884,35 @@ class VoiceService:
             history_error = CHAT_HISTORY_PUBLIC_ERROR
 
         effective_transcript = transcript
+        word_problem = StructuredWordProblem(original_text=transcript)
+        word_problem_candidate = False
         if subject == 'Math':
-            normalization = await TutorMathNormalizer().normalize_if_needed(subject, transcript, tutoring_state)
-            if normalization.normalized_expression:
-                effective_transcript = normalization.normalized_expression
+            word_problem_interpreter = TutorWordProblemInterpreter()
+            word_problem_input = transcript
+            pending_word_problem = (
+                tutoring_state.pending_new_problem
+                if tutoring_state.pending_input_kind == 'ambiguous_word_problem'
+                else ''
+            )
+            if pending_word_problem:
+                word_problem_input = f'{pending_word_problem} The requested result is: {transcript}.'
+            word_problem_candidate = word_problem_interpreter.is_candidate(subject, word_problem_input)
+            word_problem = await word_problem_interpreter.interpret_if_needed(subject, word_problem_input)
+            if word_problem.accepted and pending_word_problem:
+                word_problem = word_problem.model_copy(update={'original_text': pending_word_problem})
+            if word_problem.accepted:
+                effective_transcript = word_problem.expression
+            else:
+                normalization = await TutorMathNormalizer().normalize_if_needed(subject, transcript, tutoring_state)
+                if normalization.normalized_expression:
+                    effective_transcript = normalization.normalized_expression
+
+        intent_assist = await TutorIntentClassifier().classify_if_needed(
+            subject,
+            effective_transcript,
+            history,
+            tutoring_state,
+        )
 
         subject_assist = await TutorSubjectClassifier().classify_if_needed(
             subject,
@@ -863,14 +926,16 @@ class VoiceService:
             and TutorSubjectClassifier().should_use_fallback(subject, effective_transcript, tutoring_state)
         )
 
-        if detect_off_subject_request(subject, effective_transcript, tutoring_state) or subject_assist.label == 'off_subject' or uncertain_subject_boundary:
-            final_state = tutoring_state.model_copy(update={
+        if (
+            detect_off_subject_request(subject, effective_transcript, tutoring_state)
+            or subject_assist.label == 'off_subject'
+            or uncertain_subject_boundary
+        ) and not word_problem_candidate and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
+            final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
                 'current_subject': subject,
                 'student_answer': transcript,
-                'attempt_count': 0,
-                'hint_given': False,
                 'correctness_status': '',
-            })
+            }))
             formatted_reply = build_subject_boundary_reply(subject, final_state)
             result_provider = 'local'
             result_model = 'deterministic-subject-boundary'
@@ -1028,7 +1093,7 @@ class VoiceService:
                 'assessed_level': topic_resolution.get('assessed_level'),
             }
 
-        if _should_start_tutor_math_practice(subject, tutoring_state, history, effective_transcript):
+        if intent_assist.label not in NON_ANSWER_INTENTS and _should_start_tutor_math_practice(subject, tutoring_state, history, effective_transcript):
             practice_question = select_tutor_math_question(
                 prompt_student.grade,
                 topic=resolved_topic,
@@ -1091,18 +1156,22 @@ class VoiceService:
                 'assessed_level': topic_resolution.get('assessed_level'),
             }
 
-        intent_assist = await TutorIntentClassifier().classify_if_needed(
-            subject,
-            effective_transcript,
-            history,
-            tutoring_state,
-        )
         directives, active_task, current_step, next_state = build_chat_directives(
             effective_transcript,
             history,
             tutoring_state,
             assisted_intent_label=intent_assist.label,
         )
+        if intent_assist.label in {
+            'related_question',
+            'help_request',
+            'emotion',
+            'pause',
+            'resume',
+            'meta_feedback',
+            'clarification_about_context',
+        }:
+            next_state = preserve_attempt_progress(tutoring_state, next_state)
         next_state = next_state.model_copy(update={'current_subject': subject})
         previous_structured_problem_id = tutoring_state.problem_id
         side_problem_active = bool(
@@ -1112,8 +1181,26 @@ class VoiceService:
             and next_state.mode == 'solve'
             and next_state.status == 'solving'
         )
-        if next_state.mode != 'clarify_new_problem' and not side_problem_active:
+        if word_problem.accepted and not side_problem_active:
+            next_state = next_state.model_copy(update={
+                'pending_input_kind': '',
+                'pending_new_problem': '',
+                'mode': 'solve',
+                'status': 'solving',
+            })
             next_state = update_multi_step_progress(effective_transcript, next_state)
+        elif next_state.mode != 'clarify_new_problem' and not side_problem_active:
+            next_state = update_multi_step_progress(effective_transcript, next_state)
+        word_problem_started = bool(
+            word_problem.accepted
+            and (
+                tutoring_state.word_problem_schema.get('original_text') != word_problem.original_text
+                or not tutoring_state.active_task_id
+                or tutoring_state.problem_status in {'finished', 'idle'}
+            )
+        )
+        if word_problem_started and not side_problem_active:
+            next_state = apply_word_problem_state(tutoring_state, next_state, word_problem)
         if has_structured_math_problem(next_state) and not side_problem_active:
             active_task = next_state.main_problem or active_task
             current_step = current_step_expression(next_state) or current_step
@@ -1126,12 +1213,9 @@ class VoiceService:
         )
         matched_structured_step = _matching_structured_step(next_state, effective_transcript) if subject == 'Math' else None
         if matched_structured_step:
-            next_state = next_state.model_copy(update={
+            next_state = preserve_attempt_progress(tutoring_state, next_state).model_copy(update={
                 'student_answer': transcript,
-                'attempt_count': 0,
                 'correctness_status': '',
-                'hint_given': False,
-                'answer_revealed': False,
             })
         answer_check = None
         if (
@@ -1207,16 +1291,41 @@ class VoiceService:
         user = f"Recent chat:\n{recent_history}\n\nTutoring state:\n{state_summary}\n\nActive task to keep helping with: {active_task or effective_transcript}\n\nCurrent step to focus on first: {current_step or 'No locked step yet.'}\n\nStudent says: {transcript}\n\nNormalized math if useful: {effective_transcript}\n\nRespond as Ms. Alisia using the required tutoring method."
         structured_progression = has_structured_math_problem(next_state) and subject == 'Math'
         action_intent = detect_action_intent(effective_transcript)
+        emotional_choice = detect_emotional_support_choice(transcript, tutoring_state)
         special_local_reply = False
-        if _is_tutor_practice_question_state(tutoring_state):
-            practice_attempt_count = (
-                tutoring_state.attempt_count
-                if action_intent == 'hint'
-                else min(tutoring_state.attempt_count + 1, 3)
-            )
-            practice_state = tutoring_state.model_copy(update={
+        if tutoring_state.emotional_support_mode == 'safety':
+            final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
+                'student_answer': transcript,
+                'correctness_status': '',
+                'mode': 'safety_support',
+                'status': 'waiting_for_trusted_adult',
+            }))
+            formatted_reply = build_safety_followup_reply()
+            result_provider = 'local'
+            result_model = 'deterministic-voice-safety-support-lock'
+            special_local_reply = True
+        elif intent_assist.label == 'emotion':
+            emotion_plan = build_emotional_support_plan(tutoring_state, transcript, intent_assist.emotion)
+            final_state = apply_emotional_support(tutoring_state, transcript, emotion_plan)
+            formatted_reply = build_emotional_support_reply(emotion_plan, final_state)
+            result_provider = 'local'
+            result_model = 'deterministic-voice-emotional-support'
+            special_local_reply = True
+        elif emotional_choice:
+            final_state = resolve_emotional_support_choice(tutoring_state, emotional_choice)
+            formatted_reply = build_emotional_choice_reply(final_state, emotional_choice)
+            result_provider = 'local'
+            result_model = f'deterministic-voice-emotional-choice-{emotional_choice}'
+            special_local_reply = True
+        elif intent_assist.label == 'pause':
+            final_state = pause_active_task(tutoring_state).model_copy(update={'mode': 'paused', 'status': 'paused'})
+            formatted_reply = 'Of course. Your problem and exact step are saved. Come back when you are ready.'
+            result_provider = 'local'
+            result_model = 'deterministic-voice-student-pause'
+            special_local_reply = True
+        elif _is_tutor_practice_question_state(tutoring_state) and intent_assist.label == 'answer_current_step':
+            practice_state = ensure_answer_attempt_registered(tutoring_state, next_state).model_copy(update={
                 'current_subject': subject,
-                'attempt_count': practice_attempt_count,
             })
             formatted_reply, final_state = _tutor_practice_answer_reply(
                 practice_state,
@@ -1240,6 +1349,19 @@ class VoiceService:
             formatted_reply = build_resume_paused_problem_reply(next_state)
             result_provider = 'local'
             result_model = 'deterministic-resume-paused-problem'
+            special_local_reply = True
+        elif word_problem_candidate and not word_problem.accepted:
+            final_state = tutoring_state.model_copy(update={
+                'current_subject': 'Math',
+                'student_answer': transcript,
+                'pending_input_kind': 'ambiguous_word_problem',
+                'pending_new_problem': transcript,
+                'mode': 'clarify_word_problem',
+                'status': 'waiting_for_student',
+            })
+            formatted_reply = build_word_problem_clarification_reply()
+            result_provider = 'local'
+            result_model = 'deterministic-voice-word-problem-clarification'
             special_local_reply = True
         elif next_state.mode == 'clarify_new_problem':
             final_state = next_state
@@ -1305,6 +1427,12 @@ class VoiceService:
                 })
             result_provider = 'local'
             result_model = 'deterministic-temporary-math-problem-return'
+            special_local_reply = True
+        elif word_problem_started and not has_structured_math_problem(next_state):
+            final_state = next_state
+            formatted_reply = build_word_problem_start_reply(word_problem)
+            result_provider = 'local'
+            result_model = 'deterministic-voice-structured-word-problem'
             special_local_reply = True
         elif should_send_structured_roadmap:
             final_state = next_state
@@ -1394,6 +1522,16 @@ class VoiceService:
                 formatted_reply = format_student_reply(f'{formatted_reply}\n\n{continuation.text}')
             result_provider = result.provider
             result_model = result.model
+        math_response_guard = TutorMathResponseGuard()
+        math_guard_result = None
+        if subject == 'Math':
+            math_guard_result = math_response_guard.validate(
+                formatted_reply,
+                next_state,
+                intent_label=intent_assist.label,
+                source=result_model,
+            )
+            formatted_reply = math_guard_result.text
         if not special_local_reply and not (
             next_state.mode not in {'clarify_new_problem', 'resume_paused_problem_notice'}
             and not should_send_structured_roadmap
@@ -1419,6 +1557,9 @@ class VoiceService:
                     'paused_expected_answer': '',
                     'paused_completed_steps': [],
                 })
+        if math_guard_result is not None:
+            final_state = math_response_guard.apply_metadata(final_state, math_guard_result, result_model)
+        final_state = reconcile_task_lifecycle(final_state)
 
         if chat_store and chat_thread_id:
             try:

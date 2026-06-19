@@ -1,0 +1,80 @@
+from backend.app.models import TutoringState
+from backend.app.services.tutor_math_response_guard import TutorMathResponseGuard
+
+
+def _expect(condition: bool, message: str, failures: list[str]) -> None:
+    if not condition:
+        failures.append(message)
+
+
+def main() -> None:
+    failures: list[str] = []
+    guard = TutorMathResponseGuard()
+    state = TutoringState(
+        current_subject='Math',
+        main_problem='There are 7 boxes with 2 balls in each box.',
+        active_problem='There are 7 boxes with 2 balls in each box.',
+        current_step='7 * 2',
+        current_question='What is 7 × 2?',
+        expected_answer='14',
+        attempt_count=1,
+        correctness_status='incorrect',
+        problem_status='awaiting_step',
+        mode='practice',
+        status='waiting_for_student',
+    )
+
+    valid = guard.validate('Use equal groups: 7 × 2. What is 7 × 2?', state, intent_label='answer_current_step')
+    _expect(valid.valid and not valid.repaired, 'A valid single-step response was rejected.', failures)
+
+    wrong_math = guard.validate('We calculate 7 × 2 = 12. What comes next?', state, intent_label='answer_current_step')
+    _expect(wrong_math.repaired and 'incorrect_arithmetic' in wrong_math.violations, 'Incorrect arithmetic was not blocked.', failures)
+    _expect('= 12' not in wrong_math.text, 'Incorrect arithmetic remained in repaired output.', failures)
+    audit_state = state.model_copy(update={'attempt_count': 3, 'answer_revealed': True})
+    wrong_decimal = guard.validate('We calculate 2.5 + 1.5 = 5.', audit_state, intent_label='answer_current_step')
+    _expect(wrong_decimal.repaired and 'incorrect_arithmetic' in wrong_decimal.violations, 'Incorrect decimal arithmetic was not blocked.', failures)
+    wrong_parentheses = guard.validate('We calculate 3 × (2 + 4) = 15.', audit_state, intent_label='answer_current_step')
+    _expect(wrong_parentheses.repaired and 'incorrect_arithmetic' in wrong_parentheses.violations, 'Incorrect parenthesized arithmetic was not blocked.', failures)
+    wrong_claim = guard.validate('The final answer is 15.', audit_state, intent_label='answer_current_step')
+    _expect(wrong_claim.repaired and 'incorrect_answer_claim' in wrong_claim.violations, 'An incorrect standalone final answer was not blocked.', failures)
+    negative_state = audit_state.model_copy(update={'current_question': 'What is 10 - 12?', 'expected_answer': '-2'})
+    correct_negative = guard.validate('10 - 12 = -2. The final answer is -2.', negative_state, intent_label='answer_current_step')
+    _expect(correct_negative.valid, 'Correct negative arithmetic was incorrectly rejected.', failures)
+    student_claim = guard.validate('Your answer is 15, so let us check it. What is 10 - 12?', negative_state, intent_label='answer_current_step')
+    _expect(student_claim.valid, 'A quoted student answer was mistaken for the tutor final answer.', failures)
+
+    premature = guard.validate('The final answer is 14.', state, intent_label='answer_current_step')
+    _expect(premature.repaired and 'premature_answer_reveal' in premature.violations, 'Early answer reveal was not blocked.', failures)
+    revealed_state = state.model_copy(update={'attempt_count': 3, 'answer_revealed': True})
+    revealed = guard.validate('The final answer is 14.', revealed_state, intent_label='answer_current_step')
+    _expect(revealed.valid, 'Third-attempt answer reveal was incorrectly blocked.', failures)
+
+    multiple = guard.validate('What is 7 × 2? Why do we multiply?', state, intent_label='help_request')
+    _expect(multiple.repaired and multiple.text.count('?') <= 1, 'Multiple tutor questions were not reduced to one.', failures)
+
+    missing_prompt = guard.validate('Try using equal groups.', state, intent_label='answer_current_step')
+    _expect(missing_prompt.repaired and 'missing_current_step_prompt' in missing_prompt.violations, 'A retry was allowed to lose the current question.', failures)
+
+    stale = guard.validate('**Main problem:** 28 × 35 − 180\n\nWhat is 28 × 35?', state, intent_label='answer_current_step')
+    _expect(stale.repaired and 'stale_problem_reference' in stale.violations, 'Stale problem reference was not blocked.', failures)
+
+    non_answer = guard.validate('Nice try, that answer is not quite right.', state, intent_label='emotion')
+    _expect(non_answer.repaired and 'non_answer_graded_as_wrong' in non_answer.violations, 'Emotion was allowed to receive wrong-answer language.', failures)
+
+    tagged = guard.apply_metadata(state, wrong_math, 'test-model')
+    _expect(tagged.last_response_validated and tagged.last_response_repaired, 'Response validation metadata was not stored.', failures)
+    _expect(tagged.last_response_violations == wrong_math.violations, 'Response violations were not auditable in state.', failures)
+
+    if failures:
+        print('Tutor Math response-guard check failed:')
+        for failure in failures:
+            print(f'- {failure}')
+        raise SystemExit(1)
+    print('Tutor Math response-guard check passed.')
+    print('- Incorrect arithmetic and premature reveals are blocked.')
+    print('- Replies stay on the active problem and ask at most one question.')
+    print('- Every Math response records validation metadata for debugging.')
+
+
+if __name__ == '__main__':
+    main()

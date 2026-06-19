@@ -1,6 +1,15 @@
 from backend.scripts.check_tutoring_ladder import main as tutoring_ladder_main
 from backend.scripts.check_tutor_flow_architecture import main as tutor_architecture_main
 from backend.scripts.check_tutor_edge_matrix import main as tutor_edge_matrix_main
+from backend.scripts.check_tutor_intent_routing import main as tutor_intent_routing_main
+from backend.scripts.check_tutor_task_lifecycle import main as tutor_task_lifecycle_main
+from backend.scripts.check_tutor_attempt_policy import main as tutor_attempt_policy_main
+from backend.scripts.check_tutor_word_problem_schema import main as tutor_word_problem_schema_main
+from backend.scripts.check_tutor_emotional_support import main as tutor_emotional_support_main
+from backend.scripts.check_tutor_math_response_guard import main as tutor_math_response_guard_main
+from backend.scripts.check_tutor_math_e2e import main as tutor_math_e2e_main
+from backend.scripts.check_tutor_voice_parity import main as tutor_voice_parity_main
+from backend.scripts.check_tutor_generated_invariants import main as tutor_generated_invariants_main
 
 import asyncio
 
@@ -14,6 +23,33 @@ def main() -> None:
     print('')
     print('Running tutor edge matrix check...')
     asyncio.run(tutor_edge_matrix_main())
+    print('')
+    print('Running tutor intent routing check...')
+    asyncio.run(tutor_intent_routing_main())
+    print('')
+    print('Running tutor task lifecycle check...')
+    tutor_task_lifecycle_main()
+    print('')
+    print('Running tutor attempt policy check...')
+    tutor_attempt_policy_main()
+    print('')
+    print('Running tutor word-problem schema check...')
+    tutor_word_problem_schema_main()
+    print('')
+    print('Running tutor emotional-support check...')
+    tutor_emotional_support_main()
+    print('')
+    print('Running tutor Math response-guard check...')
+    tutor_math_response_guard_main()
+    print('')
+    print('Running tutor Math endpoint E2E check...')
+    tutor_math_e2e_main()
+    print('')
+    print('Running tutor voice-parity check...')
+    tutor_voice_parity_main()
+    print('')
+    print('Running tutor generated-invariant check...')
+    tutor_generated_invariants_main()
     print('')
     print('All tutor flow checks passed.')
 

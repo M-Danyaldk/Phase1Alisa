@@ -1,7 +1,6 @@
 import importlib
 import asyncio
 import inspect
-import py_compile
 from pathlib import Path
 
 
@@ -39,7 +38,8 @@ def main() -> None:
     print('Assessment QA suite starting.')
 
     for target in COMPILE_TARGETS:
-        py_compile.compile(str(root / target), doraise=True)
+        source_path = root / target
+        compile(source_path.read_text(encoding='utf-8'), str(source_path), 'exec')
     print(f'- Compile check passed for {len(COMPILE_TARGETS)} Python files.')
 
     for module_name in CHECK_MODULES:

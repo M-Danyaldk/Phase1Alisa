@@ -664,6 +664,7 @@ class BillingService:
         }
         await self.supabase.upsert('child_access', {**access_payload, 'created_at': now}, 'child_id')
         await self._queue_annual_renewal_email(parent_id, child_id, customer_id, billing_payload)
+        await self._queue_initial_payment_success_email_for_subscription(parent_id, child_id, subscription_id, latest_invoice_id, subscription)
 
     async def _handle_multi_child_subscription_upsert(self, subscription: dict, checkout_session: dict | None, metadata: dict) -> None:
         subscription_id = self._stripe_id(subscription.get('id'))
@@ -742,6 +743,13 @@ class BillingService:
                 'billing_interval': plan['billing_interval'],
             })
             logger.info('Synced multi-child subscription %s for child %s (%s).', subscription_id, child_id, child.get('name'))
+        await self._queue_initial_payment_success_email_for_subscription(
+            parent_id,
+            first_selection['child_id'],
+            subscription_id,
+            latest_invoice_id,
+            subscription,
+        )
 
     async def _handle_subscription_deleted(self, subscription: dict) -> None:
         subscription_id = self._stripe_id(subscription.get('id'))
@@ -1531,8 +1539,19 @@ class BillingService:
         trial_started_at: str,
         trial_ends_at: str,
     ) -> None:
+        email_service = EmailService()
         try:
-            await EmailService().queue_and_send_trial_started_welcome(
+            await email_service.queue_trial_reminder_sequence(
+                parent_id=parent_id,
+                child_id=child_id,
+                recipient_email=parent_email,
+                trial_started_at=trial_started_at,
+                trial_ends_at=trial_ends_at,
+            )
+        except Exception as exc:
+            logger.warning('Trial reminder scheduling failed for parent %s: %s', parent_id, exc)
+        try:
+            await email_service.queue_and_send_trial_started_welcome(
                 parent_id=parent_id,
                 child_id=child_id,
                 recipient_email=parent_email,
@@ -1643,6 +1662,29 @@ class BillingService:
             invoice_id=invoice_id,
             subscription=subscription,
         )
+
+    async def _queue_initial_payment_success_email_for_subscription(
+        self,
+        parent_id: str,
+        child_id: str | None,
+        subscription_id: str,
+        latest_invoice_id: str | None,
+        subscription: dict,
+    ) -> None:
+        if subscription.get('status') != 'active':
+            return
+        current_period_start = self._parse_iso_datetime(self._subscription_period_timestamp(subscription, 'current_period_start'))
+        if not current_period_start or datetime.now(UTC) - current_period_start > timedelta(days=2):
+            return
+        invoice = {
+            'id': latest_invoice_id or f'{subscription_id}:initial',
+            'subscription': subscription_id,
+        }
+        metadata = dict(subscription.get('metadata') or {})
+        metadata.setdefault('parent_id', parent_id)
+        if child_id:
+            metadata.setdefault('child_id', child_id)
+        await self._queue_payment_success_email(invoice, {**subscription, 'metadata': metadata})
 
     async def _queue_payment_failed_email(self, invoice: dict) -> None:
         subscription_id = self._stripe_id(invoice.get('subscription'))

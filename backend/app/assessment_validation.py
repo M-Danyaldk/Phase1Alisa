@@ -547,18 +547,24 @@ def _result(
 
 
 def _number_word_value(text: str) -> int | None:
-    normalized = normalize_answer_text(text).replace('-', ' ')
+    normalized = normalize_answer_text(text)
+    normalized = re.sub(r'(?<=[a-z])-(?=[a-z])', ' ', normalized)
+    sign = 1
+    sign_match = re.match(r'^(?:negative|minus)\s+', normalized)
+    if sign_match:
+        sign = -1
+        normalized = normalized[sign_match.end():].strip()
     if normalized in WORD_NUMBERS:
-        return WORD_NUMBERS[normalized]
+        return sign * WORD_NUMBERS[normalized]
     if normalized.endswith(' days') and normalized[:-5] in WORD_NUMBERS:
-        return WORD_NUMBERS[normalized[:-5]]
+        return sign * WORD_NUMBERS[normalized[:-5]]
     if normalized.endswith(' days'):
         converted_days = normalize_word_numbers_in_text(normalized[:-5]).strip()
         if re.fullmatch(r'-?\d+', converted_days):
-            return int(converted_days)
+            return sign * int(converted_days)
     converted = normalize_word_numbers_in_text(normalized).strip()
     if re.fullmatch(r'-?\d+', converted):
-        return int(converted)
+        return sign * int(converted)
     return None
 
 

@@ -1,6 +1,6 @@
 # MsAlisia Email + Cron Deployment Checklist
 
-Use this checklist after deploying the latest backend code. It covers the immediate signup/trial email changes and the fast cron endpoint for pending scheduled emails.
+Use this checklist after deploying the latest backend code. It covers immediate emails and the fast cron endpoint for generating, retrying, and sending scheduled emails.
 
 ## 1. Deploy Backend
 
@@ -110,7 +110,7 @@ Successful Railway log should show:
 POST /api/internal/email/process-due-fast HTTP/1.1" 200 OK
 ```
 
-## 6. Keep Old Full Processor For Manual Use
+## 6. Full Processor
 
 The old endpoint still exists:
 
@@ -118,9 +118,9 @@ The old endpoint still exists:
 POST /api/internal/email/process-due
 ```
 
-Use it manually only when you want to generate due trial, annual, and weekly email events.
+Use it manually when you want to process a larger batch of due email events.
 
-Do not use it for cron-job.org every 15 minutes because it can be too heavy and may time out.
+The fast endpoint is still preferred for cron-job.org because it uses a smaller delivery batch.
 
 ## 7. What Sends Immediately Now
 
@@ -137,16 +137,18 @@ If Resend fails, signup/trial still continues, and the issue is logged.
 
 ## 8. What Still Needs Cron
 
-These scheduled/fallback emails need the cron job:
+These scheduled/fallback emails are generated and delivered by the cron job:
 
 ```text
 trial day 5 reminder
-trial day 7 reminder
+trial ends tomorrow reminder (Day 6)
 trial expired day 8 email
 weekly progress emails
 annual renewal reminder
 pending email retries
 ```
+
+New trials have their Day 5, Day 6, and Day 8 reminders queued immediately. The fast processor also generates missing recovery events, up to five missing weekly reports per run, and annual reminders before sending its batch. Failed deliveries are retried up to three total attempts.
 
 ## 9. Stripe Payment Success Email
 
@@ -219,4 +221,3 @@ limit 20;
 If the `INTERNAL_CRON_SECRET` was pasted into chat, screenshots, logs, or shared docs, rotate it in Railway after setup.
 
 After rotating it, update the cron-job.org header value with the new secret.
-

@@ -40,7 +40,7 @@ class EmailService:
         self.settings = get_settings()
         self.supabase = SupabaseClient()
 
-    async def generate_due_events(self) -> dict:
+    async def generate_due_events(self, weekly_limit: int | None = None) -> dict:
         summary = {
             'trial_events_created': 0,
             'annual_renewal_events_created': 0,
@@ -51,7 +51,7 @@ class EmailService:
 
         summary['trial_events_created'] = await self.generate_due_trial_events()
         summary['annual_renewal_events_created'] = await self.generate_due_annual_renewal_events()
-        summary['weekly_progress_events_created'] = await self.generate_due_weekly_progress_events()
+        summary['weekly_progress_events_created'] = await self.generate_due_weekly_progress_events(limit=weekly_limit)
         return summary
 
     async def create_event(
@@ -259,6 +259,40 @@ class EmailService:
             metadata=metadata,
         )
 
+    async def queue_trial_reminder_sequence(
+        self,
+        *,
+        parent_id: str,
+        child_id: str | None,
+        recipient_email: str,
+        trial_started_at: str,
+        trial_ends_at: str,
+    ) -> list[dict]:
+        trial_start = self._parse_datetime(trial_started_at)
+        if not trial_start:
+            raise ValueError('Trial start time is invalid.')
+
+        events: list[dict] = []
+        reminder_specs = [
+            (5, self.queue_trial_day_5, 'trial_day_5'),
+            (6, self.queue_trial_day_7, 'trial_day_7'),
+            (8, self.queue_trial_expired_day_8, 'trial_expired_day_8'),
+        ]
+        for day_offset, queue_method, trigger_type in reminder_specs:
+            scheduled_at = trial_start + timedelta(days=day_offset)
+            events.append(await queue_method(
+                parent_id=parent_id,
+                recipient_email=recipient_email,
+                scheduled_send_at=scheduled_at.isoformat(),
+                metadata={
+                    'child_id': child_id,
+                    'trial_started_at': trial_started_at,
+                    'trial_ends_at': trial_ends_at,
+                    'dedupe_key': f'{trigger_type}|{parent_id}|{recipient_email}|{scheduled_at.date().isoformat()}',
+                },
+            ))
+        return events
+
     async def queue_referral_success(
         self,
         *,
@@ -337,15 +371,8 @@ class EmailService:
             return {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, 'message': 'Supabase is not configured.'}
 
         generated = await self.generate_due_events()
-        now = datetime.now(UTC).isoformat()
         safe_limit = max(1, min(limit, 100))
-        query = (
-            'status=eq.pending'
-            f'&or=(scheduled_send_at.is.null,scheduled_send_at.lte.{quote(now)})'
-            '&order=scheduled_send_at.asc.nullsfirst'
-            f'&limit={safe_limit}'
-        )
-        events = await self.supabase.select('email_events', query)
+        events = await self._due_events(safe_limit)
         summary = {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, **generated}
 
         for event in events:
@@ -361,16 +388,10 @@ class EmailService:
         if not self.supabase.configured():
             return {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, 'message': 'Supabase is not configured.'}
 
-        now = datetime.now(UTC).isoformat()
+        generated = await self.generate_due_events(weekly_limit=5)
         safe_limit = max(1, min(limit, 25))
-        query = (
-            'status=eq.pending'
-            f'&or=(scheduled_send_at.is.null,scheduled_send_at.lte.{quote(now)})'
-            '&order=scheduled_send_at.asc.nullsfirst'
-            f'&limit={safe_limit}'
-        )
-        events = await self.supabase.select('email_events', query)
-        summary = {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0}
+        events = await self._due_events(safe_limit)
+        summary = {'processed': 0, 'sent': 0, 'failed': 0, 'skipped': 0, **generated}
 
         for event in events:
             summary['processed'] += 1
@@ -380,6 +401,26 @@ class EmailService:
                 summary[status] += 1
 
         return summary
+
+    async def _due_events(self, limit: int) -> list[dict]:
+        now = datetime.now(UTC).isoformat()
+        retry_limit = min(5, limit)
+        failed_query = (
+            'status=eq.failed'
+            '&retry_count=lt.3'
+            f'&or=(scheduled_send_at.is.null,scheduled_send_at.lte.{quote(now)})'
+            '&order=updated_at.asc'
+            f'&limit={retry_limit}'
+        )
+        pending_query = (
+            'status=eq.pending'
+            f'&or=(scheduled_send_at.is.null,scheduled_send_at.lte.{quote(now)})'
+            '&order=scheduled_send_at.asc.nullsfirst'
+            f'&limit={limit}'
+        )
+        failed_events = await self.supabase.select('email_events', failed_query)
+        pending_events = await self.supabase.select('email_events', pending_query)
+        return (failed_events + pending_events)[:limit]
 
     async def generate_due_trial_events(self) -> int:
         now = datetime.now(UTC)
@@ -404,22 +445,26 @@ class EmailService:
                 'trial_ends_at': row.get('trial_ends_at'),
                 'child_id': child_id,
             }
-            for day_offset, queue_method, trigger_type in [
-                (5, self.queue_trial_day_5, 'trial_day_5'),
-                (7, self.queue_trial_day_7, 'trial_day_7'),
-                (8, self.queue_trial_expired_day_8, 'trial_expired_day_8'),
-            ]:
-                scheduled_at = trial_start + timedelta(days=day_offset)
-                if now < scheduled_at or now > scheduled_at + timedelta(days=2):
-                    continue
-                event = await queue_method(
-                    parent_id=parent_id,
-                    recipient_email=recipient_email,
-                    scheduled_send_at=scheduled_at.isoformat(),
-                    metadata={**metadata, 'dedupe_key': f'{trigger_type}|{parent_id}|{recipient_email}|{scheduled_at.date().isoformat()}'},
-                )
-                if self._was_created_recently(event):
-                    created_count += 1
+            day_5 = trial_start + timedelta(days=5)
+            day_6 = trial_start + timedelta(days=6)
+            day_8 = trial_start + timedelta(days=8)
+            if day_5 <= now < day_6:
+                reminder = (day_5, self.queue_trial_day_5, 'trial_day_5')
+            elif day_6 <= now < day_8:
+                reminder = (day_6, self.queue_trial_day_7, 'trial_day_7')
+            elif day_8 <= now <= day_8 + timedelta(days=2):
+                reminder = (day_8, self.queue_trial_expired_day_8, 'trial_expired_day_8')
+            else:
+                continue
+            scheduled_at, queue_method, trigger_type = reminder
+            event = await queue_method(
+                parent_id=parent_id,
+                recipient_email=recipient_email,
+                scheduled_send_at=scheduled_at.isoformat(),
+                metadata={**metadata, 'dedupe_key': f'{trigger_type}|{parent_id}|{recipient_email}|{scheduled_at.date().isoformat()}'},
+            )
+            if self._was_created_recently(event):
+                created_count += 1
         return created_count
 
     async def generate_due_annual_renewal_events(self) -> int:
@@ -464,20 +509,32 @@ class EmailService:
                 created_count += 1
         return created_count
 
-    async def generate_due_weekly_progress_events(self) -> int:
+    async def generate_due_weekly_progress_events(self, limit: int | None = None) -> int:
         now = datetime.now(UTC)
         monday = self._week_start(now)
+        next_monday = monday + timedelta(days=7)
         try:
             children = await self.supabase.select('child_profiles', 'status=neq.inactive&order=created_at.asc&limit=500')
+            existing_events = await self.supabase.select(
+                'email_events',
+                'trigger_type=eq.weekly_progress'
+                f'&scheduled_send_at=gte.{quote(monday.isoformat())}'
+                f'&scheduled_send_at=lt.{quote(next_monday.isoformat())}'
+                '&status=in.(pending,sent,failed,skipped)'
+                '&select=child_id&limit=1000',
+            )
         except SupabaseClientError as exc:
             logger.warning('Could not load children for weekly progress emails: %s', exc)
             return 0
 
+        existing_child_ids = {row.get('child_id') for row in existing_events if row.get('child_id')}
         created_count = 0
         for child in children:
+            if limit is not None and created_count >= max(1, limit):
+                break
             parent_id = child.get('parent_id')
             child_id = child.get('id')
-            if not parent_id or not child_id:
+            if not parent_id or not child_id or child_id in existing_child_ids:
                 continue
             recipient_email = await self._parent_email(parent_id)
             if not recipient_email:
@@ -645,7 +702,7 @@ class EmailService:
         filters = [
             f'trigger_type=eq.{quote(trigger_type)}',
             f'normalized_recipient_email=eq.{quote(recipient_email)}',
-            'status=in.(pending,sent,skipped)',
+            'status=in.(pending,sent,failed,skipped)',
             'order=created_at.desc',
             'limit=50',
         ]
@@ -775,6 +832,48 @@ class EmailService:
         html = '<div>' + ''.join(f'<p>{escape(line)}</p>' for line in lines) + '</div>'
         return EmailContent(subject=subject, text=text, html=html)
 
+    def _branded_notice(
+        self,
+        *,
+        subject: str,
+        eyebrow: str,
+        headline: str,
+        intro: str,
+        message: str,
+        cta_url: str,
+        cta_label: str,
+        header_note: str = 'Parent account notice',
+    ) -> EmailContent:
+        clean_url = cta_url.strip() or self._app_url()
+        text_lines = [
+            intro,
+            message,
+            f'{cta_label}: {clean_url}',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=self.settings.email_logo_url.strip(),
+            first_name='Parent',
+            eyebrow=eyebrow,
+            header_note=header_note,
+            headline=headline,
+            intro=intro,
+            body_html=(
+                '<div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:16px;padding:18px 20px;margin:22px 0;">'
+                f'<p style="margin:0;color:#5f5576;font-size:16px;line-height:1.6;">{escape(message)}</p>'
+                '</div>'
+            ),
+            cta_url=clean_url,
+            cta_label=cta_label,
+        )
+        return EmailContent(
+            subject=subject,
+            text='\n\n'.join(text_lines),
+            html=html,
+            from_email=self._parent_facing_from_email(),
+        )
+
     def _signup_welcome(self, app_url: str) -> EmailContent:
         return self._content(
             'Welcome to MsAlisia — Your Free Trial Starts Now',
@@ -799,82 +898,125 @@ class EmailService:
         )
 
     def _password_reset_code(self, code: str, expires_in_minutes: int) -> EmailContent:
-        return self._content(
-            'Reset your MsAlisia password',
-            [
-                f'Your MsAlisia password reset code is: {code}',
-                f'This code expires in {expires_in_minutes} minutes. If you did not request this, you can ignore this email.',
-                'The MsAlisia Team',
-            ],
+        text_lines = [
+            f'Your MsAlisia password reset code is: {code}',
+            f'This code expires in {expires_in_minutes} minutes.',
+            'If you did not request this, you can ignore this email.',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=self.settings.email_logo_url.strip(),
+            first_name='Parent',
+            eyebrow='Password reset',
+            header_note='Account security',
+            headline='Reset your MsAlisia password',
+            intro=f'Enter this code to reset your password. It expires in {expires_in_minutes} minutes.',
+            body_html=(
+                '<div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:18px;padding:22px;margin:22px 0;text-align:center;">'
+                '<div style="font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#d6a72e;margin-bottom:10px;">Reset code</div>'
+                f'<div style="font-size:38px;line-height:1;font-weight:900;letter-spacing:.14em;color:#5e3ca0;">{escape(code)}</div>'
+                '</div>'
+            ),
+            cta_url=self._app_url(),
+            cta_label='Open MsAlisia',
+        )
+        return EmailContent(
+            subject='Reset your MsAlisia password',
+            text='\n\n'.join(text_lines),
+            html=html,
+            from_email=self._parent_facing_from_email(),
         )
 
     def _trial_day_5(self, manage_url: str) -> EmailContent:
-        return self._content(
-            'Your free trial ends in 2 days',
-            [
-                'Your MsAlisia free trial ends in 2 days.',
-                'This is a good time to review your child profile, recent learning activity, and the plan that fits your family.',
-                f'Subscribe or manage billing: {manage_url}',
-                'The MsAlisia Team',
-            ],
+        return self._branded_notice(
+            subject='Your free trial ends in 2 days',
+            eyebrow='Trial reminder',
+            headline='Your free trial ends in 2 days',
+            intro='Your child has two more days of MsAlisia trial access.',
+            message='Review recent learning activity and choose the plan that fits your family to continue without interruption.',
+            cta_url=manage_url,
+            cta_label='Choose a plan',
         )
 
     def _trial_day_7(self, manage_url: str) -> EmailContent:
-        return self._content(
-            'Your MsAlisia trial ends tomorrow',
-            [
-                'Your MsAlisia trial ends tomorrow.',
-                'Subscribe today to keep your child learning without interruption.',
-                f'Subscribe or manage billing: {manage_url}',
-                'The MsAlisia Team',
-            ],
+        return self._branded_notice(
+            subject='Your MsAlisia trial ends tomorrow',
+            eyebrow='Trial reminder',
+            headline='Your trial ends tomorrow',
+            intro='Your child has one more day of MsAlisia trial access.',
+            message='Subscribe today to keep tutoring, practice, and parent progress reports available without interruption.',
+            cta_url=manage_url,
+            cta_label='Continue learning',
         )
 
     def _trial_expired_day_8(self, manage_url: str) -> EmailContent:
-        return self._content(
-            'Your MsAlisia trial has ended',
-            [
-                'Your MsAlisia trial has ended.',
-                'Add a subscription to continue tutoring, reports, and learning support for your child.',
-                f'Subscribe or manage billing: {manage_url}',
-                'The MsAlisia Team',
-            ],
+        return self._branded_notice(
+            subject='Your MsAlisia trial has ended',
+            eyebrow='Trial update',
+            headline='Your free trial has ended',
+            intro='Your child\'s MsAlisia trial access has now ended.',
+            message='Add a subscription to continue personalized tutoring, learning practice, and parent progress reports.',
+            cta_url=manage_url,
+            cta_label='View subscription plans',
         )
 
     def _payment_success(self, app_url: str) -> EmailContent:
-        return self._content(
-            "You're subscribed to MsAlisia",
-            [
-                'Your MsAlisia subscription is active.',
-                'Thank you. Your child can continue learning with Ms. Alisia.',
-                f'Open MsAlisia: {app_url}',
-                'The MsAlisia Team',
-            ],
+        app_url = app_url.rstrip('/') or 'https://www.msalisia.com'
+        text_lines = [
+            'Your MsAlisia subscription is active.',
+            'Thank you for subscribing. Your child can continue learning with Ms. Alisia.',
+            f'Open MsAlisia: {app_url}',
+            'Warmly,',
+            'Francesca and the MsAlisia Team',
+        ]
+        html = self._weekly_email_shell(
+            logo_url=self.settings.email_logo_url.strip(),
+            first_name='Parent',
+            eyebrow='Subscription confirmed',
+            header_note='Parent account notice',
+            headline='Your subscription is active',
+            intro='Thank you for subscribing to MsAlisia. Your child can continue learning with personalized support from Ms. Alisia.',
+            body_html=(
+                '<div style="background:#fbf8ff;border:1px solid #eadffc;border-radius:16px;padding:18px 20px;margin:22px 0;">'
+                '<p style="margin:0;color:#5f5576;font-size:16px;line-height:1.6;">'
+                'Your payment was successful and your MsAlisia access is ready.'
+                '</p>'
+                '</div>'
+            ),
+            cta_url=app_url,
+            cta_label='Open MsAlisia',
+        )
+        return EmailContent(
+            subject="You're subscribed to MsAlisia",
+            text='\n\n'.join(text_lines),
+            html=html,
+            from_email=self._parent_facing_from_email(),
         )
 
     def _payment_failed(self, manage_url: str) -> EmailContent:
-        return self._content(
-            'Action needed — payment issue with your MsAlisia account',
-            [
-                'We could not complete your MsAlisia payment.',
-                'Please update your payment method to keep your child learning with Ms. Alisia.',
-                f'Update payment method: {manage_url}',
-                'The MsAlisia Team',
-            ],
+        return self._branded_notice(
+            subject='Action needed: payment issue with your MsAlisia account',
+            eyebrow='Payment update',
+            headline='Please update your payment method',
+            intro='We could not complete your latest MsAlisia payment.',
+            message='Update your payment details to restore or continue your child\'s learning access.',
+            cta_url=manage_url,
+            cta_label='Update payment details',
         )
 
     def _annual_renewal_reminder(self, data: dict[str, Any], manage_url: str) -> EmailContent:
         renewal_date = str(data.get('renewal_date') or 'your renewal date')
         amount = str(data.get('amount') or '').strip()
         amount_line = f'Renewal amount: {amount}.' if amount else 'You can review your plan and payment details before renewal.'
-        return self._content(
-            'Your MsAlisia annual subscription renews in 7 days',
-            [
-                f'Your MsAlisia annual plan renews on {renewal_date}.',
-                amount_line,
-                f'Manage subscription: {manage_url}',
-                'The MsAlisia Team',
-            ],
+        return self._branded_notice(
+            subject='Your MsAlisia annual subscription renews in 7 days',
+            eyebrow='Renewal reminder',
+            headline='Your annual plan renews soon',
+            intro=f'Your MsAlisia annual plan renews on {renewal_date}.',
+            message=amount_line,
+            cta_url=manage_url,
+            cta_label='Manage subscription',
         )
 
     def _weekly_progress(self, data: dict[str, Any], child_name: str, app_url: str) -> EmailContent:
@@ -1164,12 +1306,12 @@ class EmailService:
         return (self.settings.weekly_progress_from_email.strip() or 'francesca@msalisia.com').lower()
 
     def _referral_success(self, app_url: str) -> EmailContent:
-        return self._content(
-            'You earned a free week!',
-            [
-                'Great news — your referral has qualified, and you earned one free week of MsAlisia access.',
-                'Thank you for sharing MsAlisia with another family.',
-                f'Open MsAlisia: {app_url}',
-                'Francesca and the MsAlisia Team',
-            ],
+        return self._branded_notice(
+            subject='You earned a free week!',
+            eyebrow='Referral reward',
+            headline='You earned a free week of MsAlisia',
+            intro='Great news. Your referral has qualified and your reward is ready.',
+            message='Thank you for sharing MsAlisia with another family. One free week of access has been added to your account.',
+            cta_url=app_url,
+            cta_label='Open MsAlisia',
         )

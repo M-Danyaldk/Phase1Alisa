@@ -3,6 +3,12 @@ import re
 
 from .assessment_validation import extract_math_expression, format_fraction, normalize_math_text, safe_eval_expression
 from .models import ChatHistoryItem, TutorHelperBranch, TutorQueuedQuestion, TutoringState
+from .utils.task_lifecycle import (
+    can_resume_paused_task,
+    complete_and_resume_latest,
+    transition_to_task,
+)
+from .utils.attempt_policy import register_answer_attempt
 
 DIRECT_HELP_PHRASES = [
     'solve',
@@ -688,7 +694,11 @@ def _base_directives() -> list[str]:
 
 def _structured_state_fields(state: TutoringState) -> dict:
     return {
+        'active_task_id': state.active_task_id,
+        'task_records': state.task_records,
         'problem_id': state.problem_id,
+        'problem_kind': state.problem_kind,
+        'word_problem_schema': state.word_problem_schema,
         'main_problem': state.main_problem,
         'full_problem': state.full_problem,
         'ordered_steps': state.ordered_steps,
@@ -700,6 +710,17 @@ def _structured_state_fields(state: TutoringState) -> dict:
         'completed_step_results': state.completed_step_results,
         'step_results': state.step_results,
         'attempts_per_step': state.attempts_per_step,
+        'emotion_label': state.emotion_label,
+        'emotion_intensity': state.emotion_intensity,
+        'emotional_support_count': state.emotional_support_count,
+        'emotional_support_mode': state.emotional_support_mode,
+        'emotional_return_mode': state.emotional_return_mode,
+        'emotional_return_status': state.emotional_return_status,
+        'last_response_kind': state.last_response_kind,
+        'last_response_source': state.last_response_source,
+        'last_response_validated': state.last_response_validated,
+        'last_response_repaired': state.last_response_repaired,
+        'last_response_violations': state.last_response_violations,
         'tutor_practice_question_id': state.tutor_practice_question_id,
         'tutor_practice_grade': state.tutor_practice_grade,
         'tutor_practice_topic': state.tutor_practice_topic,
@@ -758,6 +779,11 @@ def build_chat_directives(
     elif assisted_intent_label == 'related_question':
         related_to_active_problem = True
         new_problem = True
+    elif assisted_intent_label == 'topic_switch':
+        switch_task = True
+        new_problem = True
+    elif assisted_intent_label in {'help_request', 'emotion', 'pause', 'meta_feedback'}:
+        new_problem = False
     elif assisted_intent_label == 'switch_request':
         switch_task = True
         new_problem = True
@@ -781,6 +807,7 @@ def build_chat_directives(
     if (
         state.mode == 'resume_paused_problem'
         and state.paused_main_problem.strip()
+        and can_resume_paused_task(state)
         and not switch_task
         and not new_problem
         and not homework_or_skip
@@ -837,13 +864,16 @@ def build_chat_directives(
         or tutor_concern
         or action_intent in {'hint', 'explain_again', 'example', 'clarify_prompt'}
         or (direct_help and math_expression)
+        or assisted_intent_label in {'topic_switch', 'help_request', 'emotion', 'pause', 'meta_feedback'}
     )
-    answering_tutor_question = is_answering_tutor_question(history) and not opening_followup and not direct_question_override
+    answering_tutor_question = (
+        assisted_intent_label == 'answer_current_step'
+        or (is_answering_tutor_question(history) and not opening_followup and not direct_question_override)
+    )
 
-    attempt_count = state.attempt_count + 1 if answering_tutor_question else 0
-    attempts_per_step = dict(state.attempts_per_step)
-    if answering_tutor_question and state.current_step_id:
-        attempts_per_step[state.current_step_id] = attempt_count
+    attempt_state = register_answer_attempt(state, is_answer=answering_tutor_question)
+    attempt_count = attempt_state.attempt_count if answering_tutor_question else 0
+    attempts_per_step = dict(attempt_state.attempts_per_step)
     mode = state.mode if state.mode else 'solve'
     status = 'solving'
 
@@ -945,6 +975,14 @@ def build_chat_directives(
                 mode='solve',
                 status='solving',
                 memory_note=state.memory_note,
+            )
+            next_state = transition_to_task(
+                state,
+                next_state,
+                new_problem_text,
+                subject=state.current_subject or 'Math',
+                source='student',
+                previous='pause',
             )
             return directives, new_problem_text, '', next_state
 
@@ -1190,6 +1228,15 @@ def build_chat_directives(
             status=status,
             memory_note=state.memory_note,
         )
+        if new_problem and not answer_to_current_math_step:
+            next_state = transition_to_task(
+                state,
+                next_state,
+                active_problem,
+                subject=state.current_subject or 'Math',
+                source='student',
+                previous='pause' if unfinished_main_problem else 'abandon',
+            )
         return directives, active_problem, '', next_state
 
     mode = 'practice'
@@ -1299,8 +1346,18 @@ def build_temporary_math_problem_reply(new_problem: str) -> str:
 
 
 def build_resume_paused_problem_reply(state: TutoringState) -> str:
-    paused_problem = (state.paused_main_problem or '').strip()
-    paused_question = (state.paused_current_question or state.paused_current_step or '').strip()
+    paused_problem = (
+        state.paused_main_problem
+        or (state.active_problem if state.mode in {'resume_paused_problem', 'resume_paused_problem_notice'} else '')
+        or ''
+    ).strip()
+    paused_question = (
+        state.paused_current_question
+        or state.paused_current_step
+        or (state.current_question if state.mode in {'resume_paused_problem', 'resume_paused_problem_notice'} else '')
+        or state.current_step
+        or ''
+    ).strip()
     completed = [item for item in state.paused_completed_steps if item]
 
     lines = ['We finished the new problem.', '']
@@ -1481,30 +1538,8 @@ def update_tutoring_state_after_reply(
             memory_note=_build_memory_note(state.active_problem or state.main_problem, reply, state.memory_note),
         )
 
-    if switched_away_from_paused_problem and not next_step:
-        restored_problem = state.paused_main_problem.strip()
-        restored_step = state.paused_current_step.strip()
-        restored_question = state.paused_current_question.strip() or restored_step
-        restored_expected_answer = _paused_expected_answer(state)
-        return TutoringState(
-            **_clear_pending_problem_fields(_structured_state_fields(state)),
-            active_problem=restored_problem or state.active_problem,
-            current_subject=state.current_subject,
-            current_step=restored_step,
-            current_question=restored_question,
-            expected_answer=restored_expected_answer,
-            student_answer=state.student_answer,
-            correctness_status=state.correctness_status,
-            skill=state.skill,
-            step_number=state.step_number or max(1, state.current_step_index + 1),
-            attempt_count=0,
-            hint_given=False,
-            answer_revealed=False,
-            next_similar_question='',
-            mode='resume_paused_problem_notice',
-            status='waiting_for_student',
-            memory_note=_build_memory_note(state.active_problem, reply, state.memory_note),
-        )
+    if switched_away_from_paused_problem and not next_step and can_resume_paused_task(state):
+        return complete_and_resume_latest(state)
 
     if state.ordered_steps and state.current_step_id and state.problem_status in {'in_progress', 'awaiting_step'}:
         if next_step:
@@ -1568,7 +1603,7 @@ def update_tutoring_state_after_reply(
             memory_note=_build_memory_note(active_problem, reply, state.memory_note),
         )
 
-    return TutoringState(
+    terminal_state = TutoringState(
         **_clear_pending_problem_fields(_structured_state_fields(state)),
         active_problem=active_problem,
         current_subject=state.current_subject,
@@ -1583,7 +1618,10 @@ def update_tutoring_state_after_reply(
         hint_given=False,
         answer_revealed=state.answer_revealed,
         next_similar_question='',
-        mode='resume_paused_problem' if state.paused_main_problem.strip() else 'solve',
-        status='waiting_to_resume' if state.paused_main_problem.strip() else 'finished',
+        mode='resume_paused_problem' if can_resume_paused_task(state) else 'solve',
+        status='waiting_to_resume' if can_resume_paused_task(state) else 'finished',
         memory_note=_build_memory_note(active_problem, reply, state.memory_note),
     )
+    if can_resume_paused_task(state):
+        return complete_and_resume_latest(terminal_state)
+    return terminal_state
