@@ -94,6 +94,13 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     hint_given: false,
     answer_revealed: false,
     next_similar_question: '',
+    tutor_practice_question_id: '',
+    tutor_practice_grade: 0,
+    tutor_practice_topic: '',
+    tutor_practice_hint_1: '',
+    tutor_practice_hint_2: '',
+    tutor_practice_explanation: '',
+    recent_tutor_practice_question_ids: [],
     helper_branch: {
       branch_id: '',
       branch_type: '',

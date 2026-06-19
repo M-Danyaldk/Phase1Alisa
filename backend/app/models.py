@@ -83,6 +83,13 @@ class TutoringState(BaseModel):
     hint_given: bool = False
     answer_revealed: bool = False
     next_similar_question: str = ''
+    tutor_practice_question_id: str = ''
+    tutor_practice_grade: int = 0
+    tutor_practice_topic: str = ''
+    tutor_practice_hint_1: str = ''
+    tutor_practice_hint_2: str = ''
+    tutor_practice_explanation: str = ''
+    recent_tutor_practice_question_ids: list[str] = Field(default_factory=list)
     helper_branch: TutorHelperBranch = Field(default_factory=TutorHelperBranch)
     queued_followup_questions: list[TutorQueuedQuestion] = Field(default_factory=list)
     pending_input_kind: str = ''

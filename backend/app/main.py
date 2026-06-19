@@ -47,6 +47,7 @@ from .services.tutor_intent_classifier import TutorIntentClassifier
 from .services.tutor_math_normalizer import TutorMathNormalizer
 from .services.tutor_subject_classifier import TutorSubjectClassifier
 from .services.topic_resolver import TopicResolver
+from .tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
 from .tutoring_logic import (
     build_subject_boundary_reply,
     build_chat_directives,
@@ -354,6 +355,179 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
         )
 
+    practice_choice = _tutor_practice_choice_intent(payload.tutoring_state, effective_message) if payload.subject == 'Math' else ''
+    if practice_choice in {'yes', 'no', 'unclear'}:
+        if practice_choice == 'yes':
+            practice_question = select_tutor_math_question(
+                prompt_student.grade,
+                topic=payload.tutoring_state.tutor_practice_topic or resolved_topic,
+                recent_question_ids=payload.tutoring_state.recent_tutor_practice_question_ids,
+            )
+            formatted_reply = _tutor_math_next_practice_reply(practice_question)
+            next_state = _tutor_math_question_state(
+                payload.tutoring_state,
+                payload.subject,
+                payload.message,
+                practice_question,
+            )
+            result_model = 'deterministic-tutor-math-next-practice'
+        elif practice_choice == 'no':
+            formatted_reply = "No problem. Nice work today."
+            next_state = payload.tutoring_state.model_copy(update={
+                'current_subject': payload.subject,
+                'active_problem': '',
+                'current_step': '',
+                'current_question': '',
+                'expected_answer': '',
+                'student_answer': payload.message,
+                'correctness_status': '',
+                'attempt_count': 0,
+                'hint_given': False,
+                'answer_revealed': False,
+                'next_similar_question': '',
+                'tutor_practice_question_id': '',
+                'tutor_practice_grade': 0,
+                'tutor_practice_topic': '',
+                'tutor_practice_hint_1': '',
+                'tutor_practice_hint_2': '',
+                'tutor_practice_explanation': '',
+                'problem_status': 'idle',
+                'mode': 'solve',
+                'status': 'finished',
+                'memory_note': 'Tutor practice paused after student chose to stop.',
+            })
+            result_model = 'deterministic-tutor-math-practice-close'
+        else:
+            formatted_reply = "Do you want another practice question, or are you done for now?"
+            next_state = payload.tutoring_state.model_copy(update={
+                'current_subject': payload.subject,
+                'student_answer': payload.message,
+                'mode': 'awaiting_more_practice_choice',
+                'status': 'waiting_for_student',
+            })
+            result_model = 'deterministic-tutor-math-practice-choice-clarify'
+        if chat_store and chat_user_id and chat_thread_id:
+            try:
+                await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
+                    thread_id=chat_thread_id,
+                    child_id=payload.child_id,
+                    role='msalisia',
+                    content=formatted_reply,
+                    subject=payload.subject,
+                    topic=resolved_topic,
+                    provider='local',
+                    model=result_model,
+                    tutoring_state=next_state.model_dump(),
+                ))
+                history_saved = True
+            except Exception as exc:
+                logger.warning('Chat history save failed after tutor math practice choice: %s', exc)
+                history_error = CHAT_HISTORY_PUBLIC_ERROR
+        if payload.child_id:
+            await SessionActivityService().exchange_complete(
+                child_user['id'],
+                payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+            )
+            await learning_memory_service.record_exchange_summary(
+                parent_id=child_user['id'],
+                child_id=payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+                grade_level=f'Grade {prompt_student.grade}',
+                working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
+                student_message=payload.message,
+                assistant_text=formatted_reply,
+                tutoring_state=next_state,
+                thread_id=chat_thread_id,
+                source='session',
+                metadata={
+                    'provider': 'local',
+                    'model': result_model,
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
+                },
+            )
+        return ChatResponse(
+            reply=formatted_reply,
+            provider='local',
+            model=result_model,
+            fallback_used=False,
+            tutoring_state=next_state,
+            thread_id=chat_thread_id,
+            history_saved=history_saved,
+            history_error=history_error,
+            resolved_topic=resolved_topic,
+            topic_source=topic_resolution['source'],
+            assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+        )
+
+    if _should_start_tutor_math_practice(payload, effective_message):
+        practice_question = select_tutor_math_question(
+            prompt_student.grade,
+            topic=resolved_topic,
+            recent_question_ids=payload.tutoring_state.recent_tutor_practice_question_ids,
+        )
+        formatted_reply = _tutor_math_starter_reply(practice_question)
+        next_state = _tutor_math_question_state(payload.tutoring_state, payload.subject, payload.message, practice_question)
+        if chat_store and chat_user_id and chat_thread_id:
+            try:
+                await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
+                    thread_id=chat_thread_id,
+                    child_id=payload.child_id,
+                    role='msalisia',
+                    content=formatted_reply,
+                    subject=payload.subject,
+                    topic=resolved_topic,
+                    provider='local',
+                    model='deterministic-tutor-math-starter',
+                    tutoring_state=next_state.model_dump(),
+                ))
+                history_saved = True
+            except Exception as exc:
+                logger.warning('Chat history save failed after tutor math starter: %s', exc)
+                history_error = CHAT_HISTORY_PUBLIC_ERROR
+        if payload.child_id:
+            await SessionActivityService().exchange_complete(
+                child_user['id'],
+                payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+            )
+            await learning_memory_service.record_exchange_summary(
+                parent_id=child_user['id'],
+                child_id=payload.child_id,
+                subject=payload.subject,
+                topic=resolved_topic,
+                grade_level=f'Grade {prompt_student.grade}',
+                working_level=_practice_level_label((assessment_context or {}).get('assessed_level')),
+                student_message=payload.message,
+                assistant_text=formatted_reply,
+                tutoring_state=next_state,
+                thread_id=chat_thread_id,
+                source='session',
+                metadata={
+                    'provider': 'local',
+                    'model': 'deterministic-tutor-math-starter',
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
+                },
+            )
+        return ChatResponse(
+            reply=formatted_reply,
+            provider='local',
+            model='deterministic-tutor-math-starter',
+            fallback_used=False,
+            tutoring_state=next_state,
+            thread_id=chat_thread_id,
+            history_saved=history_saved,
+            history_error=history_error,
+            resolved_topic=resolved_topic,
+            topic_source=topic_resolution['source'],
+            assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+        )
+
     router = LLMRouter()
     intent_assist = await TutorIntentClassifier().classify_if_needed(
         payload.subject,
@@ -400,7 +574,11 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     answer_checker = TutorAnswerChecker()
     direct_answer_check = (
         answer_checker.check_direct_math_statement(effective_message)
-        if payload.subject == 'Math' and not has_structured_math_problem(tutoring_state)
+        if (
+            payload.subject == 'Math'
+            and not has_structured_math_problem(tutoring_state)
+            and not _is_tutor_practice_question_state(payload.tutoring_state)
+        )
         else None
     )
     if direct_answer_check and direct_answer_check.status != 'unclear' and not matched_structured_step:
@@ -578,7 +756,12 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
     )
     answer_check = None
-    if tutoring_state.attempt_count > 0 and (tutoring_state.current_question or current_step):
+    if (
+        tutoring_state.attempt_count > 0
+        and (tutoring_state.current_question or current_step)
+        and not _is_tutor_practice_question_state(tutoring_state)
+        and not _is_tutor_practice_question_state(payload.tutoring_state)
+    ):
         base_check_question = _answer_check_question(tutoring_state, current_step)
         if payload.subject == 'ELA':
             check_question = _reading_context_question(base_check_question, payload.history)
@@ -647,7 +830,27 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     structured_progression = has_structured_math_problem(tutoring_state) and payload.subject == 'Math'
     action_intent = detect_action_intent(effective_message)
     special_local_reply = False
-    if tutoring_state.mode == 'resume_paused_problem_notice':
+    if _is_tutor_practice_question_state(payload.tutoring_state):
+        practice_attempt_count = (
+            payload.tutoring_state.attempt_count
+            if action_intent == 'hint'
+            else min(payload.tutoring_state.attempt_count + 1, 3)
+        )
+        practice_state = payload.tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'attempt_count': practice_attempt_count,
+        })
+        formatted_reply, next_state = _tutor_practice_answer_reply(
+            practice_state,
+            effective_message,
+            answer_check,
+            action_intent,
+        )
+        result_provider = 'local'
+        result_model = 'deterministic-tutor-math-practice-check'
+        result_fallback_used = False
+        special_local_reply = True
+    elif tutoring_state.mode == 'resume_paused_problem_notice':
         formatted_reply = build_resume_paused_problem_reply(tutoring_state)
         next_state = tutoring_state.model_copy(update={
             'mode': 'practice' if (tutoring_state.current_question or tutoring_state.current_step) else 'solve',
@@ -994,6 +1197,308 @@ def _safe_opening_reply(text: str, student_name: str | None = None) -> str:
         return cleaned
     name = (student_name or '').strip() or 'there'
     return f'Hi {name}, I am glad you are here. Before we start, how are you feeling today? Then I can ask one quick thing so I know how to help.'
+
+
+def _should_start_tutor_math_practice(payload: ChatRequest, effective_message: str) -> bool:
+    if payload.subject != 'Math':
+        return False
+    if extract_math_expression(effective_message):
+        return False
+    state = payload.tutoring_state
+    if _has_active_student_math_flow(state):
+        return False
+    if state.status not in {'', 'idle', 'ready_for_mini_checkin'} and state.mode != 'opening_checkin':
+        return False
+    if state.mode not in {'', 'solve', 'opening_checkin'}:
+        return False
+    student_text = ' '.join(str(effective_message or '').lower().split())
+    if not student_text:
+        return False
+    if any(marker in student_text for marker in (
+        'homework',
+        'worksheet',
+        'upload',
+        'photo',
+        'explain',
+        'help me with',
+        'solve',
+    )):
+        return False
+    return _history_has_opening_math_prompt(payload.history) or state.mode == 'opening_checkin' or state.status == 'ready_for_mini_checkin'
+
+
+def _has_active_student_math_flow(state: TutoringState) -> bool:
+    return bool(
+        state.problem_id
+        or state.main_problem.strip()
+        or state.active_problem.strip()
+        or state.current_step.strip()
+        or state.current_question.strip()
+        or state.pending_new_problem.strip()
+        or state.paused_main_problem.strip()
+        or state.ordered_steps
+        or state.problem_status in {'in_progress', 'awaiting_step', 'tutor_practice'}
+        or state.mode in {
+            'practice',
+            'clarify_new_problem',
+            'helper_branch',
+            'queued_followup',
+            'resume_paused_problem',
+            'resume_paused_problem_notice',
+            'tutor_practice_question',
+        }
+    )
+
+
+def _tutor_practice_choice_intent(state: TutoringState, effective_message: str) -> str:
+    if state.mode != 'awaiting_more_practice_choice' or state.status != 'waiting_for_student':
+        return ''
+    if extract_math_expression(effective_message):
+        return ''
+    text = ' '.join(str(effective_message or '').lower().split())
+    if not text:
+        return 'unclear'
+    yes_markers = (
+        'yes',
+        'yeah',
+        'yep',
+        'ok',
+        'okay',
+        'sure',
+        'give me one',
+        'another',
+        'another one',
+        'more',
+        'more practice',
+        'start',
+        'continue',
+        'try one',
+        'one more',
+    )
+    no_markers = (
+        'no',
+        'nope',
+        'done',
+        'stop',
+        'not now',
+        'thats all',
+        "that's all",
+        'finish',
+        'finished',
+        'end',
+    )
+    if any(_choice_marker_matches(text, marker) for marker in no_markers):
+        return 'no'
+    if any(_choice_marker_matches(text, marker) for marker in yes_markers):
+        return 'yes'
+    return 'unclear'
+
+
+def _choice_marker_matches(text: str, marker: str) -> bool:
+    if text == marker:
+        return True
+    return bool(re.search(rf'(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])', text))
+
+
+def _history_has_opening_math_prompt(history: list) -> bool:
+    if not history:
+        return False
+    last = history[-1]
+    if getattr(last, 'role', '') != 'msalisia':
+        return False
+    text = ' '.join(str(getattr(last, 'content', '') or '').lower().split())
+    if not text:
+        return False
+    mood_markers = (
+        'how are you',
+        'how are you doing',
+        'how are you feeling',
+        'before we start',
+    )
+    quick_markers = (
+        'quick math',
+        'quick thing',
+        'quick question',
+        'know how to help',
+    )
+    return any(marker in text for marker in mood_markers) and any(marker in text for marker in quick_markers)
+
+
+def _tutor_math_starter_reply(question: TutorMathPracticeQuestion) -> str:
+    return (
+        "That's good to hear. Let's start with one quick Math question.\n\n"
+        f"**Question:** {_display_tutor_math_question(question.question)}"
+    )
+
+
+def _tutor_math_next_practice_reply(question: TutorMathPracticeQuestion) -> str:
+    return (
+        "Sure. Try this one:\n\n"
+        f"**Question:** {_display_tutor_math_question(question.question)}"
+    )
+
+
+def _tutor_math_question_state(
+    state: TutoringState,
+    subject: str,
+    student_message: str,
+    practice_question: TutorMathPracticeQuestion,
+) -> TutoringState:
+    recent_practice_ids = _next_recent_tutor_practice_ids(
+        state.recent_tutor_practice_question_ids,
+        practice_question.id,
+    )
+    return state.model_copy(update={
+        'current_subject': subject,
+        'active_problem': practice_question.question,
+        'current_step': practice_question.question,
+        'current_question': practice_question.question,
+        'expected_answer': practice_question.expected_answer,
+        'student_answer': student_message,
+        'correctness_status': '',
+        'skill': practice_question.skill,
+        'step_number': 1,
+        'attempt_count': 0,
+        'hint_given': False,
+        'answer_revealed': False,
+        'next_similar_question': '',
+        'tutor_practice_question_id': practice_question.id,
+        'tutor_practice_grade': practice_question.grade,
+        'tutor_practice_topic': practice_question.topic,
+        'tutor_practice_hint_1': practice_question.hint_1,
+        'tutor_practice_hint_2': practice_question.hint_2,
+        'tutor_practice_explanation': practice_question.worked_explanation,
+        'recent_tutor_practice_question_ids': recent_practice_ids,
+        'final_answer': '',
+        'mode': 'tutor_practice_question',
+        'status': 'waiting_for_student',
+        'problem_status': 'tutor_practice',
+        'memory_note': f'Tutor practice question: {practice_question.question}',
+    })
+
+
+def _is_tutor_practice_question_state(state: TutoringState) -> bool:
+    return (
+        state.mode == 'tutor_practice_question'
+        and state.status == 'waiting_for_student'
+        and bool(state.current_question.strip())
+        and bool(state.expected_answer.strip())
+    )
+
+
+def _tutor_practice_answer_reply(
+    state: TutoringState,
+    student_answer: str,
+    answer_check,
+    action_intent: str,
+) -> tuple[str, TutoringState]:
+    if action_intent == 'hint':
+        hint = state.tutor_practice_hint_2 if state.hint_given and state.tutor_practice_hint_2 else state.tutor_practice_hint_1
+        hint = hint or 'Try one small step and then check the numbers again.'
+        reply = (
+            "Sure. Here's one hint.\n\n"
+            f"{hint}\n\n"
+            f"Try this same question:\n{_display_tutor_math_question(state.current_question)}"
+        )
+        return reply, state.model_copy(update={
+            'student_answer': student_answer,
+            'hint_given': True,
+            'status': 'waiting_for_student',
+        })
+
+    local_check = answer_check or TutorAnswerChecker()._check_math(
+        state.current_question,
+        student_answer,
+        state.expected_answer,
+    )
+    attempt_count = state.attempt_count if state.attempt_count > 0 else min(state.attempt_count + 1, 1)
+    if local_check.is_correct:
+        expected = local_check.expected_answer or state.expected_answer
+        explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
+        reply = (
+            "Yes, that's correct!\n\n"
+            f"{_display_tutor_math_question(explanation)}\n\n"
+            "Would you like another practice question?"
+        )
+        return reply, _finished_tutor_practice_state(state, student_answer, 'correct', expected)
+
+    if attempt_count <= 1:
+        hint = state.tutor_practice_hint_1 or 'Look at the numbers carefully and try one small step.'
+        reply = (
+            "Good try.\n\n"
+            f"**Hint:** {hint}\n\n"
+            f"Try this same question again:\n{_display_tutor_math_question(state.current_question)}"
+        )
+        return reply, state.model_copy(update={
+            'student_answer': student_answer,
+            'correctness_status': 'incorrect',
+            'attempt_count': 1,
+            'hint_given': True,
+            'answer_revealed': False,
+            'status': 'waiting_for_student',
+        })
+
+    if attempt_count == 2:
+        hint = state.tutor_practice_hint_2 or state.tutor_practice_hint_1 or 'Try writing the calculation one step at a time.'
+        reply = (
+            "You're close. Let's use one stronger hint.\n\n"
+            f"**Hint:** {hint}\n\n"
+            f"Try one more time:\n{_display_tutor_math_question(state.current_question)}"
+        )
+        return reply, state.model_copy(update={
+            'student_answer': student_answer,
+            'correctness_status': 'incorrect',
+            'attempt_count': 2,
+            'hint_given': True,
+            'answer_revealed': False,
+            'status': 'waiting_for_student',
+        })
+
+    expected = local_check.expected_answer or state.expected_answer
+    explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
+    reply = (
+        "Nice effort. Let's finish this one together.\n\n"
+        f"{_display_tutor_math_question(explanation)}\n\n"
+        "Would you like another practice question?"
+    )
+    return reply, _finished_tutor_practice_state(state, student_answer, 'incorrect', expected, revealed=True)
+
+
+def _finished_tutor_practice_state(
+    state: TutoringState,
+    student_answer: str,
+    correctness_status: str,
+    expected_answer: str,
+    revealed: bool = False,
+) -> TutoringState:
+    return state.model_copy(update={
+        'active_problem': '',
+        'current_step': '',
+        'current_question': '',
+        'expected_answer': '',
+        'student_answer': student_answer,
+        'correctness_status': correctness_status,
+        'attempt_count': state.attempt_count,
+        'hint_given': state.hint_given,
+        'answer_revealed': revealed,
+        'final_answer': expected_answer,
+        'problem_status': 'finished',
+        'mode': 'awaiting_more_practice_choice',
+        'status': 'waiting_for_student',
+        'memory_note': f'Finished tutor practice question: {state.current_question}',
+    })
+
+
+def _next_recent_tutor_practice_ids(previous_ids: list[str] | tuple[str, ...] | None, question_id: str) -> list[str]:
+    clean_ids = [str(item) for item in (previous_ids or ()) if str(item).strip() and str(item) != question_id]
+    clean_ids.append(question_id)
+    return clean_ids[-10:]
+
+
+def _display_tutor_math_question(question: str) -> str:
+    text = str(question or '').strip()
+    text = re.sub(r'(?<=\d)\s+x\s+(?=\d)', ' × ', text, flags=re.IGNORECASE)
+    return text.replace(' / ', ' ÷ ')
 
 
 def _session_topic_label(subject: str, topic: str | None) -> str:

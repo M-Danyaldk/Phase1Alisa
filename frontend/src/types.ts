@@ -78,6 +78,13 @@ export type TutoringState = {
   hint_given?: boolean;
   answer_revealed: boolean;
   next_similar_question?: string;
+  tutor_practice_question_id?: string;
+  tutor_practice_grade?: number;
+  tutor_practice_topic?: string;
+  tutor_practice_hint_1?: string;
+  tutor_practice_hint_2?: string;
+  tutor_practice_explanation?: string;
+  recent_tutor_practice_question_ids?: string[];
   helper_branch?: TutorHelperBranch;
   queued_followup_questions?: TutorQueuedQuestion[];
   pending_input_kind?: string;
