@@ -98,7 +98,7 @@ SWITCH_TASK_PHRASES = [
 
 ACTION_INTENTS = {
     'hint': ['hint', 'give me a hint', 'help without answer'],
-    'explain_again': ['explain again', 'say it another way', 'again', "i still don't get it", 'i still do not get it'],
+    'explain_again': ['explain again', 'explain that again', 'explain it again', 'say it another way', 'show me again', 'one more time', "i still don't get it", 'i still do not get it'],
     'example': ['example', 'give me an example', 'show example'],
     'check_answer': ['check my answer', 'is this right', 'is my answer right', 'check this'],
     'clarify_prompt': [
@@ -117,7 +117,11 @@ ACTION_INTENTS = {
     ],
 }
 
-SUBJECT_SWITCH_PATTERN = re.compile(r'\b(switch|change|move|go)\s+(to|back to)\s+(math|reading|writing|ela)\b')
+SUBJECT_SWITCH_PATTERN = re.compile(
+    r'\b(?:switch|change|move|go)(?:\s+(?:subjects?|over))?\s+'
+    r'(?:to|back\s+to)\s+'
+    r'(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)\b'
+)
 MATH_TOPIC_WORDS = {
     'math', 'fraction', 'fractions', 'numerator', 'denominator', 'lcm', 'multiply', 'multiplication',
     'divide', 'division', 'add', 'addition', 'subtract', 'subtraction', 'equation', 'expression',
@@ -188,7 +192,24 @@ def detect_switch_task_intent(message: str) -> bool:
 
 
 def detect_explicit_subject_switch(message: str) -> bool:
-    return bool(SUBJECT_SWITCH_PATTERN.search(_normalized(message)))
+    return resolve_explicit_subject_switch(message) is not None
+
+
+def resolve_explicit_subject_switch(message: str) -> str | None:
+    match = SUBJECT_SWITCH_PATTERN.search(_normalized(message))
+    if not match:
+        return None
+    alias = match.group(1)
+    if alias in {'math', 'maths', 'mathematics', 'arithmetic'}:
+        return 'Math'
+    if alias == 'writing':
+        return 'Writing'
+    return 'ELA'
+
+
+def build_subject_switch_reply(subject: str) -> str:
+    label = {'Math': 'math', 'ELA': 'reading', 'Writing': 'writing'}.get(subject, 'this subject')
+    return f'Okay, we are working on {label} now. What would you like help with first?'
 
 
 def detect_math_expression(message: str) -> bool:

@@ -143,6 +143,7 @@ class ChatRequest(BaseModel):
     tutoring_state: TutoringState = Field(default_factory=TutoringState)
     thread_id: Optional[str] = None
     child_id: Optional[str] = None
+    previous_subject: Optional[Subject] = None
 
 class ChatOpeningRequest(BaseModel):
     student: StudentProfile
@@ -163,6 +164,8 @@ class ChatResponse(BaseModel):
     resolved_topic: Optional[str] = None
     topic_source: Optional[str] = None
     assessed_level: Optional[str] = None
+    resolved_subject: Optional[Subject] = None
+    subject_changed: bool = False
 
 class ChatOpeningResponse(BaseModel):
     reply: str

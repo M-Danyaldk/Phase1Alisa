@@ -172,6 +172,9 @@ async def main() -> None:
     _expect('What is 20 × 23?' not in explain_again_reply, 'Explain-again same-step reply drifted into a hidden micro-step question.', failures)
     _expect(detect_action_intent('which step?') == 'clarify_prompt', 'Clarification phrase was not recognized as a clarification action.', failures)
     _expect(detect_action_intent('what do you mean') == 'clarify_prompt', 'Clarification wording was not classified as clarify_prompt.', failures)
+    _expect(detect_action_intent('explain that again') == 'explain_again', 'Explicit explain-again wording was not recognized.', failures)
+    _expect(detect_action_intent('I got 90 again') == '', 'A normal answer containing "again" was misclassified as explain-again.', failures)
+    _expect(detect_action_intent('Can we do fractions again?') == '', 'A topic request containing "again" was misclassified as explain-again.', failures)
     clarification_history = [ChatHistoryItem(role='msalisia', content=explain_again_state.current_question)]
     _, clarification_task, clarification_step, clarification_state = build_chat_directives(
         'which step?',

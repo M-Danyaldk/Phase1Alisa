@@ -27,6 +27,8 @@ class VoiceMessageResponse(BaseModel):
     resolved_topic: str | None = None
     topic_source: str | None = None
     assessed_level: str | None = None
+    resolved_subject: Subject | None = None
+    subject_changed: bool = False
     timings: dict[str, int] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

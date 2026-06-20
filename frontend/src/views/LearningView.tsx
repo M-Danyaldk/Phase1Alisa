@@ -7,6 +7,7 @@ import { apiPost } from '../lib/api';
 import { getSessionStatus, pauseInactiveSession, recordInactivityNudge, recordSessionActivity, resumeSession } from '../lib/api/sessionActivity';
 import { sendVoiceMessage, sendVoiceNudge } from '../lib/api/voice';
 import { ChatThread, getChatHistory, getChatThreads, getChildChatThreads } from '../lib/chatApi';
+import { detectSubjectFromMessage, prepareSubjectTurn } from '../lib/subjectDetection';
 import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState } from '../types';
 import { SessionStatusResponse } from '../types/sessionActivity';
 
@@ -40,32 +41,6 @@ type ChatOpeningData = {
 
 function openingFallback(student: StudentProfile): string {
   return `Hi ${student.name || 'there'}, I am glad you are here. Before we start, how are you feeling today? Then I can ask one quick thing so I know how to help.`;
-}
-
-function subjectSwitchMessage(subject: Subject): string {
-  const labels: Record<Subject, string> = {
-    Math: 'math',
-    ELA: 'reading',
-    Writing: 'writing'
-  };
-  return `We are working on ${labels[subject]} now. Let us do one small step at a time.`;
-}
-
-function detectSubjectFromMessage(message: string): Subject | null {
-  const text = message.toLowerCase();
-  const explicitSubjectRequest = /\b(switch|change|move|go)\s+(to|back to)\s+(math|reading|writing)\b/.test(text)
-    || /\b(can we|could we|please|let's|lets|i want|i need|i'd like|start|practice|do|help me with|work on)\b/.test(text);
-
-  if (!explicitSubjectRequest) return null;
-
-  const mathHints = ['math', 'fraction', 'fractions', 'decimal', 'divide', 'division', 'multiply', 'multiplication', 'subtract', 'addition', 'equation', 'ratio', 'lcm', 'gcf', 'area', 'perimeter'];
-  const elaHints = ['reading', 'read', 'passage', 'main idea', 'inference', 'context clue', 'context clues', 'theme', 'character', 'setting', 'summary', 'vocabulary', 'author', 'evidence', 'grammar', 'verb', 'noun', 'adjective', 'sentence meaning'];
-  const writingHints = ['writing', 'paragraph', 'essay', 'topic sentence', 'transition', 'rewrite', 'fix this sentence', 'sentence structure', 'clarity', 'handwriting', 'spacing', 'legibility', 'punctuation'];
-
-  if (mathHints.some(hint => text.includes(hint))) return 'Math';
-  if (writingHints.some(hint => text.includes(hint))) return 'Writing';
-  if (elaHints.some(hint => text.includes(hint))) return 'ELA';
-  return null;
 }
 
 export function LearningView({ student, accessToken = '', childId = '', initialSubject = 'Math', initialTopic, studentSession = false, voiceAllowed = false, onBackHome, onInactivePause, onRequireRelogin }: { student: StudentProfile; accessToken?: string; childId?: string; initialSubject?: Subject; initialTopic?: string; studentSession?: boolean; voiceAllowed?: boolean; onBackHome?: () => void; onInactivePause?: (message: string) => void; onRequireRelogin?: (message: string) => void }) {
@@ -153,7 +128,6 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
   const [historySetupPending, setHistorySetupPending] = useState(false);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null);
-  const [lastAnnouncedSubject, setLastAnnouncedSubject] = useState<Subject>(initialSubject);
   const [tutoringState, setTutoringState] = useState<TutoringState>(initialTutoringState);
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null);
   const [nudgeVisible, setNudgeVisible] = useState(false);
@@ -240,7 +214,6 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       if (requestId && openingRequestRef.current !== requestId) return false;
       const nextSubject = thread.subject;
       setActiveThread(thread);
-      setLastAnnouncedSubject(nextSubject);
       setSubject(nextSubject);
       setTopic(thread.topic || subjectDefaults[nextSubject]);
       setTopicSource('manual');
@@ -342,7 +315,6 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setSubject(initialSubject);
     setTopic(nextTopic);
     setTopicSource(initialTopic ? 'assessment' : 'default');
-    setLastAnnouncedSubject(initialSubject);
     loadLatestOrOpening(initialSubject, nextTopic, initialTopic ? 'assessment' : 'default');
     setInput('');
     setSessionStatus(null);
@@ -459,12 +431,6 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setTopic(prev => prev === subjectDefaults.Math || prev === subjectDefaults.ELA || prev === subjectDefaults.Writing ? subjectDefaults[subject] : prev);
   }, [subject]);
 
-  useEffect(() => {
-    if (subject === lastAnnouncedSubject) return;
-    setMessages(prev => [...prev, { role: 'msalisia', content: subjectSwitchMessage(subject), subject }]);
-    setLastAnnouncedSubject(subject);
-  }, [lastAnnouncedSubject, subject]);
-
   function applySubjectChange(nextSubject: Subject) {
     setSubject(nextSubject);
     setTopic(subjectDefaults[nextSubject]);
@@ -477,7 +443,6 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
     setActiveThread(null);
     setTutoringState(initialTutoringState);
     setInput('');
-    setLastAnnouncedSubject(nextSubject);
     setSubject(nextSubject);
     setTopic(nextTopic);
     setTopicSource('default');
@@ -496,27 +461,48 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       return;
     }
     const detectedSubject = detectSubjectFromMessage(messageText);
-    const activeSubject = detectedSubject || subject;
-    if (detectedSubject && detectedSubject !== subject) {
-      applySubjectChange(detectedSubject);
+    const subjectTransitionAllowed = tutoringState.mode !== 'safety_support' && tutoringState.emotional_support_mode !== 'safety';
+    const freshSubjectState = { ...initialTutoringState, current_subject: detectedSubject || subject };
+    const turnContext = prepareSubjectTurn(
+      subject,
+      detectedSubject,
+      messages.slice(-4),
+      tutoringState,
+      freshSubjectState,
+      activeThread?.id,
+      subjectTransitionAllowed,
+    );
+    const { activeSubject, subjectChanged } = turnContext;
+    if (subjectChanged) {
+      applySubjectChange(activeSubject);
+      setTutoringState(turnContext.tutoringState);
+      setActiveThread(null);
     }
 
     const userMsg: ChatMessage = { role: 'student', content: messageText, subject: activeSubject };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => subjectChanged ? [userMsg] : [...prev, userMsg]);
     setInput('');
     setLoading(true);
     try {
-      let thread = activeThread;
+      let thread = subjectChanged ? null : activeThread;
+      let requestThreadId = turnContext.threadId;
       if (thread && thread.subject !== activeSubject) {
         thread = null;
+        requestThreadId = undefined;
         setActiveThread(null);
       }
       const headers = accessToken ? { Authorization: `Bearer ${accessToken}`, ...(studentSession ? {} : { 'x-access-mode': 'child' }) } : undefined;
       const outgoingTopic = detectedSubject ? subjectDefaults[activeSubject] : topic;
       const outgoingTopicSource: TopicSource = detectedSubject ? 'default' : topicSource;
       await markStudentActivity('message_sent', activeSubject, outgoingTopic);
-      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, topic: outgoingTopic, topic_source: outgoingTopicSource, message: messageText, history: messages.slice(-4), tutoring_state: tutoringState, thread_id: thread?.id }, headers);
+      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; resolved_subject?: Subject | null; subject_changed?: boolean; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, previous_subject: subjectChanged ? subject : undefined, topic: outgoingTopic, topic_source: outgoingTopicSource, message: messageText, history: turnContext.history, tutoring_state: turnContext.tutoringState, thread_id: requestThreadId }, headers);
+      const responseSubject = data.resolved_subject || activeSubject;
+      const backendSubjectChanged = Boolean(data.subject_changed && responseSubject !== subject);
       setTutoringState(data.tutoring_state);
+      if (backendSubjectChanged && responseSubject !== activeSubject) {
+        applySubjectChange(responseSubject);
+        setActiveThread(null);
+      }
       if (accessToken && data.history_saved === false) {
         setHistorySetupPending(true);
         setThreadError('');
@@ -530,14 +516,19 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
           id: data.thread_id,
           user_id: '',
           child_id: childId || null,
-          subject: activeSubject,
+          subject: responseSubject,
           topic: nextTopic,
           title: messageText.slice(0, 48),
         });
         setTopic(nextTopic);
         setTopicSource('manual');
       }
-      setMessages(prev => [...prev, { role: 'msalisia', content: data.reply, provider: data.provider, subject: activeSubject }]);
+      const assistantMessage: ChatMessage = { role: 'msalisia', content: data.reply, provider: data.provider, subject: responseSubject };
+      if (backendSubjectChanged && responseSubject !== activeSubject) {
+        setMessages([{ ...userMsg, subject: responseSubject }, assistantMessage]);
+      } else {
+        setMessages(prev => [...prev, assistantMessage]);
+      }
       if (data.history_saved !== false) {
         await refreshThreads();
       }
@@ -546,7 +537,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       }
     } catch (error) {
       setThreadError(error instanceof Error ? error.message : 'The tutor request failed.');
-      setMessages(prev => [...prev, { role: 'msalisia', content: fallbackTutorMessage(tutoringState), subject: activeSubject }]);
+      setMessages(prev => [...prev, { role: 'msalisia', content: fallbackTutorMessage(turnContext.tutoringState), subject: activeSubject }]);
     } finally { setLoading(false); }
   }
 
@@ -579,8 +570,12 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         tutoringState,
         threadId: thread?.id,
       });
-      if (data.transcript) {
-        setMessages(prev => [...prev, { role: 'student', content: data.transcript, subject }]);
+      const responseSubject = data.resolved_subject || subject;
+      const voiceSubjectChanged = Boolean(data.subject_changed && responseSubject !== subject);
+      if (voiceSubjectChanged) {
+        applySubjectChange(responseSubject);
+        setActiveThread(null);
+        thread = null;
       }
       setTutoringState(data.tutoring_state);
       if (accessToken && data.history_saved === false) {
@@ -596,14 +591,18 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
           id: data.thread_id,
           user_id: '',
           child_id: childId || null,
-          subject,
+          subject: responseSubject,
           topic: nextTopic,
           title: (data.transcript || 'Voice question').trim().slice(0, 48),
         });
         setTopic(nextTopic);
         setTopicSource('manual');
       }
-      setMessages(prev => [...prev, { role: 'msalisia', content: data.assistant_text, provider: data.provider, subject }]);
+      const voiceMessages: ChatMessage[] = [
+        ...(data.transcript ? [{ role: 'student' as const, content: data.transcript, subject: responseSubject }] : []),
+        { role: 'msalisia', content: data.assistant_text, provider: data.provider, subject: responseSubject },
+      ];
+      setMessages(prev => voiceSubjectChanged ? voiceMessages : [...prev, ...voiceMessages]);
       if (data.assistant_audio_base64 && data.audio_mime_type) {
         playAssistantAudio(data.assistant_audio_base64, data.audio_mime_type);
       }

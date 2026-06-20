@@ -1,4 +1,4 @@
-import { TopicSource, TutoringState } from '../types';
+import { Subject, TopicSource, TutoringState } from '../types';
 
 export type VoiceMessageResponse = {
   transcript: string;
@@ -19,6 +19,8 @@ export type VoiceMessageResponse = {
   resolved_topic?: string | null;
   topic_source?: TopicSource | null;
   assessed_level?: string | null;
+  resolved_subject?: Subject | null;
+  subject_changed?: boolean;
   timings: Record<string, number>;
   metadata?: Record<string, unknown>;
 };

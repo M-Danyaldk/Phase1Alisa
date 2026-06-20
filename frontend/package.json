@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check:subject-detection": "node scripts/check-subject-detection.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

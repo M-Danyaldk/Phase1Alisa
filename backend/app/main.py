@@ -74,6 +74,7 @@ from .tutor_math_practice_support import (
 from .tutoring_logic import (
     build_conversation_control_reply,
     build_subject_boundary_reply,
+    build_subject_switch_reply,
     build_chat_directives,
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
@@ -81,6 +82,7 @@ from .tutoring_logic import (
     build_temporary_math_problem_reply,
     detect_action_intent,
     detect_off_subject_request,
+    resolve_explicit_subject_switch,
     update_tutoring_state_after_reply,
 )
 from .utils.multi_step_progress import (
@@ -252,6 +254,21 @@ async def chat_opening(payload: ChatOpeningRequest, authorization: str = Header(
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
     child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
+    subject_transition_allowed = payload.tutoring_state.mode != 'safety_support' and payload.tutoring_state.emotional_support_mode != 'safety'
+    resolved_subject = resolve_explicit_subject_switch(payload.message) if subject_transition_allowed else None
+    prior_subject = payload.previous_subject or payload.tutoring_state.current_subject or payload.subject
+    subject_changed = bool(resolved_subject and (resolved_subject != payload.subject or prior_subject != resolved_subject))
+    if resolved_subject:
+        transition_updates = {'subject': resolved_subject}
+        if subject_changed:
+            transition_updates.update({
+                'topic': '',
+                'topic_source': 'default',
+                'history': [],
+                'tutoring_state': TutoringState(current_subject=resolved_subject),
+                'thread_id': None,
+            })
+        payload = payload.model_copy(update=transition_updates)
     payload = payload.model_copy(update={'tutoring_state': reconcile_task_lifecycle(payload.tutoring_state)})
     if payload.child_id:
         await SessionActivityService().ensure_can_tutor(child_user['id'], payload.child_id)
@@ -425,6 +442,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             resolved_topic=resolved_topic,
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+            resolved_subject=payload.subject,
+            subject_changed=subject_changed,
         )
 
     non_answer_intent = intent_assist.label in NON_ANSWER_INTENTS
@@ -535,6 +554,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             resolved_topic=resolved_topic,
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+            resolved_subject=payload.subject,
+            subject_changed=subject_changed,
         )
 
     if not non_answer_intent and _should_start_tutor_math_practice(payload, effective_message):
@@ -600,6 +621,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             resolved_topic=resolved_topic,
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+            resolved_subject=payload.subject,
+            subject_changed=subject_changed,
         )
 
     router = LLMRouter()
@@ -779,6 +802,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             resolved_topic=resolved_topic,
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+            resolved_subject=payload.subject,
+            subject_changed=subject_changed,
         )
     direct_help_expression = _direct_math_help_expression(effective_message) if payload.subject == 'Math' else ''
     if direct_help_expression and not matched_structured_step:
@@ -861,6 +886,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             resolved_topic=resolved_topic,
             topic_source=topic_resolution['source'],
             assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+            resolved_subject=payload.subject,
+            subject_changed=subject_changed,
     )
     answer_check = None
     if (
@@ -938,7 +965,20 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     action_intent = detect_action_intent(effective_message)
     emotional_choice = detect_emotional_support_choice(payload.message, payload.tutoring_state)
     special_local_reply = False
-    if payload.tutoring_state.emotional_support_mode == 'safety':
+    if subject_changed:
+        next_state = payload.tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'student_answer': payload.message,
+            'mode': 'solve',
+            'status': 'idle',
+            'memory_note': f'Started a fresh {payload.subject} subject session.',
+        })
+        formatted_reply = build_subject_switch_reply(payload.subject)
+        result_provider = 'local'
+        result_model = 'deterministic-subject-switch'
+        result_fallback_used = False
+        special_local_reply = True
+    elif payload.tutoring_state.emotional_support_mode == 'safety':
         next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
             'student_answer': payload.message,
             'correctness_status': '',
@@ -1355,6 +1395,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         resolved_topic=resolved_topic,
         topic_source=topic_resolution['source'],
         assessed_level=_practice_level_label(topic_resolution.get('assessed_level')),
+        resolved_subject=payload.subject,
+        subject_changed=subject_changed,
     )
 
 

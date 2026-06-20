@@ -52,6 +52,7 @@ from ..tutor_math_topic_lessons import apply_topic_lesson_state, build_topic_les
 from ..tutoring_logic import (
     build_conversation_control_reply,
     build_subject_boundary_reply,
+    build_subject_switch_reply,
     build_chat_directives,
     build_new_problem_clarification_reply,
     build_resume_paused_problem_reply,
@@ -59,6 +60,7 @@ from ..tutoring_logic import (
     build_temporary_math_problem_reply,
     detect_action_intent,
     detect_off_subject_request,
+    resolve_explicit_subject_switch,
     update_tutoring_state_after_reply,
 )
 from ..utils.multi_step_progress import (
@@ -724,11 +726,17 @@ class VoiceService:
                 timings=timings,
             )
 
+        current_state = tutoring_state or TutoringState()
+        transition_allowed = current_state.mode != 'safety_support' and current_state.emotional_support_mode != 'safety'
+        activity_subject = resolve_explicit_subject_switch(transcript) if transition_allowed else None
+        activity_subject = activity_subject or subject
+        activity_topic = topic if activity_subject == subject else 'general practice'
+
         await SessionActivityService().record_activity(
             parent_id,
             child_id,
-            subject=subject,
-            topic=topic,
+            subject=activity_subject,
+            topic=activity_topic,
             event_type='message_sent',
         )
 
@@ -739,12 +747,12 @@ class VoiceService:
                 parent_id=parent_id,
                 child=child,
                 student=student,
-                subject=subject,
+                subject=activity_subject,
                 topic=topic,
                 topic_source=topic_source,
                 transcript=transcript,
                 history=history or [],
-                tutoring_state=tutoring_state or TutoringState(),
+                tutoring_state=current_state,
                 thread_id=thread_id,
             ),
         )
@@ -763,7 +771,7 @@ class VoiceService:
         await SessionActivityService().exchange_complete(
             parent_id,
             child_id,
-            subject=subject,
+            subject=chat_result.get('resolved_subject') or activity_subject,
             topic=chat_result.get('resolved_topic') or topic,
         )
 
@@ -787,6 +795,8 @@ class VoiceService:
             resolved_topic=chat_result.get('resolved_topic'),
             topic_source=chat_result.get('topic_source'),
             assessed_level=chat_result.get('assessed_level'),
+            resolved_subject=chat_result.get('resolved_subject') or activity_subject,
+            subject_changed=chat_result.get('subject_changed', False),
             timings=timings,
             metadata={'voice_mode': True, 'raw_audio_stored': False},
         )
@@ -839,6 +849,18 @@ class VoiceService:
         tutoring_state: TutoringState,
         thread_id: str | None,
     ) -> dict:
+        transition_allowed = tutoring_state.mode != 'safety_support' and tutoring_state.emotional_support_mode != 'safety'
+        resolved_subject = resolve_explicit_subject_switch(transcript) if transition_allowed else None
+        prior_subject = tutoring_state.current_subject or subject
+        subject_changed = bool(resolved_subject and (resolved_subject != subject or prior_subject != resolved_subject))
+        if resolved_subject:
+            subject = resolved_subject
+            if subject_changed:
+                topic = ''
+                topic_source = 'default'
+                history = []
+                tutoring_state = TutoringState(current_subject=resolved_subject)
+                thread_id = None
         tutoring_state = reconcile_task_lifecycle(tutoring_state)
         child_id = child['id']
         assessment_context = await LearningProfileService().context_for_child_subject(child_id, subject)
@@ -1001,6 +1023,8 @@ class VoiceService:
                 'resolved_topic': resolved_topic,
                 'topic_source': topic_resolution['source'],
                 'assessed_level': topic_resolution.get('assessed_level'),
+                'resolved_subject': subject,
+                'subject_changed': subject_changed,
             }
 
         practice_choice = _tutor_practice_choice_intent(tutoring_state, effective_transcript) if subject == 'Math' else ''
@@ -1101,6 +1125,8 @@ class VoiceService:
                 'resolved_topic': resolved_topic,
                 'topic_source': topic_resolution['source'],
                 'assessed_level': topic_resolution.get('assessed_level'),
+                'resolved_subject': subject,
+                'subject_changed': subject_changed,
             }
 
         if intent_assist.label not in NON_ANSWER_INTENTS and _should_start_tutor_math_practice(subject, tutoring_state, history, effective_transcript):
@@ -1164,6 +1190,8 @@ class VoiceService:
                 'resolved_topic': resolved_topic,
                 'topic_source': topic_resolution['source'],
                 'assessed_level': topic_resolution.get('assessed_level'),
+                'resolved_subject': subject,
+                'subject_changed': subject_changed,
             }
 
         directives, active_task, current_step, next_state = build_chat_directives(
@@ -1307,7 +1335,19 @@ class VoiceService:
         action_intent = detect_action_intent(effective_transcript)
         emotional_choice = detect_emotional_support_choice(transcript, tutoring_state)
         special_local_reply = False
-        if tutoring_state.emotional_support_mode == 'safety':
+        if subject_changed:
+            final_state = tutoring_state.model_copy(update={
+                'current_subject': subject,
+                'student_answer': transcript,
+                'mode': 'solve',
+                'status': 'idle',
+                'memory_note': f'Started a fresh {subject} subject session.',
+            })
+            formatted_reply = build_subject_switch_reply(subject)
+            result_provider = 'local'
+            result_model = 'deterministic-voice-subject-switch'
+            special_local_reply = True
+        elif tutoring_state.emotional_support_mode == 'safety':
             final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
                 'student_answer': transcript,
                 'correctness_status': '',
@@ -1705,6 +1745,8 @@ class VoiceService:
             'resolved_topic': resolved_topic,
             'topic_source': topic_resolution['source'],
             'assessed_level': topic_resolution.get('assessed_level'),
+            'resolved_subject': subject,
+            'subject_changed': subject_changed,
         }
 
     async def _synthesize(self, text: str) -> bytes:

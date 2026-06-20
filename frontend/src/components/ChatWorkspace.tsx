@@ -4,6 +4,7 @@ import { classNames } from '../lib/classNames';
 import { MarkdownText } from './MarkdownText';
 import { ProblemReportButton } from './ProblemReportButton';
 import { ChatMessage, TutoringState } from '../types';
+import { hasActionableTutorTask } from '../lib/quickActions';
 
 type Props = {
   messages: ChatMessage[];
@@ -83,6 +84,8 @@ export function ChatWorkspace({
   const autoStopTimerRef = useRef<number | null>(null);
   const autoStoppedRef = useRef(false);
   const voiceUnavailable = inputDisabled || voiceDisabled || voiceProcessing;
+  const quickSubmit = onQuickSubmit || onQuickAction;
+  const helperDisabled = inputDisabled || !hasActionableTutorTask(tutoringState);
   const checkAnswerDraft = input.trim() ? `Check my answer: ${input.trim()}` : 'My answer is ';
 
   useEffect(() => {
@@ -236,10 +239,10 @@ export function ChatWorkspace({
       {loading && <div className="chat-bubble assistant"><p>Ms. Alisia is thinking...</p></div>}
     </div>
     <div className="chat-action-row" aria-label="Learning helper actions">
-      <button type="button" onClick={() => { onActivity?.(); onQuickAction('Give me one small hint.'); }} disabled={inputDisabled}>Hint</button>
-      <button type="button" onClick={() => { onActivity?.(); onQuickAction('Explain again in simpler words.'); }} disabled={inputDisabled}>Explain again</button>
-      <button type="button" onClick={() => { onActivity?.(); onQuickAction(checkAnswerDraft); }} disabled={inputDisabled}>Check my answer</button>
-      <button type="button" onClick={() => { onActivity?.(); onQuickAction('Give me one short example.'); }} disabled={inputDisabled}>Give me an example</button>
+      <button type="button" onClick={() => { onActivity?.(); quickSubmit('Give me one small hint.'); }} disabled={helperDisabled}>Hint</button>
+      <button type="button" onClick={() => { onActivity?.(); quickSubmit('Explain again in simpler words.'); }} disabled={helperDisabled}>Explain again</button>
+      <button type="button" onClick={() => { onActivity?.(); quickSubmit(checkAnswerDraft); }} disabled={helperDisabled || !input.trim()}>Check my answer</button>
+      <button type="button" onClick={() => { onActivity?.(); quickSubmit('Give me one short example.'); }} disabled={helperDisabled}>Give me an example</button>
       {reportContext && <ProblemReportButton
         accessToken={reportContext.accessToken}
         childId={reportContext.childId}

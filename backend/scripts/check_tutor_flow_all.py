@@ -16,11 +16,15 @@ from backend.scripts.check_tutor_semantic_policy import main as tutor_semantic_p
 from backend.scripts.check_tutor_production_readiness import main as tutor_production_readiness_main
 from backend.scripts.check_tutor_topic_lessons import main as tutor_topic_lessons_main
 from backend.scripts.check_tutor_topic_e2e_matrix import main as tutor_topic_e2e_matrix_main
+from backend.scripts.check_tutor_subject_baseline import main as tutor_subject_baseline_main
 
 import asyncio
 
 
 def main() -> None:
+    print('Running tutor subject baseline check...')
+    tutor_subject_baseline_main()
+    print('')
     print('Running tutoring ladder check...')
     tutoring_ladder_main()
     print('')
