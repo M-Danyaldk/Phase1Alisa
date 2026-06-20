@@ -2,7 +2,11 @@ export type DetectedSubject = 'Math' | 'ELA' | 'Writing';
 
 const directSwitchPattern = /\b(?:switch|change|move|go)(?:\s+(?:subjects?|over))?\s+(?:to|back\s+to)\s+(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)\b/i;
 
-const requestPattern = /\b(?:can\s+we|could\s+we|please|let(?:(?:'|’)s|s)|i\s+(?:want|need)(?:\s+to)?|i(?:'|’)d\s+like(?:\s+to)?|start|practice|study|learn|do|try|help\s+me\s+with|work\s+on|teach\s+me|write)\b/i;
+const simpleSubjectCommandPattern = /^(?:(?:start|switch\s+to|go\s+to|change\s+to|practice|study|learn|do|try|open|begin|help\s+me\s+with|work\s+on|teach\s+me)\s+)?(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)\s*(?:please|now)?[.!?]*$/i;
+
+const commandedSubjectPattern = /^(?:start|practice|study|learn|do|try|help\s+me\s+with|work\s+on|teach\s+me|write)\s+(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)\b/i;
+
+const requestPattern = /\b(?:can\s+we|could\s+we|please|let(?:(?:'|\u2019)s|s)|i\s+(?:want|need)(?:\s+to)?|i(?:'|\u2019)d\s+like(?:\s+to)?|start|practice|study|learn|do|try|help\s+me\s+with|work\s+on|teach\s+me|write)\b/i;
 
 const subjectCues: Array<{ subject: DetectedSubject; pattern: RegExp }> = [
   {
@@ -26,8 +30,13 @@ function subjectFromDirectAlias(alias: string): DetectedSubject {
 }
 
 export function detectSubjectFromMessage(message: string): DetectedSubject | null {
-  const directSwitch = directSwitchPattern.exec(message);
+  const trimmedMessage = message.trim();
+  const directSwitch = directSwitchPattern.exec(trimmedMessage);
   if (directSwitch) return subjectFromDirectAlias(directSwitch[1]);
+  const simpleSubjectCommand = simpleSubjectCommandPattern.exec(trimmedMessage);
+  if (simpleSubjectCommand) return subjectFromDirectAlias(simpleSubjectCommand[1]);
+  const commandedSubject = commandedSubjectPattern.exec(trimmedMessage);
+  if (commandedSubject) return subjectFromDirectAlias(commandedSubject[1]);
   if (!requestPattern.test(message)) return null;
 
   const matches = subjectCues

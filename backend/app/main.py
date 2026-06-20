@@ -55,6 +55,7 @@ from .services.tutor_emotional_support import (
 from .services.tutor_intent_classifier import NON_ANSWER_INTENTS, TutorIntentClassifier
 from .services.tutor_math_normalizer import TutorMathNormalizer
 from .services.tutor_math_response_guard import TutorMathResponseGuard
+from .services.tutor_progressive_hints import build_progressive_hint_reply, build_progressive_hint_reply_with_fallback
 from .services.tutor_word_problem import (
     StructuredWordProblem,
     TutorWordProblemInterpreter,
@@ -96,7 +97,7 @@ from .utils.multi_step_progress import (
     has_structured_math_problem,
     update_multi_step_progress,
 )
-from .utils.tutor_response import format_student_reply, looks_incomplete_response
+from .utils.tutor_response import contextual_unit_feedback, ensure_contextual_final_answer, format_contextual_math_answer, format_student_reply, looks_incomplete_response
 from .utils.task_lifecycle import (
     abandon_active_task,
     can_resume_paused_task,
@@ -104,6 +105,7 @@ from .utils.task_lifecycle import (
     pause_active_task,
     reconcile_task_lifecycle,
     resume_latest_paused_task,
+    sync_active_task,
     transition_to_task,
 )
 from .utils.attempt_policy import (
@@ -380,7 +382,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         detect_off_subject_request(payload.subject, effective_message, payload.tutoring_state)
         or subject_assist.label == 'off_subject'
         or uncertain_subject_boundary
-    ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
+    ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'help_request', 'related_question', 'emotion', 'pause', 'resume', 'meta_feedback'}:
         next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'student_answer': payload.message,
@@ -740,6 +742,9 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             tutoring_state = direct_continuity_state
             formatted_reply = _substep_correct_finish_reply(direct_answer_check, tutoring_state)
             result_model = 'deterministic-substep-completion'
+        elif direct_answer_check.is_wrong and direct_attempt_count < 3:
+            formatted_reply, tutoring_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(tutoring_state, help_request=False)
+            result_model = 'strict-llm-progressive-attempt-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-progressive-attempt-hint-{direct_attempt_count}'
         else:
             formatted_reply = _direct_math_check_reply(direct_answer_check, direct_attempt_count)
             result_model = 'deterministic-math-check'
@@ -829,8 +834,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             source='direct_expression',
             previous='pause',
         )
-        formatted_reply = _direct_math_help_reply(direct_help_expression)
-        next_state = tutoring_state
+        formatted_reply, next_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(tutoring_state, help_request=True)
+        response_model = 'strict-llm-math-help' if hint_model == 'strict-llm-progressive-hint' else 'deterministic-math-help'
         if chat_store and chat_user_id and chat_thread_id:
             try:
                 await chat_store.store_message(chat_user_id, ChatMessageCreateRequest(
@@ -841,7 +846,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                     subject=payload.subject,
                     topic=resolved_topic,
                     provider='local',
-                    model='deterministic-math-help',
+                    model=response_model,
                     tutoring_state=next_state.model_dump(),
                 ))
                 history_saved = True
@@ -869,7 +874,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 source='session',
                 metadata={
                     'provider': 'local',
-                    'model': 'deterministic-math-help',
+                    'model': response_model,
                     'topic_source': topic_resolution['source'],
                     'assessed_level': _practice_level_label(topic_resolution.get('assessed_level')),
                 },
@@ -877,7 +882,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         return ChatResponse(
             reply=formatted_reply,
             provider='local',
-            model='deterministic-math-help',
+            model=response_model,
             fallback_used=False,
             tutoring_state=next_state,
             thread_id=chat_thread_id,
@@ -1000,6 +1005,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             answer_check,
             action_intent,
         )
+        next_state = sync_active_task(next_state)
         result_provider = 'local'
         result_model = 'deterministic-tutor-math-practice-check'
         result_fallback_used = False
@@ -1078,6 +1084,16 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_fallback_used = False
         special_local_reply = True
     elif (
+        payload.subject == 'Math'
+        and intent_assist.label == 'help_request'
+        and bool(tutoring_state.current_question or tutoring_state.current_step or tutoring_state.active_problem)
+    ):
+        formatted_reply, next_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(tutoring_state, help_request=True)
+        result_provider = 'local'
+        result_model = hint_model
+        result_fallback_used = False
+        special_local_reply = True
+    elif (
         _should_grade_tutor_practice(payload.tutoring_state, intent_assist.label)
         or is_tutor_practice_answer_like(payload.tutoring_state, effective_message)
     ):
@@ -1095,7 +1111,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_fallback_used = False
         special_local_reply = True
     elif word_problem_candidate and not word_problem.accepted:
-        formatted_reply = build_word_problem_clarification_reply()
+        formatted_reply = build_word_problem_clarification_reply(word_problem)
         next_state = payload.tutoring_state.model_copy(update={
             'current_subject': 'Math',
             'student_answer': payload.message,
@@ -1241,10 +1257,9 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_model = 'deterministic-structured-step-completion'
         result_fallback_used = False
     elif structured_progression and answer_check and answer_check.is_wrong and tutoring_state.attempt_count in {1, 2}:
-        formatted_reply = build_structured_retry_reply(tutoring_state, tutoring_state.attempt_count)
-        next_state = tutoring_state
+        formatted_reply, next_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(tutoring_state, help_request=False)
         result_provider = 'local'
-        result_model = f'deterministic-structured-step-hint-{tutoring_state.attempt_count}'
+        result_model = 'strict-llm-structured-step-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-structured-step-hint-{tutoring_state.attempt_count}'
         result_fallback_used = False
     elif structured_progression and answer_check and answer_check.is_wrong and tutoring_state.attempt_count >= 3:
         next_state = advance_structured_math_problem(tutoring_state, answer_check.expected_answer or tutoring_state.expected_answer)
@@ -1266,6 +1281,16 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         formatted_reply = _correct_math_answer_reply(answer_check, tutoring_state, current_step)
         result_provider = 'local'
         result_model = 'deterministic-current-math-check'
+        result_fallback_used = False
+    elif (
+        answer_check
+        and answer_check.is_wrong
+        and payload.subject == 'Math'
+        and tutoring_state.attempt_count in {1, 2}
+    ):
+        formatted_reply, next_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(tutoring_state, help_request=False)
+        result_provider = 'local'
+        result_model = 'strict-llm-progressive-attempt-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-progressive-attempt-hint-{tutoring_state.attempt_count}'
         result_fallback_used = False
     elif answer_check and payload.subject != 'Math' and (answer_check.expected_answer or answer_check.feedback_note or answer_check.status in {'correct', 'incorrect', 'partially_correct'}):
         formatted_reply = _text_answer_check_reply(answer_check, tutoring_state, current_step)
@@ -1300,6 +1325,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_provider = result.provider
         result_model = result.model
         result_fallback_used = result.fallback_used
+    formatted_reply = ensure_contextual_final_answer(formatted_reply, tutoring_state)
     math_response_guard = TutorMathResponseGuard()
     math_guard_result = None
     if payload.subject == 'Math':
@@ -1335,7 +1361,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 'paused_expected_answer': '',
                 'paused_completed_steps': [],
             })
-    if intent_assist.label in {'greeting', 'acknowledge', 'continue_current', 'related_question', 'help_request', 'meta_feedback'}:
+    if (
+        intent_assist.label in {'greeting', 'acknowledge', 'continue_current', 'related_question', 'help_request', 'meta_feedback'}
+        and result_model != 'deterministic-tutor-math-practice-check'
+    ):
         next_state = preserve_tutor_practice_context(payload.tutoring_state, next_state)
     next_state = reconcile_task_lifecycle(next_state)
     if math_guard_result is not None:
@@ -1763,37 +1792,15 @@ def _tutor_practice_answer_reply(
         )
         return reply, _finished_tutor_practice_state(state, student_answer, 'correct', expected)
 
-    if attempt_count <= 1:
-        hint = state.tutor_practice_hint_1 or 'Look at the numbers carefully and try one small step.'
-        reply = (
-            "Good try.\n\n"
-            f"**Hint:** {hint}\n\n"
-            f"Try this same question again:\n{_display_tutor_math_question(state.current_question)}"
-        )
-        return reply, state.model_copy(update={
+    if attempt_count in {1, 2}:
+        guidance_state = state.model_copy(update={
             'student_answer': student_answer,
             'correctness_status': 'incorrect',
-            'attempt_count': 1,
-            'hint_given': True,
+            'attempt_count': attempt_count,
             'answer_revealed': False,
             'status': 'waiting_for_student',
         })
-
-    if attempt_count == 2:
-        hint = state.tutor_practice_hint_2 or state.tutor_practice_hint_1 or 'Try writing the calculation one step at a time.'
-        reply = (
-            "You're close. Let's use one stronger hint.\n\n"
-            f"**Hint:** {hint}\n\n"
-            f"Try one more time:\n{_display_tutor_math_question(state.current_question)}"
-        )
-        return reply, state.model_copy(update={
-            'student_answer': student_answer,
-            'correctness_status': 'incorrect',
-            'attempt_count': 2,
-            'hint_given': True,
-            'answer_revealed': False,
-            'status': 'waiting_for_student',
-        })
+        return build_progressive_hint_reply(guidance_state, help_request=False)
 
     expected = state.expected_answer or local_check.expected_answer
     explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
@@ -2002,10 +2009,13 @@ def _direct_math_check_reply(answer_check, attempt_count: int = 0) -> str:
 
 def _correct_math_answer_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
     expected = answer_check.expected_answer or state.expected_answer or 'that answer'
+    expected_display = format_contextual_math_answer(state, expected)
     expression = _display_math_expression_from_state(state, current_step)
+    unit_note = contextual_unit_feedback(state, state.student_answer)
+    unit_line = f'\n\n{unit_note}' if unit_note else ''
     if expression:
-        return f"Yes, that's correct!\n\n{expression} = {expected}.\n\nNice work. Let's keep going one small step at a time."
-    return f"Yes, that's correct!\n\nThe answer is {expected}.\n\nNice work. Let's keep going one small step at a time."
+        return f"Yes, that's correct!\n\n{expression} = {expected_display}.{unit_line}\n\nNice work. Let's keep going one small step at a time."
+    return f"Yes, that's correct!\n\nThe answer is {expected_display}.{unit_line}\n\nNice work. Let's keep going one small step at a time."
 
 
 def _text_answer_check_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
@@ -2060,6 +2070,14 @@ def _clean_text_retry_prompt(prompt: str) -> str:
 
 def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
     expected = answer_check.expected_answer or state.expected_answer or 'the answer'
+    if state.problem_kind == 'word_problem' and not state.ordered_steps:
+        expected_display = format_contextual_math_answer(state, expected)
+        expression = _display_math_expression_from_state(state, current_step)
+        return (
+            "Nice effort. Let's finish this problem together.\n\n"
+            f"{expression} = {expected_display}.\n\n"
+            f"**Final answer:** {expected_display}."
+        )
     step_expression = (
         answer_check.checked_expression
         or extract_math_expression(state.current_question or current_step or state.current_step)
@@ -2091,6 +2109,8 @@ def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_s
 
 def _substep_correct_finish_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
     expected = answer_check.expected_answer or state.expected_answer or 'that answer'
+    if state.problem_kind == 'word_problem' and not state.ordered_steps:
+        return _correct_math_answer_reply(answer_check, state, current_step)
     step_expression = (
         answer_check.checked_expression
         or extract_math_expression(state.current_question or current_step or state.current_step)

@@ -34,6 +34,7 @@ from .tutor_emotional_support import (
 from .tutor_intent_classifier import NON_ANSWER_INTENTS, TutorIntentClassifier
 from .tutor_math_normalizer import TutorMathNormalizer
 from .tutor_math_response_guard import TutorMathResponseGuard
+from .tutor_progressive_hints import build_progressive_hint_reply, build_progressive_hint_reply_with_fallback
 from .tutor_word_problem import (
     StructuredWordProblem,
     TutorWordProblemInterpreter,
@@ -74,11 +75,12 @@ from ..utils.multi_step_progress import (
     has_structured_math_problem,
     update_multi_step_progress,
 )
-from ..utils.tutor_response import format_student_reply, looks_incomplete_response
+from ..utils.tutor_response import contextual_unit_feedback, ensure_contextual_final_answer, format_contextual_math_answer, format_student_reply, looks_incomplete_response
 from ..utils.task_lifecycle import (
     complete_active_task,
     pause_active_task,
     reconcile_task_lifecycle,
+    sync_active_task,
     transition_to_task,
 )
 from ..utils.attempt_policy import ensure_answer_attempt_registered, preserve_attempt_progress, preserve_tutor_practice_context
@@ -93,10 +95,13 @@ MAX_AUDIO_BYTES = 12 * 1024 * 1024
 
 def _correct_math_answer_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
     expected = answer_check.expected_answer or state.expected_answer or 'that answer'
+    expected_display = format_contextual_math_answer(state, expected)
     expression = _display_math_expression_from_state(state, current_step)
+    unit_note = contextual_unit_feedback(state, state.student_answer)
+    unit_line = f'\n\n{unit_note}' if unit_note else ''
     if expression:
-        return f"Yes, that's correct!\n\n{expression} = {expected}.\n\nNice work. Let's keep going one small step at a time."
-    return f"Yes, that's correct!\n\nThe answer is {expected}.\n\nNice work. Let's keep going one small step at a time."
+        return f"Yes, that's correct!\n\n{expression} = {expected_display}.{unit_line}\n\nNice work. Let's keep going one small step at a time."
+    return f"Yes, that's correct!\n\nThe answer is {expected_display}.{unit_line}\n\nNice work. Let's keep going one small step at a time."
 
 
 def _text_answer_check_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
@@ -319,29 +324,15 @@ def _tutor_practice_answer_reply(
         reply = f"Yes, that's correct!\n\n{_display_tutor_math_question(explanation)}\n\nWould you like another practice question?"
         return reply, _finished_tutor_practice_state(state, student_answer, 'correct', expected)
 
-    if attempt_count <= 1:
-        hint = state.tutor_practice_hint_1 or 'Look at the numbers carefully and try one small step.'
-        reply = f"Good try.\n\nHint: {hint}\n\nTry this same question again: {_display_tutor_math_question(state.current_question)}"
-        return reply, state.model_copy(update={
+    if attempt_count in {1, 2}:
+        guidance_state = state.model_copy(update={
             'student_answer': student_answer,
             'correctness_status': 'incorrect',
-            'attempt_count': 1,
-            'hint_given': True,
+            'attempt_count': attempt_count,
             'answer_revealed': False,
             'status': 'waiting_for_student',
         })
-
-    if attempt_count == 2:
-        hint = state.tutor_practice_hint_2 or state.tutor_practice_hint_1 or 'Try writing the calculation one step at a time.'
-        reply = f"You're close. Let's use one stronger hint.\n\nHint: {hint}\n\nTry one more time: {_display_tutor_math_question(state.current_question)}"
-        return reply, state.model_copy(update={
-            'student_answer': student_answer,
-            'correctness_status': 'incorrect',
-            'attempt_count': 2,
-            'hint_given': True,
-            'answer_revealed': False,
-            'status': 'waiting_for_student',
-        })
+        return build_progressive_hint_reply(guidance_state, help_request=False)
 
     expected = state.expected_answer or local_check.expected_answer
     explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
@@ -387,6 +378,14 @@ def _display_tutor_math_question(question: str) -> str:
 
 def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
     expected = answer_check.expected_answer or state.expected_answer or 'the answer'
+    if state.problem_kind == 'word_problem' and not state.ordered_steps:
+        expected_display = format_contextual_math_answer(state, expected)
+        expression = _display_math_expression_from_state(state, current_step)
+        return (
+            "Nice effort. Let's finish this problem together.\n\n"
+            f"{expression} = {expected_display}.\n\n"
+            f"**Final answer:** {expected_display}."
+        )
     step_expression = (
         answer_check.checked_expression
         or extract_math_expression(state.current_question or current_step or state.current_step)
@@ -418,6 +417,8 @@ def _substep_reveal_continue_reply(answer_check, state: TutoringState, current_s
 
 def _substep_correct_finish_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
     expected = answer_check.expected_answer or state.expected_answer or 'that answer'
+    if state.problem_kind == 'word_problem' and not state.ordered_steps:
+        return _correct_math_answer_reply(answer_check, state, current_step)
     step_expression = (
         answer_check.checked_expression
         or extract_math_expression(state.current_question or current_step or state.current_step)
@@ -962,7 +963,7 @@ class VoiceService:
             detect_off_subject_request(subject, effective_transcript, tutoring_state)
             or subject_assist.label == 'off_subject'
             or uncertain_subject_boundary
-        ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
+        ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'help_request', 'related_question', 'emotion', 'pause', 'resume', 'meta_feedback'}:
             final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
                 'current_subject': subject,
                 'student_answer': transcript,
@@ -1368,6 +1369,7 @@ class VoiceService:
                 answer_check,
                 action_intent,
             )
+            final_state = sync_active_task(final_state)
             result_provider = 'local'
             result_model = 'deterministic-voice-tutor-math-practice-check'
             special_local_reply = True
@@ -1448,6 +1450,15 @@ class VoiceService:
             result_model = 'deterministic-voice-tutor-math-practice-support'
             special_local_reply = True
         elif (
+            subject == 'Math'
+            and intent_assist.label == 'help_request'
+            and bool(next_state.current_question or next_state.current_step or next_state.active_problem)
+        ):
+            formatted_reply, final_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(next_state, help_request=True)
+            result_provider = 'local'
+            result_model = 'strict-llm-voice-progressive-hint' if hint_model == 'strict-llm-progressive-hint' else 'deterministic-voice-progressive-hint'
+            special_local_reply = True
+        elif (
             _is_tutor_practice_question_state(tutoring_state)
             and (
                 intent_assist.label == 'answer_current_step'
@@ -1489,7 +1500,7 @@ class VoiceService:
                 'mode': 'clarify_word_problem',
                 'status': 'waiting_for_student',
             })
-            formatted_reply = build_word_problem_clarification_reply()
+            formatted_reply = build_word_problem_clarification_reply(word_problem)
             result_provider = 'local'
             result_model = 'deterministic-voice-word-problem-clarification'
             special_local_reply = True
@@ -1600,10 +1611,9 @@ class VoiceService:
             result_provider = 'local'
             result_model = 'deterministic-structured-step-completion'
         elif structured_progression and answer_check and answer_check.is_wrong and next_state.attempt_count in {1, 2}:
-            final_state = next_state
-            formatted_reply = build_structured_retry_reply(next_state, next_state.attempt_count)
+            formatted_reply, final_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(next_state, help_request=False)
             result_provider = 'local'
-            result_model = f'deterministic-structured-step-hint-{next_state.attempt_count}'
+            result_model = 'strict-llm-structured-step-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-structured-step-hint-{next_state.attempt_count}'
         elif structured_progression and answer_check and answer_check.is_wrong and next_state.attempt_count >= 3:
             final_state = advance_structured_math_problem(next_state, answer_check.expected_answer or next_state.expected_answer)
             formatted_reply = build_structured_step_reply(next_state, final_state, reveal=True)
@@ -1622,6 +1632,15 @@ class VoiceService:
             formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = 'deterministic-current-math-check'
+        elif (
+            answer_check
+            and answer_check.is_wrong
+            and subject == 'Math'
+            and next_state.attempt_count in {1, 2}
+        ):
+            formatted_reply, final_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(next_state, help_request=False)
+            result_provider = 'local'
+            result_model = 'strict-llm-progressive-attempt-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-progressive-attempt-hint-{next_state.attempt_count}'
         elif answer_check and subject != 'Math' and (answer_check.expected_answer or answer_check.feedback_note or answer_check.status in {'correct', 'incorrect', 'partially_correct'}):
             formatted_reply = _text_answer_check_reply(answer_check, next_state, current_step)
             result_provider = 'local'
@@ -1652,6 +1671,7 @@ class VoiceService:
                 formatted_reply = format_student_reply(f'{formatted_reply}\n\n{continuation.text}')
             result_provider = result.provider
             result_model = result.model
+        formatted_reply = ensure_contextual_final_answer(formatted_reply, next_state)
         math_response_guard = TutorMathResponseGuard()
         math_guard_result = None
         if subject == 'Math':
@@ -1687,7 +1707,10 @@ class VoiceService:
                     'paused_expected_answer': '',
                     'paused_completed_steps': [],
                 })
-        if intent_assist.label in {'greeting', 'acknowledge', 'continue_current', 'related_question', 'help_request', 'meta_feedback'}:
+        if (
+            intent_assist.label in {'greeting', 'acknowledge', 'continue_current', 'related_question', 'help_request', 'meta_feedback'}
+            and result_model != 'deterministic-voice-tutor-math-practice-check'
+        ):
             final_state = preserve_tutor_practice_context(tutoring_state, final_state)
         if math_guard_result is not None:
             final_state = math_response_guard.apply_metadata(final_state, math_guard_result, result_model)

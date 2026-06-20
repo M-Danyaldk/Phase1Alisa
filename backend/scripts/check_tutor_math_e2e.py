@@ -99,6 +99,18 @@ async def _run() -> list[str]:
         _expect(topic_state.expected_answer == '1/4', 'Topic-start did not store the expected answer.', failures)
         _expect(topic_state.attempt_count == 0, 'Topic-start counted the topic request as an answer attempt.', failures)
 
+        practice_hint_1 = await _send('give me a hint', topic_state)
+        practice_hint_2 = await _send("I still don't understand", practice_hint_1.tutoring_state)
+        practice_wrong = await _send('2/4', practice_hint_2.tutoring_state)
+        practice_support = next(iter(practice_wrong.tutoring_state.support_per_step.values()), None)
+        _expect(
+            practice_wrong.tutoring_state.attempt_count == 1
+            and practice_support is not None
+            and practice_support.help_level == 3,
+            f'A wrong practice answer after two hints did not advance to worked-substep guidance: attempts={practice_wrong.tutoring_state.attempt_count}, support={practice_wrong.tutoring_state.support_per_step!r}, model={practice_wrong.model}, first={practice_hint_1.tutoring_state.support_per_step!r}, second={practice_hint_2.tutoring_state.support_per_step!r}, reply={practice_wrong.reply!r}.',
+            failures,
+        )
+
         topic_help = await _send('what is the denominator in this fraction?', topic_state)
         helped_state = topic_help.tutoring_state
         _expect(topic_help.model == 'deterministic-tutor-math-practice-support', 'Topic help did not use deterministic tutor-practice support.', failures)
@@ -128,7 +140,25 @@ async def _run() -> list[str]:
         state = started.tutoring_state
         _expect(started.model == 'deterministic-structured-word-problem', 'Word problem did not enter deterministic structured flow.', failures)
         _expect(state.expected_answer == '14' and state.current_question, 'Word problem did not store its verified current step.', failures)
+        _expect(state.display_answer == '14 balls', 'Word problem did not store its contextual answer.', failures)
         task_id = state.active_task_id
+
+        first_help = await _send('give me a hint', state)
+        second_help = await _send("I still don't understand", first_help.tutoring_state)
+        third_help = await _send('help me again', second_help.tutoring_state)
+        hint_support = next(iter(third_help.tutoring_state.support_per_step.values()), None)
+        _expect(
+            third_help.tutoring_state.attempt_count == 0,
+            'Repeated help requests were counted as answer attempts.',
+            failures,
+        )
+        _expect(
+            hint_support is not None
+            and hint_support.shown_hint_ids == ['concept', 'strategy', 'worked_substep'],
+            f'Endpoint help did not advance through three distinct hints: {third_help.tutoring_state.support_per_step!r}; models={first_help.model},{second_help.model},{third_help.model}.',
+            failures,
+        )
+        state = started.tutoring_state
 
         emotional = await _send("I'm bad at math", state)
         state = emotional.tutoring_state
@@ -142,7 +172,7 @@ async def _run() -> list[str]:
         first_wrong = await _send('10', state)
         state = first_wrong.tutoring_state
         _expect(state.attempt_count == 1, 'First wrong answer did not register exactly once.', failures)
-        _expect('incorrect_arithmetic' in state.last_response_violations, 'Bad generated arithmetic was not repaired at the endpoint.', failures)
+        _expect(first_wrong.model == 'deterministic-progressive-attempt-hint-1', 'First wrong answer did not use deterministic progressive guidance.', failures)
         _expect(state.current_question and state.problem_status != 'finished', 'Response repair did not keep the current question active.', failures)
         _expect('= 12' not in first_wrong.reply, 'Bad arithmetic reached the student response.', failures)
 
@@ -156,6 +186,7 @@ async def _run() -> list[str]:
 
         third_wrong = await _send('13', state)
         state = third_wrong.tutoring_state
+        _expect('14 balls' in third_wrong.reply, f'One-step reveal omitted the answer unit: {third_wrong.reply!r}.', failures)
         _expect('7 × 2 = 14' in third_wrong.reply, 'Third attempt did not permit the verified reveal.', failures)
         _expect(state.active_task_id == '', 'Completed one-step task remained active.', failures)
         _expect(any(record.status == 'completed' for record in state.task_records), 'Completed task was not recorded in lifecycle history.', failures)
@@ -177,7 +208,25 @@ async def _run() -> list[str]:
         _expect(multi_state.expected_answer == '800', 'Multi-step problem did not advance to subtraction.', failures)
         finished = await _send('800', multi_state)
         _expect(finished.tutoring_state.final_answer == '800', 'Multi-step journey did not finish with 800.', failures)
+        _expect('800 empty seats' in finished.reply, 'Multi-step completion omitted the contextual answer label.', failures)
         _expect(finished.tutoring_state.active_task_id == '', 'Finished multi-step task remained active.', failures)
+
+        unit_multi = await _send('A theater has 20 rows with 30 seats in each row. If 100 students attend, how many seats are empty?', finished.tutoring_state)
+        unit_state = unit_multi.tutoring_state
+        unit_step_one = await _send('600', unit_state)
+        unit_state = unit_step_one.tutoring_state
+        unit_finished = await _send('500 balls', unit_state)
+        _expect('500 empty seats' in unit_finished.reply, 'Contradictory-unit answer did not keep the verified contextual answer.', failures)
+        _expect('not **ball**' in unit_finished.reply, 'Contradictory-unit answer did not explain the unit correction.', failures)
+        clean_after_unit_state = unit_finished.tutoring_state
+
+        fraction_story = await _send('A pizza has 8 slices and Mia ate 3 slices. What fraction did Mia eat?', clean_after_unit_state)
+        _expect(fraction_story.tutoring_state.expected_answer == '3/8', 'Fraction word problem did not store 3/8 as the expected answer.', failures)
+        _expect(fraction_story.tutoring_state.current_step == '3 / 8', 'Fraction word problem did not build the eaten/whole expression.', failures)
+
+        missing_info = await _send('A shop sold 15 items. How many are left?', clean_after_unit_state)
+        _expect(missing_info.model == 'deterministic-word-problem-clarification', 'Missing-information word problem did not use clarification path.', failures)
+        _expect('start' in missing_info.reply.lower(), 'Missing-information reply did not ask for the starting amount.', failures)
 
         safety_problem = await _send('There are 3 boxes with 4 balls in each box. How many balls are there?', finished.tutoring_state)
         safety = await _send("I don't feel safe", safety_problem.tutoring_state)

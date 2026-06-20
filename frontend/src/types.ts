@@ -33,6 +33,14 @@ export type TutorStepRecord = {
   status?: string;
   attempts?: number;
   explanation?: string;
+  output_label?: string;
+  output_unit?: string;
+  strategy?: string;
+};
+
+export type TutorStepSupportState = {
+  help_level?: number;
+  shown_hint_ids?: string[];
 };
 
 export type TutorHelperBranch = {
@@ -82,9 +90,13 @@ export type TutoringState = {
   completed_step_results?: string[];
   step_results?: Record<string, string>;
   attempts_per_step?: Record<string, number>;
+  support_per_step?: Record<string, TutorStepSupportState>;
   current_step: string;
   current_question?: string;
   expected_answer?: string;
+  answer_unit?: string;
+  answer_label?: string;
+  display_answer?: string;
   student_answer?: string;
   correctness_status?: string;
   skill?: string;

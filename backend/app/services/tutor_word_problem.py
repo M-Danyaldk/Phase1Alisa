@@ -16,6 +16,7 @@ NUMBER_TOKEN = r'(?<![\d/])-?\d+(?:/\d+|\.\d+)?(?![\d/])'
 
 class WordProblemQuantity(BaseModel):
     value: str
+    unit: str = ''
     label: str = ''
     role: str = 'given'
 
@@ -26,8 +27,10 @@ class StructuredWordProblem(BaseModel):
     operation: str = ''
     quantities: list[WordProblemQuantity] = Field(default_factory=list)
     unknown_label: str = ''
+    unit: str = ''
     expression: str = ''
     expected_answer: str = ''
+    clarification_question: str = ''
     confidence: str = 'low'
     source: str = 'none'
     validation_status: str = 'rejected'
@@ -47,12 +50,14 @@ class TutorWordProblemInterpreter:
         if subject != 'Math':
             return False
         text = self._clean_problem_text(message)
-        if len(re.findall(NUMBER_TOKEN, text)) < 2:
+        number_count = len(re.findall(NUMBER_TOKEN, text))
+        if number_count < 2 and not self._looks_like_missing_start_quantity(text):
             return False
         markers = (
             'each', 'every', 'altogether', 'in total', 'total', 'left', 'remain',
             'shared', 'equally', 'per ', 'more', 'sold', 'gave', 'ate', 'empty',
-            'capacity', 'rows', 'boxes', 'groups', 'how many',
+            'capacity', 'rows', 'boxes', 'groups', 'how many', 'fraction',
+            'shaded', 'unshaded', 'absent', 'parts',
         )
         has_words = bool(re.search(r'[a-zA-Z]{3,}', text))
         return has_words and any(marker in text for marker in markers)
@@ -65,6 +70,8 @@ class TutorWordProblemInterpreter:
         verified = self._validate(message, deterministic)
         if verified.accepted:
             return verified
+        if deterministic.clarification_question:
+            return deterministic
 
         proposed = await self._interpret_with_llm(message)
         return self._validate(message, proposed)
@@ -73,14 +80,31 @@ class TutorWordProblemInterpreter:
         text = self._clean_problem_text(message)
         values = re.findall(NUMBER_TOKEN, text)
         if len(values) < 2:
-            return StructuredWordProblem(original_text=message)
+            clarification = self._missing_start_quantity_question(text)
+            return StructuredWordProblem(
+                original_text=message,
+                clarification_question=clarification,
+                confidence='low',
+                source='deterministic_missing_information',
+            )
 
         expression = ''
         operation = ''
+        fraction_parse = self._fraction_of_whole_expression(text, values)
         asks_for_group_count = self._asks_for_group_count(text)
         asks_for_difference = bool(re.search(r'\bhow (?:many|much) (?:more|fewer|less)\b|\bdifference\b', text))
         inverse_more_relation = bool(re.search(r'\b(?:is|which is)\s+\d+(?:/\d+|\.\d+)?\s+more than\b', text))
-        if len(values) == 2 and (asks_for_difference or inverse_more_relation):
+        if fraction_parse:
+            expression, operation = fraction_parse
+        elif self._looks_like_missing_start_quantity(text):
+            return StructuredWordProblem(
+                original_text=message,
+                quantities=[WordProblemQuantity(value=value) for value in values],
+                clarification_question=self._missing_start_quantity_question(text),
+                confidence='low',
+                source='deterministic_missing_information',
+            )
+        elif len(values) == 2 and (asks_for_difference or inverse_more_relation):
             expression, operation = self._positive_difference_expression(values), 'subtraction'
         elif len(values) == 3 and any(word in text for word in ('sold', 'gave away', 'ate ', 'eaten')) and any(word in text for word in ('more', 'baked', 'received', 'added')):
             expression, operation = f'{values[0]} - {values[1]} + {values[2]}', 'subtract_then_add'
@@ -96,10 +120,13 @@ class TutorWordProblemInterpreter:
         elif len(values) == 2 and any(word in text for word in ('left', 'remain', 'sold', 'gave away', 'ate ', 'eaten', 'empty', 'occupied', 'used')):
             expression, operation = f'{values[0]} - {values[1]}', 'subtraction'
 
+        answer_label, answer_unit = self._requested_answer_context(text)
         return StructuredWordProblem(
             original_text=message,
             operation=operation,
             quantities=[WordProblemQuantity(value=value) for value in values],
+            unknown_label=answer_label,
+            unit=answer_unit,
             expression=expression,
             confidence='high' if expression else 'low',
             source='deterministic',
@@ -123,12 +150,21 @@ class TutorWordProblemInterpreter:
                 problem_type=strict_problem.problem_kind,
                 operation=strict_problem.operation,
                 quantities=[
-                    WordProblemQuantity(value=quantity.value, label=quantity.label, role=quantity.role)
+                    WordProblemQuantity(
+                        value=quantity.value,
+                        unit=quantity.unit,
+                        label=quantity.label,
+                        role=quantity.role,
+                    )
                     for quantity in strict_problem.quantities
                 ],
                 unknown_label=strict_problem.requested_value or '',
+                unit=strict_problem.unit or '',
                 expression=strict_problem.expression or '',
                 confidence=strict_problem.confidence,
+                clarification_question='' if strict_problem.sufficient_information else (
+                    'What starting amount should we use before finding what is left?'
+                ),
                 source='llm',
             )
         except Exception:
@@ -143,7 +179,10 @@ class TutorWordProblemInterpreter:
 
         source_numbers = Counter(self._canonical_numbers(message))
         expression_numbers = Counter(self._canonical_numbers(expression))
-        if not expression_numbers or any(count > source_numbers[number] for number, count in expression_numbers.items()):
+        if not expression_numbers or any(
+            count > self._allowed_expression_number_count(number, count, source_numbers, proposed)
+            for number, count in expression_numbers.items()
+        ):
             return proposed.model_copy(update={'validation_status': 'rejected', 'expected_answer': ''})
         if len(expression) > 120 or len(expression_numbers) > 4:
             return proposed.model_copy(update={'validation_status': 'rejected', 'expected_answer': ''})
@@ -153,11 +192,31 @@ class TutorWordProblemInterpreter:
         value = safe_eval_expression(expression)
         if value is None:
             return proposed.model_copy(update={'validation_status': 'rejected', 'expected_answer': ''})
+        fallback_label, fallback_unit = self._requested_answer_context(self._clean_problem_text(message))
         return proposed.model_copy(update={
             'expression': expression,
             'expected_answer': format_fraction(value),
+            'unknown_label': proposed.unknown_label or fallback_label,
+            'unit': proposed.unit or fallback_unit,
             'validation_status': 'verified',
         })
+
+    def _requested_answer_context(self, text: str) -> tuple[str, str]:
+        described_match = re.search(
+            r'\bhow many\s+([a-z][a-z-]*)\s+(?:are|were|will be|remain)\s+'
+            r'(empty|left|remaining|unused|occupied)\b',
+            text,
+        )
+        if described_match:
+            unit, descriptor = described_match.groups()
+            return f'{descriptor} {unit}', unit
+
+        count_match = re.search(r'\bhow many\s+([a-z][a-z-]*)\b', text)
+        if count_match:
+            unit = count_match.group(1)
+            return unit, unit
+
+        return '', ''
 
     def _canonical_numbers(self, text: str) -> list[str]:
         values = re.findall(NUMBER_TOKEN, self._clean_problem_text(text))
@@ -180,6 +239,8 @@ class TutorWordProblemInterpreter:
     def _operation_matches_text(self, message: str, expression: str) -> bool:
         text = self._clean_problem_text(message)
         compact = expression.replace(' ', '')
+        if self._asks_for_fraction_of_whole(text):
+            return '/' in compact
         if re.search(r'\bhow (?:many|much) (?:more|fewer|less)\b|\bdifference\b|\b(?:is|which is)\s+\d+(?:/\d+|\.\d+)?\s+more than\b', text):
             return '-' in compact
         if self._asks_for_group_count(text) or self._has_equal_sharing(text):
@@ -203,6 +264,54 @@ class TutorWordProblemInterpreter:
         return any(marker in text for marker in direct_markers) or (
             'equally' in text and bool(re.search(r'\b(?:share|shares|shared|split|divide|divides|divided|distribute|distributed)\b', text))
         )
+
+    def _asks_for_fraction_of_whole(self, text: str) -> bool:
+        return bool(re.search(r'\bwhat fraction\b|\bfraction of\b|\bwhat part\b', text))
+
+    def _fraction_of_whole_expression(self, text: str, values: list[str]) -> tuple[str, str] | None:
+        if len(values) != 2 or not self._asks_for_fraction_of_whole(text):
+            return None
+        if any(marker in text for marker in ('left', 'remaining', 'remain', 'unshaded')):
+            return f'({values[0]} - {values[1]}) / {values[0]}', 'fraction_remaining'
+        if any(marker in text for marker in ('ate ', 'eaten', 'used', 'took', 'spent', 'colored', 'shaded')):
+            return f'{values[1]} / {values[0]}', 'fraction_of_whole'
+        if any(marker in text for marker in ('absent', 'present')):
+            return f'{values[1]} / {values[0]}', 'fraction_of_whole'
+        return f'{values[1]} / {values[0]}', 'fraction_of_whole'
+
+    def _allowed_expression_number_count(
+        self,
+        number: str,
+        expression_count: int,
+        source_numbers: Counter,
+        proposed: StructuredWordProblem,
+    ) -> int:
+        allowed = source_numbers[number]
+        if proposed.operation == 'fraction_remaining' and allowed and expression_count == allowed + 1:
+            return expression_count
+        return allowed
+
+    def _looks_like_missing_start_quantity(self, text: str) -> bool:
+        values = re.findall(NUMBER_TOKEN, text)
+        asks_left = bool(re.search(r'\bhow many\b.*\b(?:left|remain|remaining)\b|\bhow many are left\b', text))
+        change_without_start = any(marker in text for marker in ('sold', 'gave away', 'ate ', 'eaten', 'used', 'spent', 'lost'))
+        return len(values) == 1 and asks_left and change_without_start
+
+    def _missing_start_quantity_question(self, text: str) -> str:
+        unit = self._changed_unit(text)
+        if unit:
+            return f'How many {unit} were there at the start?'
+        return 'What was the starting amount before some were used or taken away?'
+
+    def _changed_unit(self, text: str) -> str:
+        match = re.search(
+            rf'\b(?:sold|used|lost|spent|ate|eaten|gave away)\s+{NUMBER_TOKEN}\s+([a-z][a-z-]*)',
+            text,
+        )
+        if match:
+            return match.group(1)
+        match = re.search(r'\bhow many\s+([a-z][a-z-]*)\s+(?:are\s+)?(?:left|remain|remaining)\b', text)
+        return match.group(1) if match else ''
 
     def _positive_difference_expression(self, values: list[str]) -> str:
         return self._larger_first_expression(values, '-')
@@ -260,10 +369,20 @@ def apply_word_problem_state(
     if not problem.accepted:
         return current_state
     if current_state.ordered_steps and current_state.current_step_id:
+        ordered_steps = list(current_state.ordered_steps)
+        if ordered_steps:
+            ordered_steps[-1] = ordered_steps[-1].model_copy(update={
+                'output_label': problem.unknown_label,
+                'output_unit': problem.unit,
+            })
         structured = current_state.model_copy(update={
             'problem_kind': 'word_problem',
             'word_problem_schema': problem.model_dump(),
             'full_problem': problem.original_text,
+            'ordered_steps': ordered_steps,
+            'answer_unit': problem.unit,
+            'answer_label': problem.unknown_label,
+            'display_answer': _contextual_answer(problem.expected_answer, problem.unknown_label),
         })
         return transition_to_task(
             previous_state,
@@ -284,6 +403,9 @@ def apply_word_problem_state(
         'current_step': problem.expression,
         'current_question': f'What is {display}?',
         'expected_answer': problem.expected_answer,
+        'answer_unit': problem.unit,
+        'answer_label': problem.unknown_label,
+        'display_answer': _contextual_answer(problem.expected_answer, problem.unknown_label),
         'skill': problem.operation,
         'step_number': 1,
         'attempt_count': 0,
@@ -314,7 +436,13 @@ def build_word_problem_start_reply(problem: StructuredWordProblem) -> str:
     )
 
 
-def build_word_problem_clarification_reply() -> str:
+def build_word_problem_clarification_reply(problem: StructuredWordProblem | None = None) -> str:
+    clarification = (problem.clarification_question if problem else '').strip()
+    if clarification:
+        return (
+            'I can see this is a Math word problem, but one important piece is missing.\n\n'
+            f'{clarification}'
+        )
     return (
         'I can see this is a Math word problem, but I am not certain which quantities should be combined.\n\n'
         'Can you tell me what the question asks us to find—for example, the **total**, the amount **left**, '
@@ -327,3 +455,9 @@ def _display_expression(problem: StructuredWordProblem) -> str:
     if problem.operation == 'division' and re.fullmatch(r'\s*-?\d+(?:\.\d+)?\s*/\s*-?\d+(?:\.\d+)?\s*', display):
         display = display.replace('/', '÷')
     return display
+
+
+def _contextual_answer(value: str, label: str) -> str:
+    clean_value = str(value or '').strip()
+    clean_label = ' '.join(str(label or '').strip().split())
+    return f'{clean_value} {clean_label}'.strip()

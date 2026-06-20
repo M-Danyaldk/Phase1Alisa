@@ -98,7 +98,7 @@ SWITCH_TASK_PHRASES = [
 
 ACTION_INTENTS = {
     'hint': ['hint', 'give me a hint', 'help without answer'],
-    'explain_again': ['explain again', 'explain that again', 'explain it again', 'say it another way', 'show me again', 'one more time', "i still don't get it", 'i still do not get it'],
+    'explain_again': ['explain again', 'explain that again', 'explain it again', 'say it another way', 'show me again', 'one more time', "i still don't get it", 'i still do not get it', "i still don't understand", 'i still do not understand'],
     'example': ['example', 'give me an example', 'show example'],
     'check_answer': ['check my answer', 'is this right', 'is my answer right', 'check this'],
     'clarify_prompt': [
@@ -120,6 +120,15 @@ ACTION_INTENTS = {
 SUBJECT_SWITCH_PATTERN = re.compile(
     r'\b(?:switch|change|move|go)(?:\s+(?:subjects?|over))?\s+'
     r'(?:to|back\s+to)\s+'
+    r'(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)\b'
+)
+SIMPLE_SUBJECT_COMMAND_PATTERN = re.compile(
+    r'^(?:(?:start|switch\s+to|go\s+to|change\s+to|practice|study|learn|do|try|open|begin|help\s+me\s+with|work\s+on|teach\s+me)\s+)?'
+    r'(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)'
+    r'\s*(?:please|now)?[.!?]*$'
+)
+COMMANDED_SUBJECT_PATTERN = re.compile(
+    r'^(?:start|practice|study|learn|do|try|help\s+me\s+with|work\s+on|teach\s+me|write)\s+'
     r'(maths?|mathematics|arithmetic|ela|english(?:\s+language\s+arts)?|language\s+arts|reading|writing)\b'
 )
 MATH_TOPIC_WORDS = {
@@ -196,7 +205,12 @@ def detect_explicit_subject_switch(message: str) -> bool:
 
 
 def resolve_explicit_subject_switch(message: str) -> str | None:
-    match = SUBJECT_SWITCH_PATTERN.search(_normalized(message))
+    text = _normalized(message)
+    match = (
+        SUBJECT_SWITCH_PATTERN.search(text)
+        or SIMPLE_SUBJECT_COMMAND_PATTERN.search(text)
+        or COMMANDED_SUBJECT_PATTERN.search(text)
+    )
     if not match:
         return None
     alias = match.group(1)
@@ -429,8 +443,15 @@ def _looks_like_answer_to_current_math_step(message: str, current_question: str)
         return False
     if re.fullmatch(r'-?\d+(?:/\d+)?(?:\.\d+)?', text):
         return True
+    if re.fullmatch(r'-?\d+(?:/\d+)?(?:\.\d+)?\s+[a-z][a-z\s-]{1,30}', text):
+        return True
     if re.fullmatch(
         r'(?:my answer|answer|answer is|it is|its|it\'s|i got|i think it is|i think)\s*-?\d+(?:/\d+)?(?:\.\d+)?',
+        text,
+    ):
+        return True
+    if re.fullmatch(
+        r'(?:my answer|answer|answer is|it is|its|it\'s|i got|i think it is|i think)\s*-?\d+(?:/\d+)?(?:\.\d+)?\s+[a-z][a-z\s-]{1,30}',
         text,
     ):
         return True
@@ -731,6 +752,10 @@ def _structured_state_fields(state: TutoringState) -> dict:
         'completed_step_results': state.completed_step_results,
         'step_results': state.step_results,
         'attempts_per_step': state.attempts_per_step,
+        'support_per_step': state.support_per_step,
+        'answer_unit': state.answer_unit,
+        'answer_label': state.answer_label,
+        'display_answer': state.display_answer,
         'emotion_label': state.emotion_label,
         'emotion_intensity': state.emotion_intensity,
         'emotional_support_count': state.emotional_support_count,

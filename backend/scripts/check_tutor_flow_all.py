@@ -17,6 +17,7 @@ from backend.scripts.check_tutor_production_readiness import main as tutor_produ
 from backend.scripts.check_tutor_topic_lessons import main as tutor_topic_lessons_main
 from backend.scripts.check_tutor_topic_e2e_matrix import main as tutor_topic_e2e_matrix_main
 from backend.scripts.check_tutor_subject_baseline import main as tutor_subject_baseline_main
+from backend.scripts.check_tutor_progressive_hints import main as tutor_progressive_hints_main
 
 import asyncio
 
@@ -42,6 +43,9 @@ def main() -> None:
     print('')
     print('Running tutor attempt policy check...')
     tutor_attempt_policy_main()
+    print('')
+    print('Running tutor progressive-hint check...')
+    tutor_progressive_hints_main()
     print('')
     print('Running tutor word-problem schema check...')
     tutor_word_problem_schema_main()

@@ -88,6 +88,18 @@ async def _run() -> list[str]:
         _expect(started['model'] == 'deterministic-voice-structured-word-problem', 'Voice word problem did not use the structured schema.', failures)
         _expect(state.expected_answer == '14' and bool(state.active_task_id), 'Voice word problem lost its answer or lifecycle task.', failures)
 
+        voice_hint_1 = await _turn(service, 'give me a hint', state)
+        voice_hint_2 = await _turn(service, "I still don't understand", voice_hint_1['tutoring_state'])
+        voice_hint_3 = await _turn(service, 'help me again', voice_hint_2['tutoring_state'])
+        voice_support = next(iter(voice_hint_3['tutoring_state'].support_per_step.values()), None)
+        _expect(voice_hint_3['tutoring_state'].attempt_count == 0, 'Voice help requests changed the answer-attempt count.', failures)
+        _expect(
+            voice_support is not None and voice_support.shown_hint_ids == ['concept', 'strategy', 'worked_substep'],
+            'Voice help did not advance through distinct progressive hints.',
+            failures,
+        )
+        state = started['tutoring_state']
+
         emotion = await _turn(service, "Why is this so hard? I'm frustrated", state)
         state = emotion['tutoring_state']
         _expect(state.mode == 'emotional_checkin' and state.expected_answer == '14', 'Voice emotion handling lost the Math step.', failures)
@@ -98,7 +110,8 @@ async def _run() -> list[str]:
         wrong = await _turn(service, '10', state)
         state = wrong['tutoring_state']
         _expect(state.attempt_count == 1, 'Voice answer did not use the shared attempt policy.', failures)
-        _expect('incorrect_arithmetic' in state.last_response_violations and '= 12' not in wrong['assistant_text'], 'Voice response guard did not repair bad arithmetic.', failures)
+        _expect(wrong['model'] == 'deterministic-progressive-attempt-hint-1', 'Voice wrong answer did not use deterministic progressive guidance.', failures)
+        _expect('= 12' not in wrong['assistant_text'], 'Bad arithmetic reached the voice response.', failures)
 
         reading_switch = await _turn(service, 'switch to reading', state, thread_id='stale-math-thread')
         reading_state = reading_switch['tutoring_state']

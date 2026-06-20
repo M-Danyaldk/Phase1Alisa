@@ -5,6 +5,7 @@ import backend.app.main as main_module
 import backend.app.services.tutor_word_problem as word_problem_module
 from backend.app.models import ChatOpeningRequest, ChatRequest, StudentProfile, TutoringState
 from backend.app.services.llm.base import LLMResult
+from backend.app.tutoring_logic import resolve_explicit_subject_switch
 
 
 class _MemoryChatStore:
@@ -110,6 +111,45 @@ def _check_frontend_entry_contracts(failures: list[str]) -> None:
     _expect('initialSubject="Writing"' in app, 'Practice Writing no longer opens the Writing tutor.', failures)
 
 
+def _check_subject_switch_phrases(failures: list[str]) -> None:
+    cases = [
+        ('reading', 'ELA'),
+        ('Reading', 'ELA'),
+        ('READING', 'ELA'),
+        ('writing', 'Writing'),
+        ('Writing', 'Writing'),
+        ('WRITING', 'Writing'),
+        ('math', 'Math'),
+        ('Math', 'Math'),
+        ('MATH', 'Math'),
+        ('maths', 'Math'),
+        ('Maths', 'Math'),
+        ('MATHS', 'Math'),
+        ('start reading', 'ELA'),
+        ('Start Reading', 'ELA'),
+        ('START READING', 'ELA'),
+        ('start writing', 'Writing'),
+        ('Start Writing', 'Writing'),
+        ('start math', 'Math'),
+        ('start maths', 'Math'),
+        ('Start Maths', 'Math'),
+        ('write reading', 'ELA'),
+        ('write writing', 'Writing'),
+        ('write maths', 'Math'),
+    ]
+    for message, expected in cases:
+        _expect(resolve_explicit_subject_switch(message) == expected, f'Subject phrase "{message}" did not resolve to {expected}.', failures)
+
+    negative_cases = [
+        'write a paragraph about fractions',
+        'This reading passage mentions fractions.',
+        'What is a numerator?',
+        'explain this again',
+    ]
+    for message in negative_cases:
+        _expect(resolve_explicit_subject_switch(message) is None, f'Subject phrase "{message}" switched unexpectedly.', failures)
+
+
 async def _run() -> list[str]:
     failures: list[str] = []
     originals = {
@@ -131,6 +171,7 @@ async def _run() -> list[str]:
     _SubjectRouter.generated_subjects = []
     try:
         _check_frontend_entry_contracts(failures)
+        _check_subject_switch_phrases(failures)
 
         prompts = {
             'Math': 'What does numerator mean?',

@@ -79,6 +79,7 @@ def preserve_attempt_progress(source: TutoringState, target: TutoringState) -> T
     return target.model_copy(update={
         'attempt_count': source.attempt_count,
         'attempts_per_step': dict(source.attempts_per_step),
+        'support_per_step': {**source.support_per_step, **target.support_per_step},
         'hint_given': source.hint_given,
         'answer_revealed': source.answer_revealed,
     })
@@ -99,7 +100,8 @@ def preserve_tutor_practice_context(source: TutoringState, target: TutoringState
         'step_number': source.step_number,
         'attempt_count': source.attempt_count,
         'attempts_per_step': dict(source.attempts_per_step),
-        'hint_given': source.hint_given,
+        'support_per_step': {**source.support_per_step, **target.support_per_step},
+        'hint_given': source.hint_given or target.hint_given,
         'answer_revealed': source.answer_revealed,
         'next_similar_question': source.next_similar_question,
         'tutor_practice_question_id': source.tutor_practice_question_id,

@@ -6,6 +6,7 @@ from ..assessment_validation import extract_numeric_value, format_fraction, norm
 from ..models import TutorHelperBranch, TutorStepRecord, TutoringState
 from .task_lifecycle import active_task, complete_active_task, sync_active_task, transition_to_task
 from .attempt_policy import attempt_count_for
+from .tutor_response import contextual_unit_feedback, format_contextual_math_answer
 
 NUMBER_TOKEN = r'(?<![\d/])-?\d+(?:/\d+)?(?![\d/])'
 
@@ -181,10 +182,14 @@ def build_structured_step_reply(previous_state: TutoringState, next_state: Tutor
         ])
 
     if next_state.problem_status == 'finished':
+        final_display = format_contextual_math_answer(next_state, next_state.final_answer)
+        unit_note = contextual_unit_feedback(next_state, next_state.student_answer or previous_state.student_answer)
         lines.extend([
             '',
-            f'**Final answer:** {next_state.final_answer}.',
+            f'**Final answer:** {final_display}.',
         ])
+        if unit_note:
+            lines.extend(['', unit_note])
         return '\n'.join(lines)
 
     next_step = _current_step_record(next_state)
@@ -643,9 +648,13 @@ def _initialize_structured_problem_state(state: TutoringState, normalized_proble
         'completed_step_results': [],
         'step_results': {},
         'attempts_per_step': {},
+        'support_per_step': {},
         'current_step': first_step.expression,
         'current_question': _step_prompt(first_step),
         'expected_answer': first_step.expected_answer,
+        'answer_unit': '',
+        'answer_label': '',
+        'display_answer': '',
         'student_answer': '',
         'correctness_status': '',
         'step_number': 1,

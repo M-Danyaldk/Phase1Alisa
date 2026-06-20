@@ -1,5 +1,5 @@
 from backend.app.main import _math_topic_switch_state, _tutor_math_question_state
-from backend.app.models import TutoringState
+from backend.app.models import TutorStepSupportState, TutoringState
 from backend.app.tutor_math_practice_bank import select_tutor_math_question
 from backend.app.utils.multi_step_progress import advance_structured_math_problem, has_structured_math_problem, update_multi_step_progress
 from backend.app.utils.task_lifecycle import (
@@ -87,6 +87,18 @@ def main() -> None:
     _expect(not can_resume_paused_task(no_stale_restore), 'A completed task remained eligible for restoration.', failures)
 
     original = update_multi_step_progress('12 + 3 * 4', TutoringState(current_subject='Math'))
+    original = original.model_copy(update={
+        'answer_unit': 'balls',
+        'answer_label': 'balls altogether',
+        'display_answer': '48 balls altogether',
+        'support_per_step': {
+            original.current_step_id: TutorStepSupportState(
+                help_level=2,
+                shown_hint_ids=['concept', 'strategy'],
+            ),
+        },
+    })
+    original = reconcile_task_lifecycle(original)
     original_task_id = original.active_task_id
     cookie = original.model_copy(update={
         'problem_id': '',
@@ -114,6 +126,21 @@ def main() -> None:
     _expect(active_task(resumed) is not None and active_task(resumed).task_id == original_task_id, 'Original task did not resume after the temporary task completed.', failures)
     _expect(resumed.mode == 'resume_paused_problem_notice', 'Resumed task did not announce restoration.', failures)
     _expect(all(task.status != 'paused' for task in resumed.task_records), 'Resumed task remained duplicated in paused status.', failures)
+    _expect(
+        resumed.answer_unit == 'balls'
+        and resumed.answer_label == 'balls altogether'
+        and resumed.display_answer == '48 balls altogether',
+        'Resuming a task lost contextual answer metadata.',
+        failures,
+    )
+    restored_support = resumed.support_per_step.get(resumed.current_step_id)
+    _expect(
+        restored_support is not None
+        and restored_support.help_level == 2
+        and restored_support.shown_hint_ids == ['concept', 'strategy'],
+        'Resuming a task lost per-step help progress.',
+        failures,
+    )
 
     paused = pause_active_task(resumed)
     _expect(active_task(paused) is None and latest_paused_task(paused) is not None, 'Explicit pause did not remove the active task.', failures)

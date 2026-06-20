@@ -26,6 +26,7 @@ REQUIRED_FLOW_CHECKS = [
     'check_tutor_intent_routing',
     'check_tutor_task_lifecycle',
     'check_tutor_attempt_policy',
+    'check_tutor_progressive_hints',
     'check_tutor_word_problem_schema',
     'check_tutor_interpretation_schema',
     'check_tutor_semantic_interpreter',

@@ -38,6 +38,16 @@ class TutorStepRecord(BaseModel):
     status: str = 'pending'
     attempts: int = 0
     explanation: str = ''
+    output_label: str = ''
+    output_unit: str = ''
+    strategy: str = ''
+
+
+class TutorStepSupportState(BaseModel):
+    """Help progress for one step; wrong attempts remain in attempts_per_step."""
+
+    help_level: int = Field(default=0, ge=0)
+    shown_hint_ids: list[str] = Field(default_factory=list)
 
 
 class TutorHelperBranch(BaseModel):
@@ -87,9 +97,13 @@ class TutoringState(BaseModel):
     completed_step_results: list[str] = Field(default_factory=list)
     step_results: dict[str, str] = Field(default_factory=dict)
     attempts_per_step: dict[str, int] = Field(default_factory=dict)
+    support_per_step: dict[str, TutorStepSupportState] = Field(default_factory=dict)
     current_step: str = ''
     current_question: str = ''
     expected_answer: str = ''
+    answer_unit: str = ''
+    answer_label: str = ''
+    display_answer: str = ''
     student_answer: str = ''
     correctness_status: str = ''
     skill: str = ''

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from backend.app.models import TutoringState
 from backend.app.services.tutor_word_problem import StructuredWordProblem, TutorWordProblemInterpreter, apply_word_problem_state
 from backend.app.utils.multi_step_progress import has_structured_math_problem, update_multi_step_progress
+from backend.app.utils.tutor_response import contextual_unit_feedback
 
 
 class FakeWordProblemRouter:
@@ -26,9 +27,11 @@ async def _run() -> list[str]:
     boxes = await interpreter.interpret_if_needed('Math', 'There are 7 boxes and each box has a capacity of 2 balls. How many balls are needed?')
     _expect(boxes.accepted, 'Equal-groups word problem was not accepted.', failures)
     _expect(boxes.expression == '7 * 2' and boxes.expected_answer == '14', 'Equal-groups schema was incorrect.', failures)
+    _expect(boxes.unit == 'balls' and boxes.unknown_label == 'balls', 'Equal-groups answer context was not retained.', failures)
     auditorium = await interpreter.interpret_if_needed('Math', 'An auditorium has 28 rows with 35 seats in each row. If 180 students attend, how many seats are empty?')
     _expect(auditorium.expression == '28 * 35 - 180', 'Multi-step seat expression was incorrect.', failures)
     _expect(auditorium.expected_answer == '800', 'Multi-step seat answer was not verified.', failures)
+    _expect(auditorium.unit == 'seats' and auditorium.unknown_label == 'empty seats', 'Empty-seat answer context was not retained.', failures)
     cookies = await interpreter.interpret_if_needed('Math', 'A bakery made 72 cookies, sold 48, then baked 36 more. How many cookies are there now?')
     _expect(cookies.expression == '72 - 48 + 36' and cookies.expected_answer == '60', 'Subtract-then-add schema was incorrect.', failures)
     shared = await interpreter.interpret_if_needed('Math', '24 balls are shared equally among 6 boxes. How many balls go in each box?')
@@ -55,6 +58,23 @@ async def _run() -> list[str]:
     _expect(cited.expression == '28 * 35 - 180' and cited.expected_answer == '800', 'Citation numbers contaminated the word-problem quantities.', failures)
     fraction = await interpreter.interpret_if_needed('Math', 'Mia ate 1/4 of a pizza and Sam ate 2/4. How much did they eat in total?')
     _expect(fraction.expression == '1/4 + 2/4' and fraction.expected_answer == '3/4', 'Fraction quantities were not parsed safely.', failures)
+    fraction_of_whole = await interpreter.interpret_if_needed('Math', 'A pizza has 8 slices and Mia ate 3 slices. What fraction did Mia eat?')
+    _expect(fraction_of_whole.accepted, 'Fraction-of-whole word problem was not accepted.', failures)
+    _expect(fraction_of_whole.expression == '3 / 8' and fraction_of_whole.expected_answer == '3/8', 'Fraction-of-whole problem was treated as the wrong operation.', failures)
+    fraction_left = await interpreter.interpret_if_needed('Math', 'A pizza has 8 slices and Mia ate 3 slices. What fraction is left?')
+    _expect(fraction_left.accepted, 'Fraction-remaining word problem was not accepted.', failures)
+    _expect(fraction_left.expression == '(8 - 3) / 8' and fraction_left.expected_answer == '5/8', 'Fraction-remaining problem did not use remaining-over-whole.', failures)
+    fraction_shaded = await interpreter.interpret_if_needed('Math', 'A rectangle has 10 equal parts and 4 parts are shaded. What fraction is shaded?')
+    _expect(fraction_shaded.expression == '4 / 10' and fraction_shaded.expected_answer == '2/5', 'Fraction-shaded problem was not part-over-whole.', failures)
+    fraction_unshaded = await interpreter.interpret_if_needed('Math', 'A rectangle has 10 equal parts and 4 parts are shaded. What fraction is unshaded?')
+    _expect(fraction_unshaded.expression == '(10 - 4) / 10' and fraction_unshaded.expected_answer == '3/5', 'Fraction-unshaded problem was not remaining-over-whole.', failures)
+    fraction_absent = await interpreter.interpret_if_needed('Math', 'A class has 24 students and 6 are absent. What fraction of the class is absent?')
+    _expect(fraction_absent.expression == '6 / 24' and fraction_absent.expected_answer == '1/4', 'Fraction-absent problem was not part-over-whole.', failures)
+    sold_then_got = await interpreter.interpret_if_needed('Math', 'A shop had 40 toys, sold 15 toys, then got 8 more toys. How many toys are there now?')
+    _expect(sold_then_got.expression == '40 - 15 + 8' and sold_then_got.expected_answer == '33', 'Sold-then-got-more problem was not subtract-then-add.', failures)
+    missing_start = await interpreter.interpret_if_needed('Math', 'A shop sold 15 items. How many are left?')
+    _expect(not missing_start.accepted, 'Missing-starting-quantity problem was incorrectly accepted.', failures)
+    _expect('start' in missing_start.clarification_question.lower(), 'Missing-starting-quantity problem did not ask for the original amount.', failures)
     extra_quantity = interpreter._deterministic_parse('4 children each have 3 marbles and then receive 2 more. How many marbles are there?')
     _expect(not extra_quantity.expression, 'An unsupported third quantity was silently ignored.', failures)
     ambiguous = await interpreter.interpret_if_needed('Math', 'There are 7 red cards and 3 blue cards. Which color is nicer?')
@@ -84,16 +104,23 @@ async def _run() -> list[str]:
     strict_interpreter = TutorWordProblemInterpreter(FakeWordProblemRouter(strict_payload))
     strict_proposal = await strict_interpreter._interpret_with_llm(strict_payload['original_text'])
     _expect(strict_proposal.expression == '7 * 2', 'Strict LLM word-problem output was not converted into the verified internal schema.', failures)
+    _expect(strict_proposal.unit == 'balls' and strict_proposal.unknown_label == 'total balls', 'Strict LLM answer context was discarded.', failures)
     invalid_strict_interpreter = TutorWordProblemInterpreter(FakeWordProblemRouter({**strict_payload, 'active_problem': 'hijacked'}))
     invalid_strict_proposal = await invalid_strict_interpreter._interpret_with_llm(strict_payload['original_text'])
     _expect(not invalid_strict_proposal.expression, 'Word-problem LLM output with forbidden fields was accepted.', failures)
     initial = TutoringState(current_subject='Math')
     box_state = apply_word_problem_state(initial, initial, boxes)
     _expect(box_state.problem_kind == 'word_problem' and box_state.expected_answer == '14', 'Verified schema was not stored in state.', failures)
+    _expect(box_state.display_answer == '14 balls', 'One-step contextual display answer was not stored.', failures)
     _expect(bool(box_state.active_task_id), 'Word problem did not enter the task lifecycle.', failures)
     planned = apply_word_problem_state(initial, update_multi_step_progress(auditorium.expression, initial), auditorium)
     _expect(has_structured_math_problem(planned), 'Multi-step word problem did not use the step planner.', failures)
     _expect(planned.word_problem_schema.get('original_text') == auditorium.original_text, 'Original prose was lost.', failures)
+    _expect(planned.display_answer == '800 empty seats', 'Multi-step contextual display answer was not stored.', failures)
+    _expect(planned.ordered_steps[-1].output_label == 'empty seats', 'Final structured step lost its contextual label.', failures)
+    _expect(contextual_unit_feedback(planned, '800') == '', 'Numeric-only contextual answer was incorrectly treated as a unit conflict.', failures)
+    _expect(contextual_unit_feedback(planned, '800 seats') == '', 'Base answer unit was incorrectly treated as a conflict.', failures)
+    _expect('not **ball**' in contextual_unit_feedback(planned, '800 balls'), 'Contradictory answer unit was not detected.', failures)
     return failures
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .models import TutoringState
+from .services.tutor_progressive_hints import current_step_support, record_step_hint
 
 
 def is_tutor_practice_answer_like(state: TutoringState, student_message: str) -> bool:
@@ -55,12 +56,29 @@ def build_tutor_practice_support_reply(state: TutoringState, student_message: st
     text = ' '.join(str(student_message or '').lower().split())
     hint_given = state.hint_given
 
-    if action_intent == 'hint' or text in {'hint', 'give me a hint'} or 'hint' in text:
-        hint = state.tutor_practice_hint_2 if state.hint_given and state.tutor_practice_hint_2 else state.tutor_practice_hint_1
-        hint = hint or 'Look at the important numbers and try one small step.'
+    progressive_help = (
+        action_intent in {'hint', 'explain_again'}
+        or text in {'hint', 'give me a hint'}
+        or 'hint' in text
+        or 'understand' in text
+        or 'stuck' in text
+    )
+
+    if progressive_help:
+        support = current_step_support(state)
+        level = min(3, support.help_level + 1)
+        if level == 1:
+            hint_id = 'concept'
+            hint = state.tutor_practice_hint_1 or 'Look at the important numbers and identify the operation.'
+        elif level == 2:
+            hint_id = 'strategy'
+            hint = state.tutor_practice_hint_2 or state.tutor_practice_hint_1 or 'Break the calculation into one smaller part.'
+        else:
+            hint_id = 'worked_substep'
+            hint = state.tutor_practice_explanation or state.tutor_practice_hint_2 or 'Let’s work one small part of this step together.'
         hint_given = True
         reply = (
-            "Sure - here's one hint.\n\n"
+            f"Here is {'the first' if level == 1 else 'a stronger' if level == 2 else 'one worked'} hint.\n\n"
             f"{hint}\n\n"
             f"Now try this same question:\n\n{question}"
         )
@@ -98,6 +116,8 @@ def build_tutor_practice_support_reply(state: TutoringState, student_message: st
         'mode': 'tutor_practice_question',
         'problem_status': 'tutor_practice',
     })
+    if progressive_help:
+        next_state = record_step_hint(next_state, level, hint_id)
     return reply, next_state
 
 
