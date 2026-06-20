@@ -44,6 +44,7 @@ from .tutor_word_problem import (
 from .tutor_subject_classifier import TutorSubjectClassifier
 from ..tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
 from ..tutoring_logic import (
+    build_conversation_control_reply,
     build_subject_boundary_reply,
     build_chat_directives,
     build_new_problem_clarification_reply,
@@ -68,7 +69,6 @@ from ..utils.multi_step_progress import (
 from ..utils.tutor_response import format_student_reply, looks_incomplete_response
 from ..utils.task_lifecycle import (
     complete_active_task,
-    ensure_task_lifecycle,
     pause_active_task,
     reconcile_task_lifecycle,
     transition_to_task,
@@ -833,7 +833,7 @@ class VoiceService:
         tutoring_state: TutoringState,
         thread_id: str | None,
     ) -> dict:
-        tutoring_state = ensure_task_lifecycle(tutoring_state)
+        tutoring_state = reconcile_task_lifecycle(tutoring_state)
         child_id = child['id']
         assessment_context = await LearningProfileService().context_for_child_subject(child_id, subject)
         learning_memory_service = LearningMemoryService()
@@ -913,6 +913,10 @@ class VoiceService:
             history,
             tutoring_state,
         )
+        if intent_assist.label == 'answer_current_step' and intent_assist.answer:
+            effective_transcript = intent_assist.answer
+        elif intent_assist.label in {'new_problem', 'switch_request'} and intent_assist.normalized_expression:
+            effective_transcript = intent_assist.normalized_expression
 
         subject_assist = await TutorSubjectClassifier().classify_if_needed(
             subject,
@@ -930,7 +934,7 @@ class VoiceService:
             detect_off_subject_request(subject, effective_transcript, tutoring_state)
             or subject_assist.label == 'off_subject'
             or uncertain_subject_boundary
-        ) and not word_problem_candidate and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
+        ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
             final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
                 'current_subject': subject,
                 'student_answer': transcript,
@@ -1163,6 +1167,9 @@ class VoiceService:
             assisted_intent_label=intent_assist.label,
         )
         if intent_assist.label in {
+            'greeting',
+            'acknowledge',
+            'continue_current',
             'related_question',
             'help_request',
             'emotion',
@@ -1304,6 +1311,16 @@ class VoiceService:
             result_provider = 'local'
             result_model = 'deterministic-voice-safety-support-lock'
             special_local_reply = True
+        elif intent_assist.needs_clarification:
+            final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
+                'current_subject': subject,
+                'student_answer': transcript,
+                'correctness_status': '',
+            }))
+            formatted_reply = intent_assist.clarification_question
+            result_provider = 'local'
+            result_model = 'deterministic-voice-semantic-clarification'
+            special_local_reply = True
         elif intent_assist.label == 'emotion':
             emotion_plan = build_emotional_support_plan(tutoring_state, transcript, intent_assist.emotion)
             final_state = apply_emotional_support(tutoring_state, transcript, emotion_plan)
@@ -1316,6 +1333,20 @@ class VoiceService:
             formatted_reply = build_emotional_choice_reply(final_state, emotional_choice)
             result_provider = 'local'
             result_model = f'deterministic-voice-emotional-choice-{emotional_choice}'
+            special_local_reply = True
+        elif intent_assist.label in {'greeting', 'acknowledge', 'continue_current'}:
+            final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
+                'current_subject': subject,
+                'student_answer': transcript,
+                'correctness_status': '',
+            }))
+            formatted_reply = build_conversation_control_reply(
+                final_state,
+                intent_assist.label,
+                student.name,
+            )
+            result_provider = 'local'
+            result_model = f'deterministic-voice-conversation-{intent_assist.label}'
             special_local_reply = True
         elif intent_assist.label == 'pause':
             final_state = pause_active_task(tutoring_state).model_copy(update={'mode': 'paused', 'status': 'paused'})

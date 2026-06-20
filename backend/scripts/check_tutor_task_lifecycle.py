@@ -10,6 +10,7 @@ from backend.app.utils.task_lifecycle import (
     ensure_task_lifecycle,
     latest_paused_task,
     pause_active_task,
+    reconcile_task_lifecycle,
     resume_latest_paused_task,
     start_task,
     transition_to_task,
@@ -149,6 +150,74 @@ def main() -> None:
     _expect(not stale_legacy.paused_main_problem, 'Legacy completed state retained a stale paused problem.', failures)
     _expect(not can_resume_paused_task(stale_legacy), 'Legacy completed task was still restorable.', failures)
 
+    # Regression journey from live QA: one exact original task, one temporary task,
+    # one restoration, and no completed task resurfacing afterward.
+    division = TutoringState(
+        current_subject='Math',
+        main_problem='84 / 7',
+        active_problem='84 / 7',
+        current_step='84 / 7',
+        current_question='What is 84 / 7?',
+        expected_answer='12',
+        problem_status='awaiting_step',
+        mode='practice',
+        status='waiting_for_student',
+        recent_tutor_practice_question_ids=['division-84-7'],
+    )
+    division = start_task(division, '84 / 7', subject='Math', source='practice_bank')
+    division_id = division.active_task_id
+    addition = division.model_copy(update={
+        'active_problem': '64 + 55',
+        'current_step': '64 + 55',
+        'current_question': 'What is 64 + 55?',
+        'expected_answer': '119',
+        'problem_status': 'awaiting_step',
+        'mode': 'practice',
+        'status': 'waiting_for_student',
+        'recent_tutor_practice_question_ids': ['division-84-7', 'addition-64-55'],
+    })
+    addition = transition_to_task(division, addition, '64 + 55', subject='Math', source='student', previous='pause')
+    addition_id = addition.active_task_id
+    addition = reconcile_task_lifecycle(addition)
+    _expect(active_task(addition) is not None and active_task(addition).task_id == addition_id, 'Temporary addition task was not canonical after transition.', failures)
+    _expect(addition.paused_main_problem == '84 / 7', 'Legacy paused projection did not come from the paused lifecycle record.', failures)
+
+    corrupted = addition.model_copy(update={
+        'active_problem': 'ok proceed to this problem',
+        'current_step': 'ok proceed to this problem',
+        'current_question': 'ok proceed to this problem',
+    })
+    repaired = reconcile_task_lifecycle(corrupted)
+    _expect(repaired.active_problem == '64 + 55', 'Lifecycle reconciliation did not repair a corrupted live problem.', failures)
+    _expect(repaired.current_question == 'What is 64 + 55?', 'Lifecycle reconciliation did not restore the verified current step.', failures)
+
+    resumed_division = complete_and_resume_latest(repaired.model_copy(update={
+        'final_answer': '119',
+        'problem_status': 'finished',
+        'status': 'finished',
+        'recent_tutor_practice_question_ids': ['division-84-7', 'addition-64-55'],
+    }))
+    resumed_division = reconcile_task_lifecycle(resumed_division)
+    _expect(active_task(resumed_division) is not None and active_task(resumed_division).task_id == division_id, 'Original division task did not resume exactly after temporary completion.', failures)
+    _expect(resumed_division.active_problem == '84 / 7', 'Resumed task did not restore the original problem text.', failures)
+    _expect(resumed_division.current_question == 'What is 84 / 7?', 'Resumed task did not restore the original exact step.', failures)
+    _expect(
+        resumed_division.recent_tutor_practice_question_ids == ['division-84-7', 'addition-64-55'],
+        'Resuming an old task rolled back session-wide recent-question history.',
+        failures,
+    )
+
+    finished_division = reconcile_task_lifecycle(resumed_division.model_copy(update={
+        'final_answer': '12',
+        'problem_status': 'finished',
+        'status': 'finished',
+    }))
+    _expect(active_task(finished_division) is None, 'Finished original task remained active.', failures)
+    _expect(not finished_division.active_problem and not finished_division.current_question, 'Finished task remained exposed as a live prompt.', failures)
+    _expect(not can_resume_paused_task(finished_division), 'Finished journey still contained a resumable task.', failures)
+    no_second_resume = resume_latest_paused_task(finished_division)
+    _expect(active_task(no_second_resume) is None, 'A completed task resurfaced on a second resume attempt.', failures)
+
     bounded = TutoringState(current_subject='Math')
     for index in range(25):
         problem = f'{index} + 1'
@@ -174,6 +243,8 @@ def main() -> None:
     print('- Temporary tasks pause and restore the exact unfinished task once.')
     print('- Explicit pause/resume restores the saved step.')
     print('- Legacy completed state clears stale paused-problem fields.')
+    print('- Conflicting live fields are repaired from the active lifecycle snapshot.')
+    print('- A temporary task restores the original exact step once without rolling back session-wide state.')
 
 
 if __name__ == '__main__':

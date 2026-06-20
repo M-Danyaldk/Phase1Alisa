@@ -1,8 +1,18 @@
 import asyncio
+import json
+from types import SimpleNamespace
 
 from backend.app.models import TutoringState
 from backend.app.services.tutor_word_problem import StructuredWordProblem, TutorWordProblemInterpreter, apply_word_problem_state
 from backend.app.utils.multi_step_progress import has_structured_math_problem, update_multi_step_progress
+
+
+class FakeWordProblemRouter:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    async def generate(self, **_kwargs):
+        return SimpleNamespace(text=json.dumps(self.payload), provider='fake', model='fake', fallback_used=False)
 
 
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
@@ -55,6 +65,28 @@ async def _run() -> list[str]:
     _expect(not interpreter._validate(duplicated.original_text, duplicated).accepted, 'A duplicated quantity passed validation.', failures)
     wrong_operation = StructuredWordProblem(original_text='There are 7 boxes with 2 balls each.', expression='7 + 2', confidence='high', source='llm')
     _expect(not interpreter._validate(wrong_operation.original_text, wrong_operation).accepted, 'An LLM operation that contradicted the wording passed validation.', failures)
+
+    strict_payload = {
+        'original_text': 'There are 7 boxes with 2 balls each. How many balls are there?',
+        'problem_kind': 'word_problem',
+        'quantities': [
+            {'value': '7', 'unit': 'boxes', 'label': 'boxes', 'role': 'group_count'},
+            {'value': '2', 'unit': 'balls', 'label': 'balls per box', 'role': 'group_size'},
+        ],
+        'operation': 'multiplication',
+        'confidence': 'high',
+        'expression': '7 * 2',
+        'requested_value': 'total balls',
+        'unit': 'balls',
+        'sufficient_information': True,
+        'assumptions': [],
+    }
+    strict_interpreter = TutorWordProblemInterpreter(FakeWordProblemRouter(strict_payload))
+    strict_proposal = await strict_interpreter._interpret_with_llm(strict_payload['original_text'])
+    _expect(strict_proposal.expression == '7 * 2', 'Strict LLM word-problem output was not converted into the verified internal schema.', failures)
+    invalid_strict_interpreter = TutorWordProblemInterpreter(FakeWordProblemRouter({**strict_payload, 'active_problem': 'hijacked'}))
+    invalid_strict_proposal = await invalid_strict_interpreter._interpret_with_llm(strict_payload['original_text'])
+    _expect(not invalid_strict_proposal.expression, 'Word-problem LLM output with forbidden fields was accepted.', failures)
     initial = TutoringState(current_subject='Math')
     box_state = apply_word_problem_state(initial, initial, boxes)
     _expect(box_state.problem_kind == 'word_problem' and box_state.expected_answer == '14', 'Verified schema was not stored in state.', failures)

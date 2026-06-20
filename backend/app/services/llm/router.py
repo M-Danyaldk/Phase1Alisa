@@ -96,11 +96,67 @@ class LLMRouter:
         system_text = str(system or '').lower()
         if 'normalize grades 3-6 student math input' in system_text:
             return self._local_math_normalization_json(user)
+        if 'strict tutor input interpreter for grades 3-6' in system_text:
+            return self._local_semantic_interpretation_json(user)
         if 'classify a child tutor message for grades 3-6' in system_text:
             return self._local_intent_json(user)
         if 'classify whether a grades 3-6 student message fits the current tutor subject' in system_text:
             return self._local_subject_json(user)
         return json.dumps({'label': 'unknown', 'confidence': 'medium', 'reason': 'Local fallback returned a safe unknown classification.'})
+
+    def _local_semantic_interpretation_json(self, user: str) -> str:
+        message = self._extract_labeled_value(user, 'Student message')
+        lowered = message.lower()
+        intent = 'unclear'
+        confidence = 'low'
+        answer = None
+        expression = None
+        refers_to_task = 'unknown'
+        requested_action = 'clarify'
+        needs_clarification = True
+        clarification_question = 'Do you want to answer the current step, or work on a different problem?'
+        note = 'Local fallback could not safely disambiguate the message.'
+
+        normalized_message = normalize_word_numbers_in_text(normalize_math_text(message).lower())
+        number_values = re.findall(r'-?\d+(?:\.\d+)?(?:/\d+)?', normalized_message)
+        normalized_expression = self._normalize_word_math_expression(message)
+        if self._looks_like_switch_request(lowered):
+            intent = 'switch_problem'
+            confidence = 'medium'
+            expression = normalized_expression or None
+            refers_to_task = 'new_task'
+            requested_action = 'switch'
+            note = 'Local rules found a possible request to switch problems.'
+        elif any(marker in lowered for marker in ('how did', 'what do you mean', 'why did', 'how come', 'came from')):
+            intent = 'related_question'
+            confidence = 'medium'
+            refers_to_task = 'active_task'
+            requested_action = 'explain'
+            needs_clarification = False
+            clarification_question = None
+            note = 'Local rules found a question about the active step.'
+        elif number_values and any(marker in lowered for marker in ('answer', 'result', 'should be', 'i got', 'i think', 'probably')):
+            intent = 'answer_current_step'
+            confidence = 'medium'
+            answer = number_values[-1]
+            refers_to_task = 'active_task'
+            requested_action = 'check_answer'
+            note = 'Local rules found a possible answer to the active step.'
+
+        return json.dumps({
+            'schema_version': '1.0',
+            'intent': intent,
+            'confidence': confidence,
+            'answer': answer,
+            'normalized_expression': expression,
+            'problem': None,
+            'refers_to_task': refers_to_task,
+            'requested_action': requested_action,
+            'emotion': None,
+            'needs_clarification': needs_clarification,
+            'clarification_question': clarification_question,
+            'interpretation_note': note,
+        })
 
     def _local_math_normalization_json(self, user: str) -> str:
         message = self._extract_labeled_value(user, 'Student math input')

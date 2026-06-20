@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from ..assessment_validation import normalize_math_text, safe_eval_expression
 from ..models import TutoringState
+from ..utils.task_lifecycle import reconcile_task_lifecycle
 
 
 class MathResponseGuardResult(BaseModel):
@@ -26,6 +27,7 @@ class TutorMathResponseGuard:
         intent_label: str = '',
         source: str = '',
     ) -> MathResponseGuardResult:
+        verified_state = reconcile_task_lifecycle(state)
         reply = self._normalize_notation(str(text or '').strip())
         violations: list[str] = []
 
@@ -33,34 +35,35 @@ class TutorMathResponseGuard:
             violations.append('empty_response')
         if reply.count('?') > 1:
             violations.append('multiple_questions')
-        if self._missing_required_step_prompt(reply, state):
+        if self._missing_required_step_prompt(reply, verified_state):
             violations.append('missing_current_step_prompt')
         if self._has_incorrect_equation(reply):
             violations.append('incorrect_arithmetic')
-        if self._has_incorrect_answer_claim(reply, state):
+        if self._has_incorrect_answer_claim(reply, verified_state):
             violations.append('incorrect_answer_claim')
-        if self._reveals_too_early(reply, state):
+        if self._reveals_too_early(reply, verified_state):
             violations.append('premature_answer_reveal')
-        if self._references_stale_main_problem(reply, state):
+        if self._references_stale_main_problem(reply, verified_state):
             violations.append('stale_problem_reference')
         if intent_label and intent_label != 'answer_current_step' and self._uses_wrong_answer_language(reply):
             violations.append('non_answer_graded_as_wrong')
 
-        kind = self._response_kind(reply, state, intent_label)
+        kind = self._response_kind(reply, verified_state, intent_label)
         if not violations:
             return MathResponseGuardResult(text=reply, response_kind=kind)
 
-        repaired = self._safe_repair(state, intent_label, violations)
+        repaired = self._safe_repair(verified_state, intent_label, violations)
         return MathResponseGuardResult(
             text=repaired,
-            response_kind='redirect' if state.current_question or state.current_step else 'clarification',
+            response_kind='redirect' if verified_state.current_question or verified_state.current_step else 'clarification',
             valid=False,
             repaired=True,
             violations=violations,
         )
 
     def apply_metadata(self, state: TutoringState, result: MathResponseGuardResult, source: str = '') -> TutoringState:
-        return state.model_copy(update={
+        verified_state = reconcile_task_lifecycle(state)
+        return verified_state.model_copy(update={
             'last_response_kind': result.response_kind,
             'last_response_source': source,
             'last_response_validated': True,
@@ -117,7 +120,7 @@ class TutorMathResponseGuard:
             return None
 
     def _references_stale_main_problem(self, text: str, state: TutoringState) -> bool:
-        active = self._canonical_problem(state.main_problem or state.active_problem)
+        active = self._canonical_problem(state.active_problem or state.main_problem)
         if not active or state.problem_status in {'finished', 'idle'}:
             return False
         matches = re.findall(r'\*\*?Main problem:?\*\*?\s*([^\n]+)', text, re.I)
@@ -137,7 +140,7 @@ class TutorMathResponseGuard:
 
     def _safe_repair(self, state: TutoringState, intent_label: str, violations: list[str]) -> str:
         question = (state.current_question or state.current_step).strip()
-        problem = (state.main_problem or state.active_problem).strip()
+        problem = (state.active_problem or state.main_problem).strip()
         if 'non_answer_graded_as_wrong' in violations:
             opening = 'I understand. That message will not count as an answer attempt.'
         elif 'incorrect_arithmetic' in violations or 'incorrect_answer_claim' in violations:

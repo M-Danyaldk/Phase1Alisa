@@ -1,5 +1,6 @@
 from backend.app.models import TutoringState
 from backend.app.services.tutor_math_response_guard import TutorMathResponseGuard
+from backend.app.utils.task_lifecycle import ensure_task_lifecycle
 
 
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
@@ -57,6 +58,21 @@ def main() -> None:
 
     stale = guard.validate('**Main problem:** 28 × 35 − 180\n\nWhat is 28 × 35?', state, intent_label='answer_current_step')
     _expect(stale.repaired and 'stale_problem_reference' in stale.violations, 'Stale problem reference was not blocked.', failures)
+
+    lifecycle_state = ensure_task_lifecycle(state)
+    corrupted_state = lifecycle_state.model_copy(update={
+        'main_problem': '28 × 35 - 180',
+        'active_problem': 'ok proceed to this problem',
+        'current_step': 'ok proceed to this problem',
+        'current_question': 'ok proceed to this problem',
+    })
+    repaired_corrupt = guard.validate('We calculate 7 × 2 = 12. What comes next?', corrupted_state, intent_label='answer_current_step')
+    _expect(repaired_corrupt.repaired and 'What is 7 × 2?' in repaired_corrupt.text, 'Repair did not restore the verified lifecycle step.', failures)
+    _expect('ok proceed' not in repaired_corrupt.text and '28 × 35' not in repaired_corrupt.text, 'Repair echoed corrupted or stale task text.', failures)
+
+    repaired_state = guard.apply_metadata(corrupted_state, repaired_corrupt, 'test-model')
+    _expect(repaired_state.active_problem == state.active_problem, 'Response metadata did not preserve the verified active problem.', failures)
+    _expect(repaired_state.current_question == state.current_question, 'Response metadata did not preserve the verified current question.', failures)
 
     non_answer = guard.validate('Nice try, that answer is not quite right.', state, intent_label='emotion')
     _expect(non_answer.repaired and 'non_answer_graded_as_wrong' in non_answer.violations, 'Emotion was allowed to receive wrong-answer language.', failures)

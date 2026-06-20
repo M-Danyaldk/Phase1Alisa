@@ -136,11 +136,21 @@ async def main() -> None:
     intent_classifier = TutorIntentClassifier()
     _expect(intent_classifier.should_use_fallback('Math', 'maybe do 12-20 first', history, base), 'Intent fallback did not trigger for ambiguous switch wording.', failures)
     switch_intent = await intent_classifier.classify_if_needed('Math', 'maybe do 12-20 first', history, base)
-    _expect(switch_intent.label == 'switch_request', f'Intent fallback did not classify ambiguous switch wording: {switch_intent.label!r}.', failures)
+    _expect(
+        switch_intent.label == 'switch_request'
+        or (switch_intent.label == 'clarification_about_context' and switch_intent.needs_clarification),
+        f'Intent fallback neither classified nor safely clarified ambiguous switch wording: {switch_intent.label!r}.',
+        failures,
+    )
 
     _expect(intent_classifier.should_use_fallback('Math', 'i think it becomes 89/9', history, base), 'Intent fallback did not trigger for ambiguous answer wording.', failures)
     answer_intent = await intent_classifier.classify_if_needed('Math', 'i think it becomes 89/9', history, base)
-    _expect(answer_intent.label == 'answer_current_step', f'Intent fallback did not classify ambiguous answer wording: {answer_intent.label!r}.', failures)
+    _expect(
+        answer_intent.label == 'answer_current_step'
+        or (answer_intent.label == 'clarification_about_context' and answer_intent.needs_clarification),
+        f'Intent fallback neither classified nor safely clarified ambiguous answer wording: {answer_intent.label!r}.',
+        failures,
+    )
 
     if failures:
         print('Tutor edge matrix check failed:')
@@ -153,7 +163,7 @@ async def main() -> None:
     print('- Word-math and malformed symbolic input normalize into usable expressions.')
     print('- Mid-flow answers, helper questions, and new raw expressions route to different states.')
     print('- Direct subject boundaries and uncertain subject fallback both behave safely.')
-    print('- Ambiguous switch/answer wording is classified into stable tutor intents.')
+    print('- Ambiguous medium-confidence switch/answer wording is held for clarification instead of mutating state.')
 
 
 if __name__ == '__main__':

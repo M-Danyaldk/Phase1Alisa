@@ -267,7 +267,7 @@ def _looks_like_new_problem(message: str) -> bool:
         'read this',
         'explain',
     )
-    return text.startswith(starters) or len(text) > 24
+    return text.startswith(starters)
 
 
 def _looks_like_general_knowledge_question(message: str) -> bool:
@@ -782,7 +782,15 @@ def build_chat_directives(
     elif assisted_intent_label == 'topic_switch':
         switch_task = True
         new_problem = True
-    elif assisted_intent_label in {'help_request', 'emotion', 'pause', 'meta_feedback'}:
+    elif assisted_intent_label in {
+        'greeting',
+        'acknowledge',
+        'continue_current',
+        'help_request',
+        'emotion',
+        'pause',
+        'meta_feedback',
+    }:
         new_problem = False
     elif assisted_intent_label == 'switch_request':
         switch_task = True
@@ -864,7 +872,13 @@ def build_chat_directives(
         or tutor_concern
         or action_intent in {'hint', 'explain_again', 'example', 'clarify_prompt'}
         or (direct_help and math_expression)
-        or assisted_intent_label in {'topic_switch', 'help_request', 'emotion', 'pause', 'meta_feedback'}
+        or assisted_intent_label in {
+            'topic_switch',
+            'help_request',
+            'emotion',
+            'pause',
+            'meta_feedback',
+        }
     )
     answering_tutor_question = (
         assisted_intent_label == 'answer_current_step'
@@ -1439,10 +1453,67 @@ def build_subject_boundary_reply(subject: str, state: TutoringState) -> str:
     return '\n'.join(lines)
 
 
-def extract_followup_step(reply: str) -> str:
+def build_conversation_control_reply(state: TutoringState, intent: str, student_name: str = '') -> str:
+    """Reply to conversational control messages without changing or inventing a learning task."""
+    name = str(student_name or '').strip()
+    greeting = f'Hi {name}!' if name else 'Hi!'
+    current = (state.current_question or state.current_step).strip()
+    active = (state.active_problem or state.main_problem).strip()
+    subject_label = {
+        'Math': 'Math',
+        'ELA': 'reading',
+        'Writing': 'writing',
+    }.get(state.current_subject, 'learning')
+
+    if intent == 'greeting':
+        if current:
+            return f'{greeting} We can continue when you are ready.\n\n{_display_math_text(current)}'
+        if active:
+            return f'{greeting} We can keep working on {_display_math_text(active)} when you are ready.'
+        return f'{greeting} How are you feeling today?'
+
+    if current:
+        return f"Okay. Let's continue with the current {subject_label} step.\n\n{_display_math_text(current)}"
+    if active:
+        return f"Okay. Let's continue with {_display_math_text(active)}."
+    if intent == 'continue_current':
+        return 'Okay. What would you like to continue with?'
+    return 'Okay. What would you like help with?'
+
+
+def extract_followup_step(reply: str, subject: str = '') -> str:
     questions = [part.strip() for part in re.findall(r'[^.!?]*\?', reply) if part.strip()]
-    if questions:
+    if not questions:
+        return ''
+    if subject != 'Math':
         return questions[-1]
+
+    for question in reversed(questions):
+        if detect_math_expression(question):
+            return question
+        normalized_question = _normalized(question).rstrip('?').strip()
+        if normalized_question in {
+            'what do you get',
+            'what is the answer',
+            "what's the answer",
+            'what did you get',
+            'what is your answer',
+        }:
+            normalized_reply = normalize_math_text(reply)
+            expressions = re.findall(
+                r'-?\d+(?:\.\d+)?(?:\s*[+\-*/x]\s*-?\d+(?:\.\d+)?)+',
+                normalized_reply,
+                re.I,
+            )
+            if expressions:
+                return f'What is {expressions[-1].strip()}?'
+        number_count = len(re.findall(r'-?\d+(?:\.\d+)?', question))
+        if number_count >= 2 and re.search(
+            r'\b(add|plus|sum|subtract|minus|difference|multiply|times|product|divide|groups|each|fraction)\b',
+            question,
+            re.I,
+        ):
+            return question
     return ''
 
 
@@ -1477,7 +1548,7 @@ def update_tutoring_state_after_reply(
 ) -> TutoringState:
     opening_checkin_turn = state.mode == 'opening_checkin' or state.status == 'ready_for_mini_checkin'
     active_problem = state.active_problem or ('' if opening_checkin_turn else user_message.strip())
-    next_step = extract_followup_step(reply)
+    next_step = extract_followup_step(reply, state.current_subject)
     current_question = state.current_question or state.current_step
     same_question = bool(next_step and current_question and _same_question(next_step, current_question))
     next_step_number = state.step_number + 1 if next_step and not same_question else state.step_number

@@ -47,6 +47,17 @@ class TutorMathNormalizer:
         malformed_symbolic = any(token in text for token in ['//', '**', '++', '--']) or bool(re.search(r'[\+\-\*/]\s*$', text))
         mismatched_parentheses = text.count('(') != text.count(')')
         math_like_text = bool(re.search(r'\d', text)) or has_number_words or has_word_math or '(' in text or ')' in text
+        active_answer_context = bool(state and (state.current_question.strip() or state.current_step.strip()))
+        answer_language = bool(re.search(
+            r'\b(answer|result|should be|i got|i think|probably|reckon|equals?)\b',
+            text,
+        ))
+
+        # Answer interpretation belongs to the typed intent layer. Sending a
+        # prose answer through the expression normalizer first can turn two
+        # mentioned attempts into a fabricated expression.
+        if active_answer_context and not has_word_math and not has_symbolic_math and (answer_language or has_number_words):
+            return False
 
         if not math_like_text:
             return False

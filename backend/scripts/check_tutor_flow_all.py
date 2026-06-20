@@ -10,6 +10,10 @@ from backend.scripts.check_tutor_math_response_guard import main as tutor_math_r
 from backend.scripts.check_tutor_math_e2e import main as tutor_math_e2e_main
 from backend.scripts.check_tutor_voice_parity import main as tutor_voice_parity_main
 from backend.scripts.check_tutor_generated_invariants import main as tutor_generated_invariants_main
+from backend.scripts.check_tutor_interpretation_schema import main as tutor_interpretation_schema_main
+from backend.scripts.check_tutor_semantic_interpreter import main as tutor_semantic_interpreter_main
+from backend.scripts.check_tutor_semantic_policy import main as tutor_semantic_policy_main
+from backend.scripts.check_tutor_production_readiness import main as tutor_production_readiness_main
 
 import asyncio
 
@@ -36,6 +40,15 @@ def main() -> None:
     print('Running tutor word-problem schema check...')
     tutor_word_problem_schema_main()
     print('')
+    print('Running tutor interpretation schema check...')
+    tutor_interpretation_schema_main()
+    print('')
+    print('Running tutor semantic-interpreter check...')
+    asyncio.run(tutor_semantic_interpreter_main())
+    print('')
+    print('Running tutor semantic-policy check...')
+    tutor_semantic_policy_main()
+    print('')
     print('Running tutor emotional-support check...')
     tutor_emotional_support_main()
     print('')
@@ -50,6 +63,9 @@ def main() -> None:
     print('')
     print('Running tutor generated-invariant check...')
     tutor_generated_invariants_main()
+    print('')
+    print('Running tutor production-readiness check...')
+    tutor_production_readiness_main()
     print('')
     print('All tutor flow checks passed.')
 

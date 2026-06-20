@@ -66,6 +66,7 @@ from .services.tutor_subject_classifier import TutorSubjectClassifier
 from .services.topic_resolver import TopicResolver
 from .tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
 from .tutoring_logic import (
+    build_conversation_control_reply,
     build_subject_boundary_reply,
     build_chat_directives,
     build_new_problem_clarification_reply,
@@ -92,7 +93,6 @@ from .utils.task_lifecycle import (
     abandon_active_task,
     can_resume_paused_task,
     complete_active_task,
-    ensure_task_lifecycle,
     pause_active_task,
     reconcile_task_lifecycle,
     resume_latest_paused_task,
@@ -245,7 +245,7 @@ async def chat_opening(payload: ChatOpeningRequest, authorization: str = Header(
 @app.post('/api/chat', response_model=ChatResponse)
 async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_access_mode: str = Header(default='')) -> ChatResponse:
     child_user = await require_child_access(authorization, payload.child_id, x_access_mode)
-    payload = payload.model_copy(update={'tutoring_state': ensure_task_lifecycle(payload.tutoring_state)})
+    payload = payload.model_copy(update={'tutoring_state': reconcile_task_lifecycle(payload.tutoring_state)})
     if payload.child_id:
         await SessionActivityService().ensure_can_tutor(child_user['id'], payload.child_id)
         await SessionActivityService().record_activity(
@@ -335,6 +335,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         payload.history,
         payload.tutoring_state,
     )
+    if intent_assist.label == 'answer_current_step' and intent_assist.answer:
+        effective_message = intent_assist.answer
+    elif intent_assist.label in {'new_problem', 'switch_request'} and intent_assist.normalized_expression:
+        effective_message = intent_assist.normalized_expression
 
     subject_assist = await TutorSubjectClassifier().classify_if_needed(
         payload.subject,
@@ -352,7 +356,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         detect_off_subject_request(payload.subject, effective_message, payload.tutoring_state)
         or subject_assist.label == 'off_subject'
         or uncertain_subject_boundary
-    ) and not word_problem_candidate and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
+    ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'emotion', 'pause', 'resume', 'meta_feedback'}:
         next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'student_answer': payload.message,
@@ -599,6 +603,9 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         assisted_intent_label=intent_assist.label,
     )
     if intent_assist.label in {
+        'greeting',
+        'acknowledge',
+        'continue_current',
         'related_question',
         'help_request',
         'emotion',
@@ -935,6 +942,17 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_model = 'deterministic-safety-support-lock'
         result_fallback_used = False
         special_local_reply = True
+    elif intent_assist.needs_clarification:
+        next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'student_answer': payload.message,
+            'correctness_status': '',
+        }))
+        formatted_reply = intent_assist.clarification_question
+        result_provider = 'local'
+        result_model = 'deterministic-semantic-clarification'
+        result_fallback_used = False
+        special_local_reply = True
     elif intent_assist.label == 'emotion':
         emotion_plan = build_emotional_support_plan(payload.tutoring_state, payload.message, intent_assist.emotion)
         next_state = apply_emotional_support(payload.tutoring_state, payload.message, emotion_plan)
@@ -948,6 +966,21 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         formatted_reply = build_emotional_choice_reply(next_state, emotional_choice)
         result_provider = 'local'
         result_model = f'deterministic-emotional-choice-{emotional_choice}'
+        result_fallback_used = False
+        special_local_reply = True
+    elif intent_assist.label in {'greeting', 'acknowledge', 'continue_current'}:
+        next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'student_answer': payload.message,
+            'correctness_status': '',
+        }))
+        formatted_reply = build_conversation_control_reply(
+            next_state,
+            intent_assist.label,
+            prompt_student.name,
+        )
+        result_provider = 'local'
+        result_model = f'deterministic-conversation-{intent_assist.label}'
         result_fallback_used = False
         special_local_reply = True
     elif intent_assist.label == 'pause':

@@ -7,7 +7,12 @@ from backend.app.main import (
 )
 from backend.app.models import ChatHistoryItem, TutoringState
 from backend.app.services.tutor_intent_classifier import TutorIntentClassifier
-from backend.app.tutoring_logic import build_chat_directives
+from backend.app.tutoring_logic import (
+    _looks_like_new_problem,
+    build_chat_directives,
+    build_conversation_control_reply,
+    extract_followup_step,
+)
 
 
 def _expect(condition: bool, message: str, failures: list[str]) -> None:
@@ -34,6 +39,9 @@ async def main() -> None:
 
     cases = [
         ('66', 'answer_current_step'),
+        ('hi', 'greeting'),
+        ('ok', 'acknowledge'),
+        ('ok proceed with this problem', 'continue_current'),
         ('I want to learn fractions', 'topic_switch'),
         ('There are 7 boxes and each box holds 2 balls. How many balls fill the boxes?', 'new_problem'),
         ('Why do we multiply by 6?', 'related_question'),
@@ -67,6 +75,27 @@ async def main() -> None:
         )
         _expect(routed_state.attempt_count != state.attempt_count + 1, f'Non-answer message {message!r} increased the attempt count.', failures)
 
+    greeting_reply = build_conversation_control_reply(TutoringState(current_subject='Math'), 'greeting', 'Ahsan')
+    _expect(greeting_reply.startswith('Hi Ahsan!'), 'Greeting reply did not greet the student.', failures)
+    _expect("that's good to hear" not in greeting_reply.lower(), 'Greeting reply still assumed a positive mood.', failures)
+    acknowledgement_reply = build_conversation_control_reply(state, 'acknowledge', 'Ahsan')
+    _expect('11 x 6' in acknowledgement_reply.lower(), 'Acknowledgement did not stay attached to the active Math step.', failures)
+
+    ordinary_sentence = 'No, I want you to answer the question I just asked.'
+    _expect(not _looks_like_new_problem(ordinary_sentence), 'A long conversational sentence was still classified as a new problem.', failures)
+    _expect(_looks_like_new_problem('What is 64 + 55?'), 'An explicit Math expression was not classified as a new problem.', failures)
+
+    grounded_followup = extract_followup_step(
+        'Try adding the ones first: 8 + 2. What do you get?',
+        'Math',
+    )
+    _expect('8 + 2' in grounded_followup, 'Generic Math follow-up was not grounded in its nearby expression.', failures)
+    _expect(
+        not extract_followup_step('Nice work. Are you ready?', 'Math'),
+        'An ungrounded conversational question was stored as a Math step.',
+        failures,
+    )
+
     emotional_state = state.model_copy(update={'student_answer': 'I am tired', 'correctness_status': ''})
     emotional_reply = _emotion_interruption_reply('tired', emotional_state)
     _expect('problem is saved' in emotional_reply.lower(), 'Emotional reply did not preserve the active problem explicitly.', failures)
@@ -85,7 +114,9 @@ async def main() -> None:
 
     print('Tutor intent routing check passed.')
     print('- Numeric answers remain gradeable.')
-    print('- Topic switches, word problems, related questions, help, emotions, pauses, and tutor feedback are not graded as answers.')
+    print('- Greetings, acknowledgements, continuations, topic switches, word problems, help, emotions, pauses, and tutor feedback are not graded as answers.')
+    print('- Long conversational messages are not mistaken for Math problems.')
+    print('- Generic follow-up wording is anchored to a verified Math expression instead of replacing it.')
     print('- Emotional messages preserve the problem without wrong-answer language.')
     print('- Math topic switches clear routine practice attempts and retain the requested topic.')
 

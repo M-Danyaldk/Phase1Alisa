@@ -4,8 +4,55 @@ import uuid
 
 from ..models import TutorTaskRecord, TutoringState
 
-
-LIFECYCLE_FIELDS = {'active_task_id', 'task_records'}
+# Only task-scoped values belong in a resumable snapshot. Session-wide values such
+# as recent-question rotation, emotional counters, and response diagnostics must
+# not roll back when an older task is resumed.
+TASK_SNAPSHOT_FIELDS = {
+    'problem_id',
+    'problem_kind',
+    'word_problem_schema',
+    'main_problem',
+    'active_problem',
+    'current_subject',
+    'full_problem',
+    'ordered_steps',
+    'current_step_index',
+    'current_step_id',
+    'completed_steps',
+    'current_expression',
+    'remaining_steps',
+    'completed_step_results',
+    'step_results',
+    'attempts_per_step',
+    'current_step',
+    'current_question',
+    'expected_answer',
+    'student_answer',
+    'correctness_status',
+    'skill',
+    'step_number',
+    'attempt_count',
+    'hint_given',
+    'answer_revealed',
+    'next_similar_question',
+    'tutor_practice_question_id',
+    'tutor_practice_grade',
+    'tutor_practice_topic',
+    'tutor_practice_hint_1',
+    'tutor_practice_hint_2',
+    'tutor_practice_explanation',
+    'helper_branch',
+    'queued_followup_questions',
+    'pending_input_kind',
+    'pending_new_problem',
+    'return_step_index',
+    'return_step_id',
+    'final_answer',
+    'problem_status',
+    'mode',
+    'status',
+    'memory_note',
+}
 
 
 def ensure_task_lifecycle(state: TutoringState) -> TutoringState:
@@ -191,11 +238,30 @@ def resume_latest_paused_task(state: TutoringState) -> TutoringState:
 def reconcile_task_lifecycle(state: TutoringState) -> TutoringState:
     state = ensure_task_lifecycle(state)
     active = active_task(state)
-    if not active:
-        return state
-    if state.problem_status == 'finished' or state.status == 'finished':
-        return complete_active_task(state)
-    return sync_active_task(state)
+    if active and (state.problem_status == 'finished' or state.status == 'finished'):
+        state = complete_active_task(state)
+        active = None
+
+    if active:
+        live_problem = _state_problem(state)
+        if not live_problem or not _same_problem(live_problem, active.problem_text):
+            restored_values = {
+                'active_task_id': active.task_id,
+                'task_records': state.task_records,
+                'current_subject': active.subject or state.current_subject,
+            }
+            state = _restore_snapshot(state, active.snapshot, restored_values)
+            if not _state_problem(state):
+                state = state.model_copy(update={'active_problem': active.problem_text})
+        return _project_paused_task(sync_active_task(state))
+
+    if state.task_records:
+        terminal_answer = state.final_answer
+        state = _clear_live_task_state(state)
+        if terminal_answer:
+            state = state.model_copy(update={'final_answer': terminal_answer})
+        return _project_paused_task(state)
+    return state
 
 
 def _transition_active(state: TutoringState, status: str) -> TutoringState:
@@ -225,7 +291,9 @@ def _normalize_task_records(state: TutoringState) -> TutoringState:
     records = []
     for record in state.task_records:
         if record.status == 'active' and record.task_id != chosen:
-            records.append(record.model_copy(update={'status': 'paused'}))
+            records.append(record.model_copy(update={
+                'status': 'paused' if record.snapshot else 'abandoned',
+            }))
         else:
             records.append(record)
     return state.model_copy(update={'active_task_id': chosen, 'task_records': records})
@@ -240,20 +308,72 @@ def _trim_records(records: list[TutorTaskRecord], paused_limit: int = 10, termin
 
 
 def _snapshot(state: TutoringState) -> dict:
-    return state.model_dump(exclude=LIFECYCLE_FIELDS)
+    return state.model_dump(include=TASK_SNAPSHOT_FIELDS)
 
 
 def _restore_snapshot(state: TutoringState, snapshot: dict, overrides: dict) -> TutoringState:
     values = state.model_dump()
-    values.update(snapshot)
+    values.update({key: value for key, value in snapshot.items() if key in TASK_SNAPSHOT_FIELDS})
     values.update(overrides)
     return TutoringState.model_validate(values)
+
+
+def _clear_live_task_state(state: TutoringState) -> TutoringState:
+    defaults = TutoringState(current_subject=state.current_subject)
+    preserve_support_control = bool(
+        state.emotional_support_mode
+        or state.mode in {'safety_support', 'emotional_support'}
+        or state.status == 'waiting_for_trusted_adult'
+    )
+    update = {
+        field: getattr(defaults, field)
+        for field in TASK_SNAPSHOT_FIELDS
+        if field != 'current_subject'
+    }
+    if preserve_support_control:
+        update.update({
+            'mode': state.mode,
+            'status': state.status,
+            'problem_status': state.problem_status,
+        })
+    return state.model_copy(update=update)
+
+
+def _project_paused_task(state: TutoringState) -> TutoringState:
+    """Expose legacy paused fields as a read-only projection of lifecycle records."""
+    paused = latest_paused_task(state)
+    if not paused:
+        return _clear_legacy_paused_fields(state)
+    snapshot = paused.snapshot
+    paused_problem = str(
+        snapshot.get('main_problem')
+        or snapshot.get('active_problem')
+        or paused.problem_text
+        or ''
+    ).strip()
+    update = {
+        'paused_main_problem': paused_problem,
+        'paused_current_step': str(snapshot.get('current_step') or ''),
+        'paused_current_question': str(snapshot.get('current_question') or snapshot.get('current_step') or ''),
+        'paused_expected_answer': str(snapshot.get('expected_answer') or ''),
+        'paused_completed_steps': list(snapshot.get('completed_steps') or []),
+    }
+    if active_task(state) is None and not (
+        state.emotional_support_mode
+        or state.mode in {'safety_support', 'emotional_support'}
+        or state.status == 'waiting_for_trusted_adult'
+    ):
+        update.update({'mode': 'paused', 'status': 'paused', 'problem_status': 'idle'})
+    return state.model_copy(update=update)
 
 
 def _state_problem(state: TutoringState) -> str:
     if state.problem_kind == 'word_problem' and state.full_problem:
         return str(state.full_problem).strip()
-    return str(state.main_problem or state.active_problem or state.current_question or '').strip()
+    # active_problem represents the task currently in front of the student. A
+    # main_problem may remain populated as compatibility context while a
+    # temporary task is active, so it must not override the active task here.
+    return str(state.active_problem or state.main_problem or state.current_question or '').strip()
 
 
 def _same_problem(left: str, right: str) -> bool:

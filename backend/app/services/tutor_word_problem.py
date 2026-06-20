@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from ..assessment_validation import format_fraction, normalize_word_numbers_in_text, safe_eval_expression
 from ..models import TutoringState
+from ..schemas.tutor_interpretation import StructuredMathProblem as StrictStructuredMathProblem
 from ..utils.task_lifecycle import transition_to_task
 from .llm.router import LLMRouter
 
@@ -38,6 +39,9 @@ class StructuredWordProblem(BaseModel):
 
 class TutorWordProblemInterpreter:
     """Interpret prose with an LLM, but trust only deterministically verified math."""
+
+    def __init__(self, router: LLMRouter | None = None) -> None:
+        self.router = router or LLMRouter()
 
     def is_candidate(self, subject: str, message: str) -> bool:
         if subject != 'Math':
@@ -103,24 +107,28 @@ class TutorWordProblemInterpreter:
 
     async def _interpret_with_llm(self, message: str) -> StructuredWordProblem:
         system = (
-            'You structure Grades 3-6 math word problems. Return compact JSON only with keys: '
-            'problem_type, operation, quantities, unknown_label, expression, confidence. '
-            'quantities is a list of objects with value, label, role. Use only numbers stated by the student. '
-            'The expression may use digits, parentheses, +, -, *, and /. Do not calculate the answer. '
-            'If the operation is ambiguous, return an empty expression and low confidence.'
+            'You are a strict Grades 3-6 Math word-problem interpreter. Return one JSON object only '
+            'that validates against the supplied schema. Use only quantities stated by the student. '
+            'Do not calculate the final answer. If the operation is ambiguous, set sufficient_information '
+            'to false, expression to null, operation to unknown, and confidence to low. '
+            f'JSON schema: {json.dumps(StrictStructuredMathProblem.model_json_schema(), separators=(",", ":"))}'
         )
         user = f'Student word problem: {message}'
         try:
-            result = await LLMRouter().generate(system=system, user=user, purpose='classifier')
+            result = await self.router.generate(system=system, user=user, purpose='classifier')
             parsed = self._extract_json(result.text)
+            strict_problem = StrictStructuredMathProblem.model_validate(parsed)
             return StructuredWordProblem(
                 original_text=message,
-                problem_type=str(parsed.get('problem_type') or 'word_problem'),
-                operation=str(parsed.get('operation') or ''),
-                quantities=parsed.get('quantities') or [],
-                unknown_label=str(parsed.get('unknown_label') or ''),
-                expression=str(parsed.get('expression') or ''),
-                confidence=str(parsed.get('confidence') or 'low'),
+                problem_type=strict_problem.problem_kind,
+                operation=strict_problem.operation,
+                quantities=[
+                    WordProblemQuantity(value=quantity.value, label=quantity.label, role=quantity.role)
+                    for quantity in strict_problem.quantities
+                ],
+                unknown_label=strict_problem.requested_value or '',
+                expression=strict_problem.expression or '',
+                confidence=strict_problem.confidence,
                 source='llm',
             )
         except Exception:

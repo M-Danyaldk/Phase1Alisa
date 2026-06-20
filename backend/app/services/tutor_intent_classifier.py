@@ -1,4 +1,3 @@
-import json
 import re
 
 from pydantic import BaseModel
@@ -17,9 +16,14 @@ from ..tutoring_logic import (
     detect_switch_task_intent,
     detect_tutor_concern_intent,
 )
-from .llm.router import LLMRouter
+from ..assessment_validation import normalize_word_numbers_in_text
+from .tutor_semantic_interpreter import TutorSemanticInterpreter
+from .tutor_semantic_policy import TutorSemanticPolicy
 
 INTENT_LABELS = {
+    'greeting',
+    'acknowledge',
+    'continue_current',
     'answer_current_step',
     'related_question',
     'new_problem',
@@ -36,6 +40,9 @@ INTENT_LABELS = {
 }
 
 NON_ANSWER_INTENTS = {
+    'greeting',
+    'acknowledge',
+    'continue_current',
     'related_question',
     'new_problem',
     'switch_request',
@@ -77,6 +84,13 @@ class IntentClassificationResult(BaseModel):
     reason: str = ''
     emotion: str = ''
     requested_topic: str = ''
+    answer: str = ''
+    normalized_expression: str = ''
+    requested_action: str = ''
+    refers_to_task: str = ''
+    needs_clarification: bool = False
+    clarification_question: str = ''
+    interpretation_source: str = 'deterministic'
 
     @property
     def counts_as_answer(self) -> bool:
@@ -84,6 +98,14 @@ class IntentClassificationResult(BaseModel):
 
 
 class TutorIntentClassifier:
+    def __init__(
+        self,
+        semantic_interpreter: TutorSemanticInterpreter | None = None,
+        semantic_policy: TutorSemanticPolicy | None = None,
+    ) -> None:
+        self.semantic_interpreter = semantic_interpreter or TutorSemanticInterpreter()
+        self.semantic_policy = semantic_policy or TutorSemanticPolicy()
+
     def classify_deterministically(
         self,
         subject: str,
@@ -94,6 +116,20 @@ class TutorIntentClassifier:
         text = _normalized(message)
         if not text:
             return IntentClassificationResult()
+
+        if self._is_greeting(text):
+            return IntentClassificationResult(
+                label='greeting',
+                confidence='high',
+                reason='Student greeted the tutor rather than answering a learning question.',
+            )
+
+        if self._is_acknowledgement(text):
+            return IntentClassificationResult(
+                label='acknowledge',
+                confidence='high',
+                reason='Student acknowledged the tutor without submitting an answer.',
+            )
 
         emotion = self._detected_emotion(text)
         if emotion:
@@ -109,6 +145,13 @@ class TutorIntentClassifier:
                 label='pause',
                 confidence='high',
                 reason='Student asked to pause or take a break.',
+            )
+
+        if self._is_continue_request(text) and not self._has_paused_task(state):
+            return IntentClassificationResult(
+                label='continue_current',
+                confidence='high',
+                reason='Student asked to continue the current active task.',
             )
 
         if self._is_resume_request(text):
@@ -239,16 +282,34 @@ class TutorIntentClassifier:
             'became',
             'how did',
             'what do you mean',
+            'leave that',
+            'come back',
+            'for now',
+            'this one',
         )
         mixed_math_and_text = detect_math_expression(message) and bool(re.search(r'[a-zA-Z]', message))
         ambiguous_text = any(marker in text for marker in ambiguity_markers)
         confused = detect_confused_intent(message) and len(text) > 12
+        flexible_answer = bool(re.search(
+            r'\b(final answer|my result|the result|should be|comes? to|equals?|i got|i reckon|probably)\b',
+            text,
+        ))
+        normalized_word_answer = normalize_word_numbers_in_text(text).strip()
+        word_number_answer = bool(
+            state.current_question.strip()
+            and re.fullmatch(r'-?\d+(?:\.\d+)?(?:/\d+)?', normalized_word_answer)
+            and not detect_math_expression(message)
+        )
 
         if mixed_math_and_text:
             return True
         if ambiguous_text:
             return True
         if confused:
+            return True
+        if flexible_answer:
+            return True
+        if word_number_answer:
             return True
         return False
 
@@ -270,7 +331,7 @@ class TutorIntentClassifier:
         if result.confidence not in {'high', 'medium', 'low'}:
             result.confidence = 'low'
         if result.confidence == 'low':
-            return IntentClassificationResult()
+            return result
         return result
 
     def _detected_emotion(self, text: str) -> str:
@@ -286,6 +347,42 @@ class TutorIntentClassifier:
 
     def _is_pause_request(self, text: str) -> bool:
         return bool(re.search(r'\b(pause|take a break|need a break|stop for now|come back later)\b', text))
+
+    def _is_greeting(self, text: str) -> bool:
+        return bool(re.fullmatch(r'(?:hi|hello|hey|hiya|good morning|good afternoon|good evening)[!. ]*', text))
+
+    def _is_acknowledgement(self, text: str) -> bool:
+        return bool(re.fullmatch(
+            r'(?:ok|okay|alright|all right|got it|i understand|understood|that makes sense|thanks|thank you)[!. ]*',
+            text,
+        ))
+
+    def _is_continue_request(self, text: str) -> bool:
+        if text in {'one tiny step', 'a tiny step', 'tiny step', 'smaller step'}:
+            return True
+        return bool(re.fullmatch(
+            r'(?:ok(?:ay)?\s+)?(?:continue|keep going|go on|proceed|move on|next|next step)(?:\s+(?:with|to|on)\s+(?:this|the)(?:\s+problem)?)?[!. ]*',
+            text,
+        ))
+
+    def _has_paused_task(self, state: TutoringState) -> bool:
+        has_active_context = bool(
+            state.current_question.strip()
+            or state.current_step.strip()
+            or state.active_problem.strip()
+            or state.main_problem.strip()
+        )
+        return bool(
+            state.mode == 'paused'
+            or state.status == 'paused'
+            or (
+                not has_active_context
+                and (
+                    state.paused_main_problem.strip()
+                    or any(record.status == 'paused' for record in state.task_records)
+                )
+            )
+        )
 
     def _is_resume_request(self, text: str) -> bool:
         return bool(re.search(r"\b(i am back|i'm back|im back|continue|keep going|resume)\b", text))
@@ -346,43 +443,18 @@ class TutorIntentClassifier:
         history: list[ChatHistoryItem],
         state: TutoringState,
     ) -> IntentClassificationResult:
-        system = (
-            'You classify a child tutor message for Grades 3-6. '
-            'Return compact JSON only with keys: label, confidence, reason. '
-            'label must be one of: answer_current_step, related_question, new_problem, switch_request, clarification_about_context, off_subject, unknown. '
-            'confidence must be one of: high, medium, low.'
+        interpretation = await self.semantic_interpreter.interpret(subject, message, history, state)
+        decision = self.semantic_policy.resolve(interpretation, state)
+        return IntentClassificationResult(
+            label=decision.label,
+            confidence=decision.confidence,
+            reason=decision.reason,
+            emotion=interpretation.emotion or '',
+            answer=decision.answer,
+            normalized_expression=decision.normalized_expression,
+            requested_action=decision.requested_action,
+            refers_to_task=decision.refers_to_task,
+            needs_clarification=decision.needs_clarification,
+            clarification_question=decision.clarification_question,
+            interpretation_source='llm_schema',
         )
-        recent_history = '\n'.join(f'{item.role}: {item.content}' for item in history[-4:])
-        user = (
-            f'Subject: {subject}\n'
-            f'Active main problem: {state.main_problem or state.active_problem or "none"}\n'
-            f'Current step: {state.current_question or state.current_step or "none"}\n'
-            f'Recent history:\n{recent_history or "none"}\n'
-            f'Student message: {message}\n'
-            'Classify the message intent. Only choose answer_current_step if the student is probably answering the current step. '
-            'Choose related_question if the student is asking about the current problem. '
-            'Choose new_problem if the student seems to be introducing a different problem without clearly asking to switch. '
-            'Choose switch_request only if the student clearly wants to do the new thing first.'
-        )
-        try:
-            result = await LLMRouter().generate(system=system, user=user, purpose='classifier')
-            parsed = self._extract_json(result.text)
-            return IntentClassificationResult(
-                label=str(parsed.get('label') or 'unknown'),
-                confidence=str(parsed.get('confidence') or 'low'),
-                reason=str(parsed.get('reason') or ''),
-            )
-        except Exception:
-            return IntentClassificationResult()
-
-    def _extract_json(self, text: str) -> dict:
-        try:
-            return json.loads(text)
-        except Exception:
-            match = re.search(r'\{.*\}', text, re.S)
-            if match:
-                try:
-                    return json.loads(match.group(0))
-                except Exception:
-                    return {}
-        return {}
