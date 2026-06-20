@@ -136,6 +136,8 @@ class TutorMathResponseGuard:
         return unresolved and retrying and '?' not in text
 
     def _uses_wrong_answer_language(self, text: str) -> bool:
+        if re.search(r'\bwill not count (?:as|against)\b', text, re.I):
+            return False
         return bool(re.search(r'\b(not quite|wrong answer|incorrect|try that answer again|nice try)\b', text, re.I))
 
     def _safe_repair(self, state: TutoringState, intent_label: str, violations: list[str]) -> str:

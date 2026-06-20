@@ -89,7 +89,42 @@ async def _run() -> list[str]:
     word_problem_module.LLMRouter = _WordProblemRouter
     try:
         initial = TutoringState(current_subject='Math')
-        started = await _send('There are 7 boxes and each box has space for 2 balls. How many balls are needed?', initial)
+        topic_started = await _send('teach me fraction', initial)
+        topic_state = topic_started.tutoring_state
+        _expect(topic_started.model == 'deterministic-math-topic-switch', 'Topic request did not use deterministic topic-start flow.', failures)
+        _expect('A fraction shows part of a whole.' in topic_started.reply, 'Topic-start reply did not include the fraction explanation.', failures)
+        _expect('Example:' in topic_started.reply, 'Topic-start reply did not include an example.', failures)
+        _expect(topic_state.mode == 'tutor_practice_question', 'Topic-start did not enter tutor-practice mode.', failures)
+        _expect(topic_state.current_question == 'What fraction shows 1 part out of 4 equal parts?', 'Topic-start did not store the starter question.', failures)
+        _expect(topic_state.expected_answer == '1/4', 'Topic-start did not store the expected answer.', failures)
+        _expect(topic_state.attempt_count == 0, 'Topic-start counted the topic request as an answer attempt.', failures)
+
+        topic_help = await _send('what is the denominator in this fraction?', topic_state)
+        helped_state = topic_help.tutoring_state
+        _expect(topic_help.model == 'deterministic-tutor-math-practice-support', 'Topic help did not use deterministic tutor-practice support.', failures)
+        _expect('bottom number' in topic_help.reply.lower(), 'Topic help did not explain the denominator.', failures)
+        _expect(helped_state.active_task_id == topic_state.active_task_id, 'Topic help interruption changed the active lesson task.', failures)
+        _expect(helped_state.current_question == topic_state.current_question, 'Topic help interruption changed the starter question.', failures)
+        _expect(helped_state.expected_answer == '1/4', 'Topic help interruption lost the expected answer.', failures)
+        _expect(helped_state.attempt_count == 0, 'Topic help interruption counted as an answer attempt.', failures)
+
+        topic_answer = await _send('1/4', helped_state)
+        _expect(topic_answer.model == 'deterministic-tutor-math-practice-check', 'Topic starter answer did not use tutor-practice checking.', failures)
+        _expect(topic_answer.tutoring_state.final_answer == '1/4', 'Topic starter answer did not finish with the expected answer.', failures)
+        _expect(topic_answer.tutoring_state.problem_status == 'idle', 'Finished topic starter did not return to idle live state.', failures)
+        _expect(
+            any(
+                record.status == 'completed'
+                and record.problem_text == 'What fraction shows 1 part out of 4 equal parts?'
+                and record.final_answer == '1/4'
+                for record in topic_answer.tutoring_state.task_records
+            ),
+            'Topic starter completion was not recorded in lifecycle history.',
+            failures,
+        )
+        _expect(topic_answer.tutoring_state.active_task_id == '', 'Finished topic starter task remained active.', failures)
+
+        started = await _send('There are 7 boxes and each box has space for 2 balls. How many balls are needed?', topic_answer.tutoring_state)
         state = started.tutoring_state
         _expect(started.model == 'deterministic-structured-word-problem', 'Word problem did not enter deterministic structured flow.', failures)
         _expect(state.expected_answer == '14' and state.current_question, 'Word problem did not store its verified current step.', failures)

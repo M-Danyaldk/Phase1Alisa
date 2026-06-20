@@ -1,11 +1,23 @@
-function renderInlineBold(text: string) {
+type MarkdownTextProps = {
+  text: string;
+  subject?: string;
+};
+
+function renderInlineBold(text: string, subject = '') {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, index) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={index}>{part.slice(2, -2)}</strong>;
     }
-    return <span key={index}>{formatMathDisplayText(part)}</span>;
+    return <span key={index}>{formatDisplayText(part, subject)}</span>;
   });
+}
+
+function formatDisplayText(text: string, subject = '') {
+  if (subject !== 'Math') {
+    return text;
+  }
+  return formatMathDisplayText(text);
 }
 
 function formatMathDisplayText(text: string) {
@@ -16,10 +28,10 @@ function formatMathDisplayText(text: string) {
     .replace(/->/g, '→');
 }
 
-export function MarkdownText({ text }: { text: string }) {
+export function MarkdownText({ text, subject = '' }: MarkdownTextProps) {
   return <p>
     {text.split('\n').map((line, index, lines) => <span key={index}>
-      {renderInlineBold(line)}
+      {renderInlineBold(line, subject)}
       {index < lines.length - 1 && <br />}
     </span>)}
   </p>;

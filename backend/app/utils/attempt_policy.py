@@ -84,6 +84,37 @@ def preserve_attempt_progress(source: TutoringState, target: TutoringState) -> T
     })
 
 
+def preserve_tutor_practice_context(source: TutoringState, target: TutoringState) -> TutoringState:
+    if source.mode != 'tutor_practice_question' or source.problem_status != 'tutor_practice':
+        return target
+    return target.model_copy(update={
+        'active_task_id': source.active_task_id,
+        'task_records': list(source.task_records),
+        'active_problem': source.active_problem,
+        'current_step': source.current_step,
+        'current_question': source.current_question,
+        'expected_answer': source.expected_answer,
+        'correctness_status': '',
+        'skill': source.skill,
+        'step_number': source.step_number,
+        'attempt_count': source.attempt_count,
+        'attempts_per_step': dict(source.attempts_per_step),
+        'hint_given': source.hint_given,
+        'answer_revealed': source.answer_revealed,
+        'next_similar_question': source.next_similar_question,
+        'tutor_practice_question_id': source.tutor_practice_question_id,
+        'tutor_practice_grade': source.tutor_practice_grade,
+        'tutor_practice_topic': source.tutor_practice_topic,
+        'tutor_practice_hint_1': source.tutor_practice_hint_1,
+        'tutor_practice_hint_2': source.tutor_practice_hint_2,
+        'tutor_practice_explanation': source.tutor_practice_explanation,
+        'recent_tutor_practice_question_ids': list(source.recent_tutor_practice_question_ids),
+        'problem_status': 'tutor_practice',
+        'mode': 'tutor_practice_question',
+        'status': 'waiting_for_student',
+    })
+
+
 def attempt_stage(attempt_count: int) -> str:
     if attempt_count <= 0:
         return 'none'

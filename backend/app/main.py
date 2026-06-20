@@ -64,7 +64,13 @@ from .services.tutor_word_problem import (
 )
 from .services.tutor_subject_classifier import TutorSubjectClassifier
 from .services.topic_resolver import TopicResolver
+from .tutor_math_topic_lessons import apply_topic_lesson_state, build_topic_lesson_intro, topic_lesson
 from .tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
+from .tutor_math_practice_support import (
+    build_tutor_practice_support_reply,
+    is_tutor_practice_answer_like,
+    student_matches_expected_practice_answer,
+)
 from .tutoring_logic import (
     build_conversation_control_reply,
     build_subject_boundary_reply,
@@ -101,6 +107,7 @@ from .utils.task_lifecycle import (
 from .utils.attempt_policy import (
     ensure_answer_attempt_registered,
     preserve_attempt_progress,
+    preserve_tutor_practice_context,
     register_answer_attempt,
     reset_attempt_display,
 )
@@ -615,6 +622,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         'clarification_about_context',
     }:
         tutoring_state = preserve_attempt_progress(payload.tutoring_state, tutoring_state)
+        tutoring_state = preserve_tutor_practice_context(payload.tutoring_state, tutoring_state)
     tutoring_state = tutoring_state.model_copy(update={'current_subject': payload.subject})
     previous_structured_problem_id = payload.tutoring_state.problem_id
     side_problem_active = bool(
@@ -942,6 +950,20 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_model = 'deterministic-safety-support-lock'
         result_fallback_used = False
         special_local_reply = True
+    elif is_tutor_practice_answer_like(payload.tutoring_state, effective_message):
+        practice_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state).model_copy(update={
+            'current_subject': payload.subject,
+        })
+        formatted_reply, next_state = _tutor_practice_answer_reply(
+            practice_state,
+            effective_message,
+            answer_check,
+            action_intent,
+        )
+        result_provider = 'local'
+        result_model = 'deterministic-tutor-math-practice-check'
+        result_fallback_used = False
+        special_local_reply = True
     elif intent_assist.needs_clarification:
         next_state = preserve_attempt_progress(payload.tutoring_state, payload.tutoring_state.model_copy(update={
             'current_subject': payload.subject,
@@ -1005,7 +1027,20 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_model = 'deterministic-math-topic-switch'
         result_fallback_used = False
         special_local_reply = True
-    elif _should_grade_tutor_practice(payload.tutoring_state, intent_assist.label):
+    elif _is_tutor_practice_question_state(payload.tutoring_state) and intent_assist.label in {'help_request', 'related_question'}:
+        formatted_reply, next_state = build_tutor_practice_support_reply(
+            payload.tutoring_state,
+            payload.message,
+            action_intent,
+        )
+        result_provider = 'local'
+        result_model = 'deterministic-tutor-math-practice-support'
+        result_fallback_used = False
+        special_local_reply = True
+    elif (
+        _should_grade_tutor_practice(payload.tutoring_state, intent_assist.label)
+        or is_tutor_practice_answer_like(payload.tutoring_state, effective_message)
+    ):
         practice_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state).model_copy(update={
             'current_subject': payload.subject,
         })
@@ -1260,6 +1295,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 'paused_expected_answer': '',
                 'paused_completed_steps': [],
             })
+    if intent_assist.label in {'greeting', 'acknowledge', 'continue_current', 'related_question', 'help_request', 'meta_feedback'}:
+        next_state = preserve_tutor_practice_context(payload.tutoring_state, next_state)
     next_state = reconcile_task_lifecycle(next_state)
     if math_guard_result is not None:
         next_state = math_response_guard.apply_metadata(next_state, math_guard_result, result_model)
@@ -1674,8 +1711,8 @@ def _tutor_practice_answer_reply(
         state.expected_answer,
     )
     attempt_count = state.attempt_count if state.attempt_count > 0 else min(state.attempt_count + 1, 1)
-    if local_check.is_correct:
-        expected = local_check.expected_answer or state.expected_answer
+    if local_check.is_correct or student_matches_expected_practice_answer(state, student_answer):
+        expected = state.expected_answer or local_check.expected_answer
         explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
         reply = (
             "Yes, that's correct!\n\n"
@@ -1716,7 +1753,7 @@ def _tutor_practice_answer_reply(
             'status': 'waiting_for_student',
         })
 
-    expected = local_check.expected_answer or state.expected_answer
+    expected = state.expected_answer or local_check.expected_answer
     explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
     reply = (
         "Nice effort. Let's finish this one together.\n\n"
@@ -1790,6 +1827,10 @@ def _resume_task_reply(state: TutoringState) -> str:
 
 
 def _math_topic_switch_state(state: TutoringState, student_message: str, requested_topic: str) -> TutoringState:
+    lesson = topic_lesson(requested_topic)
+    if lesson:
+        return apply_topic_lesson_state(state, student_message, lesson)
+
     abandoned = abandon_active_task(state)
     return TutoringState(
         active_task_id=abandoned.active_task_id,
@@ -1806,6 +1847,10 @@ def _math_topic_switch_state(state: TutoringState, student_message: str, request
 
 
 def _math_topic_switch_reply(requested_topic: str) -> str:
+    lesson = topic_lesson(requested_topic)
+    if lesson:
+        return build_topic_lesson_intro(lesson)
+
     labels = {
         'fraction': 'fractions',
         'decimal': 'decimals',
@@ -1817,7 +1862,7 @@ def _math_topic_switch_reply(requested_topic: str) -> str:
     }
     label = labels.get(requested_topic, requested_topic or 'that Math topic')
     return (
-        f'Sure—we can move to {label}. The earlier practice question will not count as a wrong answer.\n\n'
+        f'Sure—we can move to {label}. The earlier practice question will not count against you.\n\n'
         f'Send me your {label} question, or say **give me a {label} question**.'
     )
 

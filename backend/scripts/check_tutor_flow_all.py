@@ -14,6 +14,8 @@ from backend.scripts.check_tutor_interpretation_schema import main as tutor_inte
 from backend.scripts.check_tutor_semantic_interpreter import main as tutor_semantic_interpreter_main
 from backend.scripts.check_tutor_semantic_policy import main as tutor_semantic_policy_main
 from backend.scripts.check_tutor_production_readiness import main as tutor_production_readiness_main
+from backend.scripts.check_tutor_topic_lessons import main as tutor_topic_lessons_main
+from backend.scripts.check_tutor_topic_e2e_matrix import main as tutor_topic_e2e_matrix_main
 
 import asyncio
 
@@ -49,6 +51,9 @@ def main() -> None:
     print('Running tutor semantic-policy check...')
     tutor_semantic_policy_main()
     print('')
+    print('Running tutor topic-lesson check...')
+    asyncio.run(tutor_topic_lessons_main())
+    print('')
     print('Running tutor emotional-support check...')
     tutor_emotional_support_main()
     print('')
@@ -57,6 +62,9 @@ def main() -> None:
     print('')
     print('Running tutor Math endpoint E2E check...')
     tutor_math_e2e_main()
+    print('')
+    print('Running tutor topic endpoint matrix check...')
+    tutor_topic_e2e_matrix_main()
     print('')
     print('Running tutor voice-parity check...')
     tutor_voice_parity_main()

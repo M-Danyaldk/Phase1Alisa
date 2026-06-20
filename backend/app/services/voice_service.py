@@ -43,6 +43,12 @@ from .tutor_word_problem import (
 )
 from .tutor_subject_classifier import TutorSubjectClassifier
 from ..tutor_math_practice_bank import TutorMathPracticeQuestion, select_tutor_math_question
+from ..tutor_math_practice_support import (
+    build_tutor_practice_support_reply,
+    is_tutor_practice_answer_like,
+    student_matches_expected_practice_answer,
+)
+from ..tutor_math_topic_lessons import apply_topic_lesson_state, build_topic_lesson_intro, topic_lesson
 from ..tutoring_logic import (
     build_conversation_control_reply,
     build_subject_boundary_reply,
@@ -73,7 +79,7 @@ from ..utils.task_lifecycle import (
     reconcile_task_lifecycle,
     transition_to_task,
 )
-from ..utils.attempt_policy import ensure_answer_attempt_registered, preserve_attempt_progress
+from ..utils.attempt_policy import ensure_answer_attempt_registered, preserve_attempt_progress, preserve_tutor_practice_context
 
 logger = logging.getLogger(__name__)
 CHAT_HISTORY_PUBLIC_ERROR = 'Chat history could not be saved.'
@@ -305,8 +311,8 @@ def _tutor_practice_answer_reply(
 
     local_check = answer_check or TutorAnswerChecker()._check_math(state.current_question, student_answer, state.expected_answer)
     attempt_count = state.attempt_count if state.attempt_count > 0 else 1
-    if local_check.is_correct:
-        expected = local_check.expected_answer or state.expected_answer
+    if local_check.is_correct or student_matches_expected_practice_answer(state, student_answer):
+        expected = state.expected_answer or local_check.expected_answer
         explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
         reply = f"Yes, that's correct!\n\n{_display_tutor_math_question(explanation)}\n\nWould you like another practice question?"
         return reply, _finished_tutor_practice_state(state, student_answer, 'correct', expected)
@@ -335,7 +341,7 @@ def _tutor_practice_answer_reply(
             'status': 'waiting_for_student',
         })
 
-    expected = local_check.expected_answer or state.expected_answer
+    expected = state.expected_answer or local_check.expected_answer
     explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
     reply = f"Nice effort. Let's finish this one together.\n\n{_display_tutor_math_question(explanation)}\n\nWould you like another practice question?"
     return reply, _finished_tutor_practice_state(state, student_answer, 'incorrect', expected, revealed=True)
@@ -1179,6 +1185,7 @@ class VoiceService:
             'clarification_about_context',
         }:
             next_state = preserve_attempt_progress(tutoring_state, next_state)
+            next_state = preserve_tutor_practice_context(tutoring_state, next_state)
         next_state = next_state.model_copy(update={'current_subject': subject})
         previous_structured_problem_id = tutoring_state.problem_id
         side_problem_active = bool(
@@ -1311,6 +1318,19 @@ class VoiceService:
             result_provider = 'local'
             result_model = 'deterministic-voice-safety-support-lock'
             special_local_reply = True
+        elif is_tutor_practice_answer_like(tutoring_state, effective_transcript):
+            practice_state = ensure_answer_attempt_registered(tutoring_state, next_state).model_copy(update={
+                'current_subject': subject,
+            })
+            formatted_reply, final_state = _tutor_practice_answer_reply(
+                practice_state,
+                effective_transcript,
+                answer_check,
+                action_intent,
+            )
+            result_provider = 'local'
+            result_model = 'deterministic-voice-tutor-math-practice-check'
+            special_local_reply = True
         elif intent_assist.needs_clarification:
             final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
                 'current_subject': subject,
@@ -1348,13 +1368,52 @@ class VoiceService:
             result_provider = 'local'
             result_model = f'deterministic-voice-conversation-{intent_assist.label}'
             special_local_reply = True
+        elif intent_assist.label == 'topic_switch' and subject == 'Math':
+            lesson = topic_lesson(intent_assist.requested_topic)
+            if lesson:
+                final_state = apply_topic_lesson_state(tutoring_state, transcript, lesson)
+                formatted_reply = build_topic_lesson_intro(lesson)
+            else:
+                final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
+                    'current_subject': subject,
+                    'student_answer': transcript,
+                    'correctness_status': '',
+                    'skill': intent_assist.requested_topic,
+                    'problem_status': 'idle',
+                    'mode': 'solve',
+                    'status': 'idle',
+                    'memory_note': f'Student requested Math topic: {intent_assist.requested_topic}.',
+                }))
+                label = intent_assist.requested_topic or 'that Math topic'
+                formatted_reply = (
+                    f'Sure—we can move to {label}. The earlier practice question will not count against you.\n\n'
+                    f'Send me your {label} question, or say **give me a {label} question**.'
+                )
+            result_provider = 'local'
+            result_model = 'deterministic-voice-math-topic-switch'
+            special_local_reply = True
         elif intent_assist.label == 'pause':
             final_state = pause_active_task(tutoring_state).model_copy(update={'mode': 'paused', 'status': 'paused'})
             formatted_reply = 'Of course. Your problem and exact step are saved. Come back when you are ready.'
             result_provider = 'local'
             result_model = 'deterministic-voice-student-pause'
             special_local_reply = True
-        elif _is_tutor_practice_question_state(tutoring_state) and intent_assist.label == 'answer_current_step':
+        elif _is_tutor_practice_question_state(tutoring_state) and intent_assist.label in {'help_request', 'related_question'}:
+            formatted_reply, final_state = build_tutor_practice_support_reply(
+                tutoring_state,
+                transcript,
+                action_intent,
+            )
+            result_provider = 'local'
+            result_model = 'deterministic-voice-tutor-math-practice-support'
+            special_local_reply = True
+        elif (
+            _is_tutor_practice_question_state(tutoring_state)
+            and (
+                intent_assist.label == 'answer_current_step'
+                or is_tutor_practice_answer_like(tutoring_state, effective_transcript)
+            )
+        ):
             practice_state = ensure_answer_attempt_registered(tutoring_state, next_state).model_copy(update={
                 'current_subject': subject,
             })
@@ -1588,6 +1647,8 @@ class VoiceService:
                     'paused_expected_answer': '',
                     'paused_completed_steps': [],
                 })
+        if intent_assist.label in {'greeting', 'acknowledge', 'continue_current', 'related_question', 'help_request', 'meta_feedback'}:
+            final_state = preserve_tutor_practice_context(tutoring_state, final_state)
         if math_guard_result is not None:
             final_state = math_response_guard.apply_metadata(final_state, math_guard_result, result_model)
         final_state = reconcile_task_lifecycle(final_state)

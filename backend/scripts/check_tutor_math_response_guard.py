@@ -77,6 +77,13 @@ def main() -> None:
     non_answer = guard.validate('Nice try, that answer is not quite right.', state, intent_label='emotion')
     _expect(non_answer.repaired and 'non_answer_graded_as_wrong' in non_answer.violations, 'Emotion was allowed to receive wrong-answer language.', failures)
 
+    safe_topic_reassurance = guard.validate(
+        'Sure, we can move to fractions. The earlier practice question will not count against you.',
+        state.model_copy(update={'current_question': '', 'current_step': '', 'problem_status': 'idle'}),
+        intent_label='topic_switch',
+    )
+    _expect(safe_topic_reassurance.valid and not safe_topic_reassurance.repaired, 'Safe topic-switch reassurance was incorrectly repaired.', failures)
+
     tagged = guard.apply_metadata(state, wrong_math, 'test-model')
     _expect(tagged.last_response_validated and tagged.last_response_repaired, 'Response validation metadata was not stored.', failures)
     _expect(tagged.last_response_violations == wrong_math.violations, 'Response violations were not auditable in state.', failures)

@@ -2,6 +2,7 @@ import asyncio
 
 from backend.app.main import (
     _emotion_interruption_reply,
+    _math_topic_switch_reply,
     _math_topic_switch_state,
     _should_grade_tutor_practice,
 )
@@ -43,8 +44,14 @@ async def main() -> None:
         ('ok', 'acknowledge'),
         ('ok proceed with this problem', 'continue_current'),
         ('I want to learn fractions', 'topic_switch'),
+        ('fractions', 'topic_switch'),
+        ('frction', 'topic_switch'),
+        ('teach me fracton', 'topic_switch'),
+        ('lcm', 'topic_switch'),
+        ('least commen multiple', 'topic_switch'),
         ('There are 7 boxes and each box holds 2 balls. How many balls fill the boxes?', 'new_problem'),
         ('Why do we multiply by 6?', 'related_question'),
+        ('why do we multiply fractions here?', 'related_question'),
         ('Help me understand this', 'help_request'),
         ('I am tired', 'emotion'),
         ("Why is this so hard? I'm frustrated", 'emotion'),
@@ -60,6 +67,11 @@ async def main() -> None:
         _expect(result.label == expected_label, f'{message!r} classified as {result.label!r}, expected {expected_label!r}.', failures)
 
     _expect(results['I want to learn fractions'].requested_topic == 'fraction', 'Fraction topic request did not preserve its requested topic.', failures)
+    _expect(results['fractions'].requested_topic == 'fraction', 'Bare fraction topic did not normalize to fraction.', failures)
+    _expect(results['frction'].requested_topic == 'fraction', 'Misspelled fraction topic did not normalize to fraction.', failures)
+    _expect(results['lcm'].requested_topic == 'lcm', 'Bare LCM topic did not normalize to lcm.', failures)
+    _expect(results['least commen multiple'].requested_topic == 'lcm', 'Misspelled LCM topic did not normalize to lcm.', failures)
+    _expect(results['why do we multiply fractions here?'].requested_topic == '', 'Active-problem fraction explanation was mistaken for a topic switch.', failures)
     _expect(results['I am tired'].emotion == 'tired', 'Tired emotional message did not preserve its emotion label.', failures)
     _expect(_should_grade_tutor_practice(state, results['66'].label), 'A numeric practice answer was not allowed into grading.', failures)
     for message, _ in cases[1:]:
@@ -104,7 +116,27 @@ async def main() -> None:
     switched_state = _math_topic_switch_state(state, 'I want to learn fractions', 'fraction')
     _expect(switched_state.skill == 'fraction', 'Topic switch did not preserve the requested Math topic.', failures)
     _expect(switched_state.attempt_count == 0, 'Topic switch carried a wrong-answer attempt into the new topic.', failures)
-    _expect(not switched_state.current_question and not switched_state.active_problem, 'Topic switch kept the abandoned routine practice question active.', failures)
+    _expect(switched_state.mode == 'tutor_practice_question', 'Topic switch did not start a topic lesson practice state.', failures)
+    _expect(switched_state.status == 'waiting_for_student', 'Topic lesson state is not waiting for the student answer.', failures)
+    _expect(switched_state.problem_status == 'tutor_practice', 'Topic lesson was not stored as tutor practice.', failures)
+    _expect(switched_state.current_question == 'What fraction shows 1 part out of 4 equal parts?', 'Fraction topic lesson did not store the starter question.', failures)
+    _expect(switched_state.active_problem == switched_state.current_question, 'Topic lesson active problem and current question drifted.', failures)
+    _expect(switched_state.expected_answer == '1/4', 'Fraction topic lesson did not store the expected answer.', failures)
+    _expect(switched_state.tutor_practice_question_id == 'topic-lesson-fraction', 'Fraction topic lesson did not store a stable question id.', failures)
+    _expect('topic-lesson-fraction' in switched_state.recent_tutor_practice_question_ids, 'Fraction topic lesson was not added to recent practice ids.', failures)
+    switch_reply = _math_topic_switch_reply('fraction')
+    _expect('wrong answer' not in switch_reply.lower(), 'Topic-switch reply still contains response-guard wrong-answer wording.', failures)
+    _expect('fractions' in switch_reply.lower(), 'Topic-switch reply did not mention the requested topic.', failures)
+    _expect('A fraction shows part of a whole.' in switch_reply, 'Fraction topic reply did not include the mini explanation.', failures)
+    _expect('Example:' in switch_reply, 'Fraction topic reply did not include an example.', failures)
+    _expect(switched_state.current_question in switch_reply, 'Fraction topic reply did not ask the stored starter question.', failures)
+
+    lcm_state = _math_topic_switch_state(state, 'teach me lcm', 'lcm')
+    lcm_reply = _math_topic_switch_reply('lcm')
+    _expect(lcm_state.skill == 'lcm', 'LCM topic switch did not preserve the requested topic.', failures)
+    _expect(lcm_state.current_question == 'What is the LCM of 3 and 4?', 'LCM topic lesson did not store the starter question.', failures)
+    _expect(lcm_state.expected_answer == '12', 'LCM topic lesson did not store the expected answer.', failures)
+    _expect('LCM means Least Common Multiple' in lcm_reply, 'LCM topic reply did not include the mini explanation.', failures)
 
     if failures:
         print('Tutor intent routing check failed:')
@@ -118,7 +150,7 @@ async def main() -> None:
     print('- Long conversational messages are not mistaken for Math problems.')
     print('- Generic follow-up wording is anchored to a verified Math expression instead of replacing it.')
     print('- Emotional messages preserve the problem without wrong-answer language.')
-    print('- Math topic switches clear routine practice attempts and retain the requested topic.')
+    print('- Math topic switches clear routine practice attempts, teach a mini lesson, and start a checked starter question.')
 
 
 if __name__ == '__main__':

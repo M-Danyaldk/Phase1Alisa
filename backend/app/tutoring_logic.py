@@ -1612,6 +1612,27 @@ def update_tutoring_state_after_reply(
     if switched_away_from_paused_problem and not next_step and can_resume_paused_task(state):
         return complete_and_resume_latest(state)
 
+    if state.mode == 'tutor_practice_question' and state.problem_status == 'tutor_practice':
+        return TutoringState(
+            **_clear_pending_problem_fields(_structured_state_fields(state)),
+            active_problem=state.active_problem,
+            current_subject=state.current_subject,
+            current_step=state.current_step or state.current_question,
+            current_question=state.current_question or state.current_step,
+            expected_answer=state.expected_answer,
+            student_answer=state.student_answer,
+            correctness_status='',
+            skill=state.skill,
+            step_number=state.step_number,
+            attempt_count=state.attempt_count,
+            hint_given=state.hint_given,
+            answer_revealed=state.answer_revealed,
+            next_similar_question='',
+            mode='tutor_practice_question',
+            status='waiting_for_student',
+            memory_note=_build_memory_note(state.active_problem, reply, state.memory_note),
+        )
+
     if state.ordered_steps and state.current_step_id and state.problem_status in {'in_progress', 'awaiting_step'}:
         if next_step:
             return TutoringState(

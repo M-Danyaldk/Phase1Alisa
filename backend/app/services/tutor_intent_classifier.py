@@ -1,4 +1,5 @@
 import re
+from difflib import SequenceMatcher
 
 from pydantic import BaseModel
 
@@ -58,12 +59,38 @@ NON_ANSWER_INTENTS = {
 
 MATH_TOPIC_ALIASES = {
     'fraction': ('fraction', 'fractions', 'numerator', 'denominator', 'equivalent fraction'),
+    'lcm': ('lcm', 'least common multiple'),
     'decimal': ('decimal', 'decimals'),
     'multiplication': ('multiplication', 'multiply', 'times tables', 'times table'),
     'division': ('division', 'divide'),
     'addition': ('addition', 'add'),
     'subtraction': ('subtraction', 'subtract'),
-    'geometry': ('geometry', 'area', 'perimeter', 'shape', 'shapes'),
+    'geometry': ('geometry', 'shape', 'shapes'),
+    'area': ('area',),
+    'perimeter': ('perimeter',),
+    'word_problem': ('word problem', 'word problems'),
+    'ratio': ('ratio', 'ratios'),
+    'percent': ('percent', 'percentage', 'percents'),
+    'measurement': ('measurement', 'measurements'),
+    'time': ('time', 'elapsed time'),
+    'money': ('money',),
+    'factor': ('factor', 'factors', 'multiple', 'multiples'),
+    'place_value': ('place value',),
+    'negative_number': ('negative number', 'negative numbers'),
+    'expression': ('expression', 'expressions', 'equation', 'equations'),
+    'data': ('data', 'graph', 'graphs'),
+}
+
+MATH_TOPIC_MISSPELLINGS = {
+    'fraction': ('frction', 'fracton', 'frations', 'fracion', 'fraccion', 'fracshun', 'fractionn', 'fractoin', 'fratcion'),
+    'lcm': ('least commen multiple', 'least common multple', 'least comun multiple'),
+    'decimal': ('decimel', 'decimals'),
+    'multiplication': ('multipliction', 'multiplicaton', 'multiplcation'),
+    'division': ('divison', 'devision'),
+    'addition': ('additon', 'adition'),
+    'subtraction': ('substraction', 'subtracion', 'subtrction'),
+    'geometry': ('geomtry', 'geometery'),
+    'perimeter': ('perimiter', 'peremeter'),
 }
 
 EMOTION_ALIASES = {
@@ -394,16 +421,117 @@ class TutorIntentClassifier:
             r'\b(i want|i need|i would like|i\'d like|teach me|help me (?:learn|with)|can we|could we|let\'s|lets|move to|go to|practice|learn)\b',
             text,
         ))
-        if not request_shape:
+        topic_like_only = self._is_short_topic_like_request(text)
+        if not request_shape and not topic_like_only:
             return ''
+        for topic, aliases in MATH_TOPIC_MISSPELLINGS.items():
+            if any(re.search(rf'\b{re.escape(alias)}s?\b', text) for alias in aliases):
+                return topic
         for topic, aliases in MATH_TOPIC_ALIASES.items():
             if any(re.search(rf'\b{re.escape(alias)}s?\b', text) for alias in aliases):
                 return topic
+        fuzzy_topic = self._fuzzy_math_topic(text)
+        if fuzzy_topic:
+            return fuzzy_topic
         return ''
+
+    def _is_short_topic_like_request(self, text: str) -> bool:
+        cleaned = re.sub(r'[^a-z0-9/ ]+', ' ', text)
+        words = [word for word in cleaned.split() if word]
+        if not words or len(words) > 5:
+            return False
+        help_context_words = {
+            'why',
+            'how',
+            'what',
+            'where',
+            'when',
+            'this',
+            'here',
+            'mean',
+            'means',
+            'understand',
+            'confused',
+            'explain',
+        }
+        if any(word in help_context_words for word in words):
+            return False
+        request_words = {
+            'teach',
+            'learn',
+            'practice',
+            'start',
+            'topic',
+            'question',
+            'questions',
+            'example',
+            'examples',
+            'me',
+            'with',
+            'do',
+            'want',
+            'need',
+            'can',
+            'we',
+            'please',
+            'a',
+            'an',
+        }
+        topic_words = [word for word in words if word not in request_words]
+        return bool(topic_words) and len(topic_words) <= 3
+
+    def _fuzzy_math_topic(self, text: str) -> str:
+        cleaned = re.sub(r'[^a-z0-9/ ]+', ' ', text)
+        words = [word for word in cleaned.split() if word]
+        request_words = {
+            'teach',
+            'learn',
+            'practice',
+            'start',
+            'topic',
+            'question',
+            'questions',
+            'example',
+            'examples',
+            'me',
+            'with',
+            'do',
+            'want',
+            'need',
+            'can',
+            'we',
+            'please',
+            'a',
+            'an',
+            'to',
+            'the',
+        }
+        candidates = [word for word in words if word not in request_words and len(word) >= 3]
+        if not candidates:
+            return ''
+        phrase = ' '.join(candidates)
+        alias_pairs = [
+            (topic, alias)
+            for topic, aliases in MATH_TOPIC_ALIASES.items()
+            for alias in aliases
+            if len(alias) >= 4
+        ]
+        best_topic = ''
+        best_score = 0.0
+        for candidate in [*candidates, phrase]:
+            for topic, alias in alias_pairs:
+                if ' ' in alias and len(candidates) == 1:
+                    continue
+                score = SequenceMatcher(None, candidate, alias).ratio()
+                threshold = 0.84 if len(candidate) <= 7 else 0.78
+                if score >= threshold and score > best_score:
+                    best_topic = topic
+                    best_score = score
+        return best_topic
 
     def _is_help_request(self, text: str) -> bool:
         return bool(re.search(
-            r'^(hint|help|help me|show me|explain(?: it)?|i do not know|i don\'t know|i dont know|i am stuck|i\'m stuck|im stuck)\b',
+            r'^(hint|help|help me|show me|explain(?: it)?|i do not know|i don\'t know|i dont know|i do not understand|i don\'t understand|i dont understand|i am stuck|i\'m stuck|im stuck)\b',
             text,
         ))
 

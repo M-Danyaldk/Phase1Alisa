@@ -231,7 +231,7 @@ export function ChatWorkspace({
         <p>Start with a question, or choose Start Over when you want a fresh activity.</p>
       </div>}
       {messages.map((message, index) => <div key={index} className={classNames('chat-bubble', message.role === 'student' ? 'student' : 'assistant')}>
-        <MarkdownText text={message.content} />
+        <MarkdownText text={message.content} subject={message.subject} />
       </div>)}
       {loading && <div className="chat-bubble assistant"><p>Ms. Alisia is thinking...</p></div>}
     </div>

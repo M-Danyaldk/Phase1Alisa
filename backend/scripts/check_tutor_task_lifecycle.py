@@ -134,8 +134,10 @@ def main() -> None:
     _expect(any(task.status == 'paused' and task.problem_text == '9 + 4' for task in swapped.task_records), 'Task interrupted by explicit resume was not preserved as paused.', failures)
 
     switched = _math_topic_switch_state(resumed_again, 'I want to learn fractions', 'fraction')
-    _expect(active_task(switched) is None, 'Topic switch left the old task active.', failures)
+    _expect(active_task(switched) is not None, 'Topic switch did not start the new topic lesson task.', failures)
+    _expect(active_task(switched).problem_text == 'What fraction shows 1 part out of 4 equal parts?', 'Topic switch active task is not the new fraction starter.', failures)
     _expect(any(task.status == 'abandoned' for task in switched.task_records), 'Topic switch did not mark the old routine task abandoned.', failures)
+    _expect(not any(task.status == 'active' and task.problem_text == resumed_again.active_problem for task in switched.task_records), 'Topic switch left the old task active.', failures)
     _expect(not can_resume_paused_task(switched), 'Abandoned task remained eligible for restoration.', failures)
 
     stale_legacy = ensure_task_lifecycle(TutoringState(
