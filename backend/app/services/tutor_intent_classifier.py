@@ -643,7 +643,7 @@ class TutorIntentClassifier:
 
     def _is_help_request(self, text: str) -> bool:
         return bool(re.search(
-            r'^(hint|help|help me|show me|explain(?: it)?|give me (?:a |another )?hint|make it easier|i do not know|i don\'t know|i dont know|i (?:still )?do not understand|i (?:still )?don\'t understand|i (?:still )?dont understand|i am stuck|i\'m stuck|im stuck)\b',
+            r'^(hint|help|help me|show me|explain(?: it)?|give me (?:(?:a|one|small|tiny|little|one small|one tiny|one little|another) )?hint|make it easier|i do not know|i don\'t know|i dont know|i (?:still )?do not understand|i (?:still )?don\'t understand|i (?:still )?dont understand|i am stuck|i\'m stuck|im stuck)\b',
             text,
         ))
 

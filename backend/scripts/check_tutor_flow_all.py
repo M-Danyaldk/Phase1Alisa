@@ -5,8 +5,10 @@ from backend.scripts.check_tutor_intent_routing import main as tutor_intent_rout
 from backend.scripts.check_tutor_task_lifecycle import main as tutor_task_lifecycle_main
 from backend.scripts.check_tutor_attempt_policy import main as tutor_attempt_policy_main
 from backend.scripts.check_tutor_answer_attempt_feedback import main as tutor_answer_attempt_feedback_main
+from backend.scripts.check_tutor_conceptual_math import main as tutor_conceptual_math_main
 from backend.scripts.check_tutor_flow_alignment import main as tutor_flow_alignment_main
 from backend.scripts.check_tutor_followup_transition import main as tutor_followup_transition_main
+from backend.scripts.check_tutor_opening_mixed_math import main as tutor_opening_mixed_math_main
 from backend.scripts.check_tutor_word_problem_schema import main as tutor_word_problem_schema_main
 from backend.scripts.check_tutor_emotional_support import main as tutor_emotional_support_main
 from backend.scripts.check_tutor_math_response_guard import main as tutor_math_response_guard_main
@@ -50,6 +52,12 @@ def main() -> None:
     print('')
     print('Running tutor answer-attempt feedback check...')
     tutor_answer_attempt_feedback_main()
+    print('')
+    print('Running tutor conceptual Math check...')
+    asyncio.run(tutor_conceptual_math_main())
+    print('')
+    print('Running tutor opening mixed Math check...')
+    asyncio.run(tutor_opening_mixed_math_main())
     print('')
     print('Running tutor flow-alignment check...')
     tutor_flow_alignment_main()

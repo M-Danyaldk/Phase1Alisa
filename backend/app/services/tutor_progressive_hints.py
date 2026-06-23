@@ -64,7 +64,7 @@ class TutorProgressiveHintGenerator:
             reply, next_state = build_progressive_hint_reply(state, help_request=help_request)
             return reply, next_state, 'deterministic-progressive-hint', False
 
-        question = _display_expression(_current_expression(state)) or state.current_question or state.current_step
+        question = _retry_prompt_for_state(state)
         headings = {
             1: 'Here is the first hint.',
             2: 'Here is a stronger hint.',
@@ -153,7 +153,7 @@ def build_progressive_hint_reply(state: TutoringState, *, help_request: bool) ->
         level = min(MAX_HELP_LEVEL, level + 1)
         hint_id = _hint_id(level)
     if hint_id in support.shown_hint_ids:
-        question = _display_expression(_current_expression(state)) or state.current_question or state.current_step
+        question = _retry_prompt_for_state(state)
         return (
             f'We have already worked through every hint for this step.\n\n'
             f'**Current step:** {question}',
@@ -162,7 +162,7 @@ def build_progressive_hint_reply(state: TutoringState, *, help_request: bool) ->
 
     expression = _current_expression(state)
     hint = _hint_for_state(state, level)
-    question = _display_expression(expression) or state.current_question or state.current_step
+    question = _retry_prompt_for_state(state, expression)
     headings = {
         1: 'Here is the first hint.',
         2: 'Here is a stronger hint.',
@@ -261,6 +261,14 @@ def _current_expression(state: TutoringState) -> str:
     source = state.current_step or state.current_question or state.active_problem
     normalized = normalize_math_text(source)
     return extract_math_expression(normalized) or normalized.strip()
+
+
+def _retry_prompt_for_state(state: TutoringState, expression: str = '') -> str:
+    question_type = infer_active_question_type(state)
+    if question_type in {'fraction_comparison', 'equivalent_fraction', 'conceptual_math'}:
+        return state.current_question or state.current_step or state.active_problem
+    expression = expression or _current_expression(state)
+    return _display_expression(expression) or state.current_question or state.current_step
 
 
 def _hint_for_state(state: TutoringState, level: int) -> str:
