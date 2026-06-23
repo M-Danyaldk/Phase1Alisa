@@ -85,11 +85,45 @@ QuestionType = Literal[
     'equivalent_fraction',
     'conceptual_math',
     'word_problem',
+    'reading_text',
+    'writing_text',
     'continuation_choice',
     'side_question',
     'emotion_support',
     'unknown',
 ]
+MessageKind = Literal[
+    'opening_reply',
+    'continuation_choice',
+    'answer_attempt',
+    'support_request',
+    'emotion_signal',
+    'new_problem',
+    'switch_request',
+    'other',
+]
+AnswerFormat = Literal[
+    'number',
+    'signed_number',
+    'fraction',
+    'decimal',
+    'ratio',
+    'yes_no',
+    'choice_text',
+    'free_text',
+    'mixed',
+]
+SupportType = Literal[
+    'hint',
+    'stronger_hint',
+    'explanation',
+    'example',
+    'definition',
+    'homework_help',
+    'other',
+]
+ContinuationChoice = Literal['yes', 'no', 'unclear']
+SwitchTargetKind = Literal['subject', 'topic', 'problem', 'none']
 QuantityRole = Literal[
     'given',
     'unknown',
@@ -187,6 +221,7 @@ class TutorInputInterpretation(StrictTutorSchema):
     schema_version: Literal['1.0'] = '1.0'
     intent: TutorIntent
     confidence: InterpretationConfidence
+    message_kind: MessageKind | None = None
     answer: str | None = Field(default=None, max_length=240)
     normalized_expression: str | None = None
     problem: StructuredMathProblem | None = None
@@ -194,6 +229,16 @@ class TutorInputInterpretation(StrictTutorSchema):
     refers_to_task: TaskReference
     requested_action: RequestedAction
     emotion: str | None = Field(default=None, max_length=60)
+    contains_math_problem: bool = False
+    contains_answer_attempt: bool = False
+    contains_help_request: bool = False
+    contains_emotion_signal: bool = False
+    opening_acknowledgement: str | None = Field(default=None, max_length=80)
+    continuation_choice: ContinuationChoice | None = None
+    answer_format: AnswerFormat | None = None
+    support_type: SupportType | None = None
+    switch_target_kind: SwitchTargetKind | None = None
+    switch_target_value: str | None = Field(default=None, max_length=120)
     needs_clarification: bool = False
     clarification_question: str | None = Field(default=None, max_length=240)
     interpretation_note: str = Field(min_length=1, max_length=240)
@@ -205,6 +250,40 @@ class TutorInputInterpretation(StrictTutorSchema):
 
     @model_validator(mode='after')
     def validate_interpretation_consistency(self) -> 'TutorInputInterpretation':
+        if self.message_kind == 'opening_reply':
+            if not (
+                self.opening_acknowledgement
+                or self.contains_math_problem
+                or self.contains_answer_attempt
+                or self.contains_help_request
+                or self.contains_emotion_signal
+                or self.intent in {'acknowledge', 'emotion', 'new_problem', 'answer_current_step', 'unclear'}
+            ):
+                raise ValueError('Opening replies must describe the student reply or why it is unclear.')
+        if self.contains_emotion_signal and not self.emotion and self.intent != 'unclear':
+            raise ValueError('Emotion-signal messages must include an emotion label unless they are unclear.')
+        if self.opening_acknowledgement and self.message_kind != 'opening_reply':
+            raise ValueError('Opening acknowledgement text is allowed only for opening replies.')
+        if self.continuation_choice is not None:
+            if self.question_type != 'continuation_choice':
+                raise ValueError('Continuation choice payloads require the continuation_choice question type.')
+            if self.continuation_choice == 'yes' and self.intent not in {'continuation_yes', 'unclear'}:
+                raise ValueError('A yes continuation choice must map to continuation_yes or unclear.')
+            if self.continuation_choice == 'no' and self.intent not in {'continuation_no', 'unclear'}:
+                raise ValueError('A no continuation choice must map to continuation_no or unclear.')
+            if self.continuation_choice == 'unclear' and self.intent != 'unclear':
+                raise ValueError('An unclear continuation choice must use the unclear intent.')
+        if self.answer_format is not None and not (self.contains_answer_attempt or self.intent == 'answer_current_step'):
+            raise ValueError('Answer format is only valid when the message contains an answer attempt.')
+        if self.support_type is not None and self.message_kind not in {'support_request', 'opening_reply', 'other'}:
+            raise ValueError('Support type can only appear on support-oriented messages.')
+        if self.switch_target_kind is not None:
+            if self.message_kind != 'switch_request' and self.intent not in {'subject_switch', 'topic_switch', 'switch_problem'}:
+                raise ValueError('Switch target metadata is only allowed for switch requests.')
+            if self.switch_target_kind != 'none' and not self.switch_target_value:
+                raise ValueError('A switch target kind requires a target value.')
+            if self.switch_target_kind == 'none' and self.switch_target_value is not None:
+                raise ValueError('A switch target value is not allowed when the kind is none.')
         if self.intent == 'answer_current_step' and not self.answer:
             raise ValueError('An answer intent requires an extracted answer.')
         if self.intent in {'new_problem', 'switch_problem'} and not (self.normalized_expression or self.problem):
@@ -224,7 +303,8 @@ class TutorInputInterpretation(StrictTutorSchema):
         if self.intent == 'emotion' and not self.emotion:
             raise ValueError('An emotion intent requires an emotion label.')
         if self.intent != 'emotion' and self.emotion is not None:
-            raise ValueError('Only an emotion intent may include an emotion label.')
+            if not (self.message_kind == 'opening_reply' and self.contains_emotion_signal):
+                raise ValueError('Only an emotion intent may include an emotion label outside structured opening replies.')
         if self.confidence == 'low' and not self.needs_clarification:
             raise ValueError('Low-confidence interpretations must request clarification.')
         if self.needs_clarification and not self.clarification_question:
@@ -236,4 +316,6 @@ class TutorInputInterpretation(StrictTutorSchema):
                 raise ValueError('Conversation-control intents cannot carry answer or problem payloads.')
         if self.question_type == 'continuation_choice' and self.intent not in {'continuation_yes', 'continuation_no', 'unclear'}:
             raise ValueError('Continuation-choice question type must use continuation intent labels or unclear.')
+        if self.message_kind == 'continuation_choice' and self.continuation_choice is None:
+            raise ValueError('Continuation-choice messages must record the interpreted choice.')
         return self

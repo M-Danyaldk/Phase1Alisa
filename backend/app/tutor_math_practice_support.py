@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from .assessment_validation import extract_numeric_value
 from .models import TutoringState
 from .services.tutor_progressive_hints import current_step_support, record_step_hint
 
@@ -25,6 +26,10 @@ def is_tutor_practice_answer_like(state: TutoringState, student_message: str) ->
     compact_expected = expected.replace(' ', '')
     if compact_text == compact_expected:
         return True
+    expected_value = extract_numeric_value(expected)
+    answer_value = extract_numeric_value(text)
+    if expected_value is not None and answer_value is not None and _looks_like_short_numeric_response(text):
+        return True
     answer_like_pattern = r'[-+]?\d+(?:\.\d+)?(?:/\d+)?|[-+]?\d+\s*:\s*[-+]?\d+|[-+]?\d+(?:\.\d+)?%?'
     if re.fullmatch(answer_like_pattern, text):
         return True
@@ -41,6 +46,15 @@ def student_matches_expected_practice_answer(state: TutoringState, student_messa
     if not text or not expected:
         return False
     if text == expected or text.replace(' ', '') == expected.replace(' ', ''):
+        return True
+    expected_value = extract_numeric_value(expected)
+    answer_value = extract_numeric_value(text)
+    if (
+        expected_value is not None
+        and answer_value is not None
+        and _looks_like_short_numeric_response(text)
+        and expected_value == answer_value
+    ):
         return True
     if expected.endswith('%') and text in {expected[:-1].strip(), expected.replace('%', ' percent')}:
         return True
@@ -129,3 +143,16 @@ def _looks_fraction_topic(state: TutoringState) -> bool:
         state.active_problem,
     ]).lower()
     return 'fraction' in joined or '/' in joined
+
+
+def _looks_like_short_numeric_response(text: str) -> bool:
+    compact = ' '.join(str(text or '').lower().split())
+    if not compact or len(compact) > 40 or '?' in compact:
+        return False
+    if re.fullmatch(r'[-+]?\d+(?:\.\d+)?(?:/\d+)?', compact):
+        return True
+    if re.fullmatch(r'[-+]?\d+\s*:\s*[-+]?\d+', compact):
+        return True
+    if re.fullmatch(r'[-+]?\d+(?:\.\d+)?%?', compact):
+        return True
+    return bool(re.fullmatch(r'(?:negative|minus)?\s*[a-z-]+(?:\s+[a-z-]+){0,3}', compact))

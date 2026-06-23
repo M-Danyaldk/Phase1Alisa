@@ -26,11 +26,16 @@ def infer_active_question_type(state: TutoringState) -> str:
         str(state.active_problem or ''),
     ]).strip()
     lowered_prompt = prompt_text.lower()
+    subject = str(state.current_subject or '').strip()
 
     if _is_fraction_comparison(skill_text, prompt_text):
         return 'fraction_comparison'
     if _is_equivalent_fraction(skill_text, prompt_text):
         return 'equivalent_fraction'
+    if _is_reading_text(subject, skill_text, lowered_prompt):
+        return 'reading_text'
+    if _is_writing_text(subject, skill_text, lowered_prompt):
+        return 'writing_text'
 
     expression = _extract_active_expression(state)
     if expression:
@@ -77,6 +82,56 @@ def _is_equivalent_fraction(skill_text: str, prompt_text: str) -> bool:
         return True
     prompt = prompt_text.lower()
     return 'equivalent' in prompt and 'fraction' in prompt
+
+
+def _is_reading_text(subject: str, skill_text: str, prompt: str) -> bool:
+    if subject != 'ELA':
+        return False
+    strong_markers = (
+        'main idea',
+        'character',
+        'theme',
+        'passage',
+        'story',
+        'vocabulary',
+        'context clue',
+        'what does',
+        'who ',
+        'where ',
+        'when ',
+        'why ',
+        'how ',
+        'which ',
+        'infer',
+        'author',
+        'setting',
+        'plot',
+    )
+    return any(marker in skill_text for marker in strong_markers) or any(marker in prompt for marker in strong_markers)
+
+
+def _is_writing_text(subject: str, skill_text: str, prompt: str) -> bool:
+    if subject != 'Writing':
+        return False
+    strong_markers = (
+        'write one clear sentence',
+        'write 3 sentences',
+        'write three sentences',
+        'fix this sentence',
+        'make this sentence stronger',
+        'how can you make this sentence stronger',
+        'complete sentence',
+        'topic sentence',
+        'paragraph',
+        'revise',
+        'revision',
+        'rewrite',
+        'edit',
+        'essay',
+        'writing',
+        'finish this sentence',
+    )
+    return any(marker in skill_text for marker in strong_markers) or any(marker in prompt for marker in strong_markers)
 
 
 def _looks_multi_step(expression: str) -> bool:

@@ -4,7 +4,7 @@ import re
 from pydantic import BaseModel
 
 from ..assessment_bank import NUMBER_WORDS
-from ..assessment_validation import extract_math_expression, normalize_math_text, safe_eval_expression
+from ..assessment_validation import extract_math_expression, normalize_math_text, normalize_word_numbers_in_text, safe_eval_expression
 from ..models import TutoringState
 from .llm.router import LLMRouter
 
@@ -78,6 +78,13 @@ class TutorMathNormalizer:
     async def normalize_if_needed(self, subject: str, message: str, state: TutoringState | None = None) -> MathNormalizationResult:
         if not self.should_use_fallback(subject, message, state):
             return MathNormalizationResult()
+        deterministic = self._deterministic_normalize(message)
+        if deterministic:
+            return MathNormalizationResult(
+                normalized_expression=deterministic,
+                confidence='high',
+                reason='deterministic_spoken_math',
+            )
         result = await self._normalize_with_llm(message, state or TutoringState())
         if result.confidence not in {'high', 'medium', 'low'}:
             result.confidence = 'low'
@@ -135,6 +142,41 @@ class TutorMathNormalizer:
         normalized = re.sub(r'(?<![\d/])(-?\d+)\s*/\s*(-?\d+)(?![\d/])', r'\1/\2', normalized)
         normalized = re.sub(r'\s+', ' ', normalized).strip()
         return normalized
+
+    def _deterministic_normalize(self, message: str) -> str:
+        text = str(message or '').strip().lower()
+        if not text:
+            return ''
+        if not any(marker in text for marker in self.WORD_MATH_MARKERS):
+            return ''
+
+        normalized = normalize_word_numbers_in_text(text)
+        replacements = (
+            ('open parenthesis', ' ( '),
+            ('close parenthesis', ' ) '),
+            ('open parentheses', ' ( '),
+            ('close parentheses', ' ) '),
+            ('multiplied by', ' * '),
+            ('times', ' * '),
+            ('plus', ' + '),
+            ('minus', ' - '),
+            ('divided by', ' / '),
+            ('over', ' / '),
+        )
+        for old, new in replacements:
+            normalized = re.sub(rf'\b{re.escape(old)}\b', new, normalized)
+
+        normalized = normalized.replace(',', ' ')
+        normalized = normalized.replace('=', ' ')
+        normalized = re.sub(r'[^0-9\+\-\*/\(\)\.\s]', ' ', normalized)
+        normalized = re.sub(r'(?<![\d/])(-?\d+)\s*/\s*(-?\d+)(?![\d/])', r'\1/\2', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        extracted = extract_math_expression(normalized) or normalized
+        if not extracted:
+            return ''
+        if safe_eval_expression(extracted) is None and not self._looks_like_multi_step_expression(extracted):
+            return ''
+        return extracted
 
     def _looks_like_multi_step_expression(self, expression: str) -> bool:
         compact = str(expression or '').replace(' ', '')

@@ -33,6 +33,7 @@ from .tutor_emotional_support import (
     resolve_emotional_support_choice,
 )
 from .tutor_intent_classifier import NON_ANSWER_INTENTS, TutorIntentClassifier
+from .tutor_question_type_router import infer_active_question_type
 from .tutor_math_normalizer import TutorMathNormalizer
 from .tutor_math_response_guard import TutorMathResponseGuard
 from .tutor_progressive_hints import build_progressive_hint_reply, build_progressive_hint_reply_with_fallback
@@ -92,6 +93,8 @@ from ..utils.tutor_surface_parity import (
     history_has_opening_math_prompt as shared_history_has_opening_math_prompt,
     history_role as shared_history_role,
     is_tutor_practice_question_state as shared_is_tutor_practice_question_state,
+    opening_math_starter_intro as shared_opening_math_starter_intro,
+    opening_math_starter_override as shared_opening_math_starter_override,
     should_start_tutor_math_practice as shared_should_start_tutor_math_practice,
     text_answer_check_reply as shared_text_answer_check_reply,
     tutor_math_next_practice_reply as shared_tutor_math_next_practice_reply,
@@ -149,12 +152,53 @@ def _should_start_tutor_math_practice(
     return shared_should_start_tutor_math_practice(subject, state, history, effective_message)
 
 
+def _is_opening_checkin_turn(state: TutoringState) -> bool:
+    return (
+        state.mode == 'opening_checkin'
+        or state.status == 'ready_for_mini_checkin'
+    ) and not (
+        state.current_question.strip()
+        or state.current_step.strip()
+        or state.active_problem.strip()
+        or state.main_problem.strip()
+    )
+
+
+def _should_override_opening_with_tutor_practice(state: TutoringState, intent_label: str, emotion: str = '') -> bool:
+    return _is_opening_checkin_turn(state) and shared_opening_math_starter_override(intent_label, emotion)
+
+
+def _opening_tutor_practice_intro(state: TutoringState, intent_label: str, emotion: str = '') -> str:
+    if not _is_opening_checkin_turn(state):
+        return ''
+    return shared_opening_math_starter_intro(intent_label, emotion)
+
+
+def _should_run_answer_evaluation(
+    current_state: TutoringState,
+    previous_state: TutoringState,
+    current_step: str,
+    intent_label: str,
+) -> bool:
+    if current_state.attempt_count <= 0:
+        return False
+    if not (current_state.current_question or current_step):
+        return False
+    if _is_tutor_practice_question_state(current_state) or _is_tutor_practice_question_state(previous_state):
+        return False
+    if _is_opening_checkin_turn(current_state):
+        return False
+    if infer_active_question_type(current_state) in {'continuation_choice', 'emotion_support'}:
+        return False
+    return intent_label not in NON_ANSWER_INTENTS
+
+
 def _has_active_student_math_flow(state: TutoringState) -> bool:
     return shared_has_active_student_math_flow(state)
 
 
-def _tutor_practice_choice_intent(state: TutoringState, effective_message: str) -> str:
-    return shared_tutor_practice_choice_intent(state, effective_message)
+def _tutor_practice_choice_intent(state: TutoringState, effective_message: str, intent_label: str = '') -> str:
+    return shared_tutor_practice_choice_intent(state, effective_message, intent_label)
 
 
 def _choice_marker_matches(text: str, marker: str) -> bool:
@@ -175,8 +219,13 @@ def _history_has_opening_math_prompt(history: list[ChatHistoryItem]) -> bool:
     return shared_history_has_opening_math_prompt(history)
 
 
-def _tutor_math_starter_reply(question: TutorMathPracticeQuestion) -> str:
-    return shared_tutor_math_starter_reply(question, _display_tutor_math_question, rich_text=False)
+def _tutor_math_starter_reply(question: TutorMathPracticeQuestion, intro_text: str = '') -> str:
+    return shared_tutor_math_starter_reply(
+        question,
+        _display_tutor_math_question,
+        rich_text=False,
+        intro_text=intro_text,
+    )
 
 
 def _tutor_math_next_practice_reply(question: TutorMathPracticeQuestion) -> str:
@@ -906,7 +955,7 @@ class VoiceService:
                 'subject_changed': subject_changed,
             }
 
-        practice_choice = _tutor_practice_choice_intent(tutoring_state, effective_transcript) if subject == 'Math' else ''
+        practice_choice = _tutor_practice_choice_intent(tutoring_state, effective_transcript, intent_assist.label) if subject == 'Math' else ''
         if practice_choice in {'yes', 'no', 'unclear'}:
             if practice_choice == 'yes':
                 practice_question = select_tutor_math_question(
@@ -1008,13 +1057,17 @@ class VoiceService:
                 'subject_changed': subject_changed,
             }
 
-        if intent_assist.label not in NON_ANSWER_INTENTS and _should_start_tutor_math_practice(subject, tutoring_state, history, effective_transcript):
+        opening_starter_override = _should_override_opening_with_tutor_practice(tutoring_state, intent_assist.label, intent_assist.emotion)
+        if (intent_assist.label not in NON_ANSWER_INTENTS or opening_starter_override) and _should_start_tutor_math_practice(subject, tutoring_state, history, effective_transcript):
             practice_question = select_tutor_math_question(
                 prompt_student.grade,
                 topic=resolved_topic,
                 recent_question_ids=tutoring_state.recent_tutor_practice_question_ids,
             )
-            formatted_reply = _tutor_math_starter_reply(practice_question)
+            formatted_reply = _tutor_math_starter_reply(
+                practice_question,
+                intro_text=_opening_tutor_practice_intro(tutoring_state, intent_assist.label, intent_assist.emotion),
+            )
             final_state = _tutor_math_question_state(tutoring_state, subject, transcript, practice_question)
             result_provider = 'local'
             result_model = 'deterministic-voice-tutor-math-starter'
@@ -1140,11 +1193,11 @@ class VoiceService:
                 'correctness_status': '',
             })
         answer_check = None
-        if (
-            next_state.attempt_count > 0
-            and (next_state.current_question or current_step)
-            and not _is_tutor_practice_question_state(next_state)
-            and not _is_tutor_practice_question_state(tutoring_state)
+        if _should_run_answer_evaluation(
+            next_state,
+            tutoring_state,
+            current_step,
+            intent_assist.label,
         ):
             base_check_question = _answer_check_question(next_state, current_step)
             if subject == 'ELA':
@@ -1214,6 +1267,7 @@ class VoiceService:
         structured_progression = has_structured_math_problem(next_state) and subject == 'Math'
         action_intent = detect_action_intent(effective_transcript)
         emotional_choice = detect_emotional_support_choice(transcript, tutoring_state)
+        opening_starter_override = _should_override_opening_with_tutor_practice(tutoring_state, intent_assist.label, intent_assist.emotion)
         special_local_reply = False
         if subject_changed:
             final_state = tutoring_state.model_copy(update={
@@ -1262,7 +1316,7 @@ class VoiceService:
             result_provider = 'local'
             result_model = 'deterministic-voice-semantic-clarification'
             special_local_reply = True
-        elif intent_assist.label == 'emotion':
+        elif intent_assist.label == 'emotion' and not opening_starter_override:
             emotion_plan = build_emotional_support_plan(tutoring_state, transcript, intent_assist.emotion)
             final_state = apply_emotional_support(tutoring_state, transcript, emotion_plan)
             formatted_reply = build_emotional_support_reply(emotion_plan, final_state)
@@ -1371,14 +1425,15 @@ class VoiceService:
             result_model = 'deterministic-resume-paused-problem'
             special_local_reply = True
         elif word_problem_candidate and not word_problem.accepted:
-            final_state = tutoring_state.model_copy(update={
+            final_state = align_tutor_practice_transition(tutoring_state, tutoring_state.model_copy(update={
                 'current_subject': 'Math',
                 'student_answer': transcript,
                 'pending_input_kind': 'ambiguous_word_problem',
                 'pending_new_problem': transcript,
                 'mode': 'clarify_word_problem',
                 'status': 'waiting_for_student',
-            })
+                'problem_status': 'idle',
+            }))
             formatted_reply = build_word_problem_clarification_reply(word_problem)
             result_provider = 'local'
             result_model = 'deterministic-voice-word-problem-clarification'

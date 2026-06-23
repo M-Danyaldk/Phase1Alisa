@@ -93,6 +93,7 @@ def main() -> None:
         'schema_version': '1.0',
         'intent': 'continuation_yes',
         'confidence': 'high',
+        'message_kind': 'continuation_choice',
         'answer': None,
         'normalized_expression': None,
         'problem': None,
@@ -100,11 +101,51 @@ def main() -> None:
         'refers_to_task': 'active_task',
         'requested_action': 'continue',
         'emotion': None,
+        'contains_math_problem': False,
+        'contains_answer_attempt': False,
+        'contains_help_request': False,
+        'contains_emotion_signal': False,
+        'opening_acknowledgement': None,
+        'continuation_choice': 'yes',
+        'answer_format': None,
+        'support_type': None,
+        'switch_target_kind': None,
+        'switch_target_value': None,
         'needs_clarification': False,
         'clarification_question': None,
         'interpretation_note': 'Student wants another practice question.',
     })
     _expect(continuation.question_type == 'continuation_choice', 'Continuation choice question type was not preserved.', failures)
+
+    opening_reply = TutorInputInterpretation.model_validate({
+        'schema_version': '1.0',
+        'intent': 'new_problem',
+        'confidence': 'high',
+        'message_kind': 'opening_reply',
+        'answer': None,
+        'normalized_expression': '8 + 9',
+        'problem': None,
+        'question_type': None,
+        'refers_to_task': 'new_task',
+        'requested_action': 'solve',
+        'emotion': 'happy',
+        'contains_math_problem': True,
+        'contains_answer_attempt': False,
+        'contains_help_request': False,
+        'contains_emotion_signal': True,
+        'opening_acknowledgement': 'I am happy',
+        'continuation_choice': None,
+        'answer_format': None,
+        'support_type': None,
+        'switch_target_kind': None,
+        'switch_target_value': None,
+        'needs_clarification': False,
+        'clarification_question': None,
+        'interpretation_note': 'Student replied to the opening check-in and also supplied a new Math problem.',
+    })
+    _expect(opening_reply.message_kind == 'opening_reply', 'Opening reply message kind was not preserved.', failures)
+    _expect(opening_reply.contains_math_problem, 'Opening reply did not preserve embedded Math-problem detection.', failures)
+    _expect(opening_reply.opening_acknowledgement == 'I am happy', 'Opening reply acknowledgement text was not preserved.', failures)
 
     unclear = TutorInputInterpretation.model_validate({
         'schema_version': '1.0',
@@ -139,6 +180,20 @@ def main() -> None:
         **continuation.model_dump(),
         'intent': 'related_question',
     }, 'Continuation question type was allowed to use the wrong intent label.', failures)
+    _expect_rejected({
+        **continuation.model_dump(),
+        'continuation_choice': None,
+    }, 'Continuation-choice messages were allowed to omit the interpreted choice.', failures)
+    _expect_rejected({
+        **opening_reply.model_dump(),
+        'message_kind': 'opening_reply',
+        'opening_acknowledgement': None,
+        'contains_math_problem': False,
+        'contains_answer_attempt': False,
+        'contains_help_request': False,
+        'contains_emotion_signal': False,
+        'intent': 'acknowledge',
+    }, 'Opening reply without any structured opening details was accepted.', failures)
     _expect_rejected({
         **base,
         'intent': 'switch_problem',

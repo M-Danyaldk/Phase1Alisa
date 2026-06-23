@@ -55,6 +55,7 @@ def main() -> None:
 
     missing_prompt = guard.validate('Try using equal groups.', state, intent_label='answer_current_step')
     _expect(missing_prompt.repaired and 'missing_current_step_prompt' in missing_prompt.violations, 'A retry was allowed to lose the current question.', failures)
+    _expect('What is 7' in missing_prompt.text and 'Now try this step: Now try this step:' not in missing_prompt.text, 'A repaired retry did not re-anchor cleanly to the verified current step.', failures)
 
     stale = guard.validate('**Main problem:** 28 × 35 − 180\n\nWhat is 28 × 35?', state, intent_label='answer_current_step')
     _expect(stale.repaired and 'stale_problem_reference' in stale.violations, 'Stale problem reference was not blocked.', failures)

@@ -12,6 +12,15 @@ def clear_tutor_practice_artifacts(state: TutoringState) -> TutoringState:
         'tutor_practice_hint_1': '',
         'tutor_practice_hint_2': '',
         'tutor_practice_explanation': '',
+        'attempts_per_step': {},
+        'support_per_step': {},
+        'helper_branch': TutorHelperBranch(),
+        'queued_followup_questions': [],
+        'attempt_count': 0,
+        'hint_given': False,
+        'answer_revealed': False,
+        'next_similar_question': '',
+        'final_answer': '',
     })
 
 

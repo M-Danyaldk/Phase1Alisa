@@ -25,6 +25,17 @@ class StrictHintProposal(BaseModel):
     reveals_final_answer: bool = False
 
 
+GUARD_LEAK_MARKERS = (
+    'what math problem should we work on',
+    'that message will not count as an answer attempt',
+    'let us stay with the current math problem one step at a time',
+    'let’s stay with the current math problem one step at a time',
+    'let us keep the answer hidden',
+    'let’s keep the answer hidden',
+    'let me correct that and keep us on the verified math step',
+)
+
+
 class TutorProgressiveHintGenerator:
     """Progressive math hints with a strict LLM fallback for non-arithmetic steps."""
 
@@ -87,12 +98,18 @@ class TutorProgressiveHintGenerator:
             'current_question': state.current_question,
             'expected_answer': state.expected_answer,
             'answer_label': state.answer_label,
+            'comparison_choices': _comparison_choices(state),
+            'target_fraction': _first_fraction_in_text(' '.join([state.current_question, state.current_step, state.active_problem])),
+            'current_expression': _current_expression(state),
             'already_shown_hint_ids': current_step_support(state).shown_hint_ids,
             'rules': [
                 'For levels 1-3, do not include the expected answer.',
                 'For levels 1-2, do not do calculations; only guide thinking.',
                 'For level 3, do at most one small substep and ask the student to try the next tiny part.',
                 'For level 4, solve only the current step, not unrelated future steps.',
+                'Never output guard text, repair text, or conversation-management text.',
+                'Never ask what Math problem to work on.',
+                'Keep the hint tied to the current question type and the verified current step.',
             ],
         }, separators=(',', ':'))
         try:
@@ -211,6 +228,8 @@ def _validate_llm_hint(proposal: StrictHintProposal, state: TutoringState, level
         return False
     expected = str(state.expected_answer or '').strip()
     combined = f'{hint} {follow_up}'.lower()
+    if any(marker in combined for marker in GUARD_LEAK_MARKERS):
+        return False
     if level < MAX_HELP_LEVEL:
         if proposal.reveals_final_answer:
             return False
@@ -219,6 +238,8 @@ def _validate_llm_hint(proposal: StrictHintProposal, state: TutoringState, level
         if re.search(r'\b(?:the\s+)?answer\s+(?:is|equals|=)\b|\bfinal answer\b', combined):
             return False
     if not _hint_matches_question_route(hint, follow_up, state, level):
+        return False
+    if level < MAX_HELP_LEVEL and follow_up and not _follow_up_matches_state(follow_up, state):
         return False
     return True
 
@@ -330,8 +351,16 @@ def _conceptual_math_hint(state: TutoringState, level: int) -> str:
     if level == 1:
         return 'Focus on the Math idea the question is asking about before you calculate anything.'
     if level == 2:
+        if 'which is larger' in prompt or 'which is greater' in prompt:
+            choices = _comparison_choices(state)
+            if len(choices) >= 2:
+                return f'Compare the two choices carefully and decide which amount is larger: {choices[0]} or {choices[1]}.'
         return 'Use the words in the question to decide what Math rule or meaning fits this step.'
     if level == 3:
+        if 'which is larger' in prompt or 'which is greater' in prompt:
+            choices = _comparison_choices(state)
+            if len(choices) >= 2:
+                return f'Keep the choice that shows more of the whole. Now choose between {choices[0]} and {choices[1]}.'
         return 'Say the Math idea in your own words, then use that idea to answer the question.'
     return f'The current step answer is {state.expected_answer}.' if state.expected_answer else 'Use the Math idea from the question to finish the step.'
 
@@ -373,7 +402,30 @@ def _hint_matches_question_route(hint: str, follow_up: str, state: TutoringState
         if numbers and not any(number in combined for number in numbers[:3]):
             if not any(marker in combined for marker in ('total', 'altogether', 'occupied', 'empty', 'difference', 'groups', 'each', 'rows', 'seats', 'whole')):
                 return False
+        if any(marker in combined for marker in GUARD_LEAK_MARKERS):
+            return False
     return True
+
+
+def _follow_up_matches_state(follow_up: str, state: TutoringState) -> bool:
+    cleaned = ' '.join(str(follow_up or '').lower().split())
+    if not cleaned:
+        return True
+    if cleaned.startswith('now try this step:'):
+        target = cleaned.split('now try this step:', 1)[1].strip()
+        expected_targets = {
+            ' '.join(str(value or '').lower().split())
+            for value in (
+                _display_expression(_current_expression(state)),
+                state.current_question,
+                state.current_step,
+            )
+            if str(value or '').strip()
+        }
+        return target in expected_targets
+    if any(marker in cleaned for marker in ('what math problem should we work on', 'same message will not count')):
+        return False
+    return _hint_matches_question_route('', follow_up, state, 1)
 
 
 def _comparison_choices(state: TutoringState) -> list[str]:

@@ -1,13 +1,17 @@
 import asyncio
 
 from backend.app.main import (
+    _opening_tutor_practice_intro,
+    _should_override_opening_with_tutor_practice,
+    _should_run_answer_evaluation,
+    _tutor_practice_choice_intent,
     _emotion_interruption_reply,
     _math_topic_switch_reply,
     _math_topic_switch_state,
     _should_grade_tutor_practice,
 )
 from backend.app.models import ChatHistoryItem, TutoringState
-from backend.app.services.tutor_intent_classifier import TutorIntentClassifier
+from backend.app.services.tutor_intent_classifier import NON_ANSWER_INTENTS, TutorIntentClassifier
 from backend.app.tutoring_logic import (
     _looks_like_new_problem,
     build_chat_directives,
@@ -159,7 +163,27 @@ async def main() -> None:
     _expect(continuation_no.label == 'continuation_no', 'Continuation no was not routed from the active continuation prompt.', failures)
     _expect(continuation_yes.question_type == 'continuation_choice', 'Continuation yes did not preserve continuation question type.', failures)
     _expect(continuation_yes.requested_action == 'continue', 'Continuation yes did not preserve continue action.', failures)
+    _expect('continuation_yes' in NON_ANSWER_INTENTS and 'continuation_no' in NON_ANSWER_INTENTS, 'Continuation intents were not protected as non-answer routes.', failures)
     _expect(not _should_grade_tutor_practice(continuation_state, continuation_yes.label), 'Continuation reply was incorrectly allowed into tutor-practice grading.', failures)
+    _expect(_tutor_practice_choice_intent(continuation_state, 'tell me another one please', 'continuation_yes') == 'yes', 'Continuation-intent override did not resolve another-practice yes.', failures)
+    _expect(
+        not _should_run_answer_evaluation(
+            continuation_state.model_copy(update={'attempt_count': 1, 'current_question': 'Would you like another practice question?'}),
+            continuation_state,
+            '',
+            'continuation_yes',
+        ),
+        'Continuation choice was still allowed into answer evaluation.',
+        failures,
+    )
+
+    opening_state = TutoringState(current_subject='Math', mode='opening_checkin', status='ready_for_mini_checkin')
+    _expect(_should_override_opening_with_tutor_practice(opening_state, 'acknowledge'), 'Opening acknowledgement did not qualify for the quick-practice starter.', failures)
+    _expect(
+        "Let's start with one quick Math question." in _opening_tutor_practice_intro(opening_state, 'emotion', 'worried'),
+        'Opening emotion did not produce the safe starter introduction.',
+        failures,
+    )
 
     if failures:
         print('Tutor intent routing check failed:')

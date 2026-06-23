@@ -49,6 +49,7 @@ async def main() -> None:
     normalizer = TutorMathNormalizer()
     normalization_cases = [
         ('twelve minus five plus three times two', '12 - 5 + 3 * 2', '13'),
+        ('twenty three times three', '23 * 3', '69'),
         ('5 // 6 + 7/8', '5/6 + 7/8', '41/24'),
         ('((12+3)', '((12+3))', '15'),
         ('nine over eight plus seven over four times eight over nine', '9/8 + 7/4 * 8/9', '193/72'),

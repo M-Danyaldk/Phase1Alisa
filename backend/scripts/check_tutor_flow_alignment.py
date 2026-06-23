@@ -62,6 +62,26 @@ def main() -> None:
         _expect(state.problem_status == 'tutor_practice' and state.mode == 'tutor_practice_question', f'{label} tutor-practice state did not enter tutor-practice mode cleanly.', failures)
         _expect(state.tutor_practice_question_id == practice_question.id, f'{label} tutor-practice state did not store the new practice question id.', failures)
 
+    word_problem_exit = main_module.align_tutor_practice_transition(
+        chat_practice,
+        chat_practice.model_copy(update={
+            'problem_kind': 'word_problem',
+            'main_problem': 'There are 3 boxes with 2 balls in each box. How many balls are there?',
+            'active_problem': 'There are 3 boxes with 2 balls in each box. How many balls are there?',
+            'current_step': '3 * 2',
+            'current_question': 'What is 3 x 2?',
+            'expected_answer': '6',
+            'problem_status': 'awaiting_step',
+            'mode': 'practice',
+            'status': 'waiting_for_student',
+        }),
+    )
+    _expect(word_problem_exit.tutor_practice_question_id == '', 'Exiting tutor practice kept the tutor-practice question id.', failures)
+    _expect(not word_problem_exit.support_per_step and not word_problem_exit.attempts_per_step, 'Exiting tutor practice kept practice-scoped attempt or support history.', failures)
+    _expect(word_problem_exit.helper_branch.status == 'idle' and not word_problem_exit.queued_followup_questions, 'Exiting tutor practice kept helper or queued follow-up state.', failures)
+    _expect(word_problem_exit.attempt_count == 0 and not word_problem_exit.hint_given, 'Exiting tutor practice kept attempt-stage flags.', failures)
+    _expect(word_problem_exit.recent_tutor_practice_question_ids, 'Exiting tutor practice unexpectedly cleared recent practice rotation ids.', failures)
+
     if failures:
         print('Tutor flow-alignment check failed:')
         for failure in failures:

@@ -72,7 +72,13 @@ class TutorMathResponseGuard:
         })
 
     def _has_incorrect_equation(self, text: str) -> bool:
-        normalized = normalize_math_text(text).replace('×', '*').replace('÷', '/')
+        normalized = (
+            normalize_math_text(text)
+            .replace('×', '*')
+            .replace('÷', '/')
+            .replace('Ã—', '*')
+            .replace('Ã·', '/')
+        )
         equations = re.findall(
             r'(?<![\w/])([()0-9.\s+\-*/]+?)\s*=\s*(-?\d+(?:\.\d+)?(?:/\d+)?)',
             normalized,
@@ -141,16 +147,16 @@ class TutorMathResponseGuard:
         return bool(re.search(r'\b(not quite|wrong answer|incorrect|try that answer again|nice try)\b', text, re.I))
 
     def _safe_repair(self, state: TutoringState, intent_label: str, violations: list[str]) -> str:
-        question = (state.current_question or state.current_step).strip()
+        question = self._clean_verified_question(state.current_question or state.current_step)
         problem = (state.active_problem or state.main_problem).strip()
         if 'non_answer_graded_as_wrong' in violations:
             opening = 'I understand. That message will not count as an answer attempt.'
         elif 'incorrect_arithmetic' in violations or 'incorrect_answer_claim' in violations:
             opening = 'Let me correct that and keep us on the verified Math step.'
         elif 'premature_answer_reveal' in violations:
-            opening = 'Let’s keep the answer hidden and work through the current step.'
+            opening = 'Letâ€™s keep the answer hidden and work through the current step.'
         else:
-            opening = 'Let’s stay with the current Math problem one step at a time.'
+            opening = 'Letâ€™s stay with the current Math problem one step at a time.'
         if question:
             return f'{opening}\n\n{question}'
         if problem:
@@ -177,5 +183,17 @@ class TutorMathResponseGuard:
 
     def _canonical_problem(self, text: str) -> str:
         normalized = normalize_math_text(str(text or '')).lower()
-        normalized = normalized.replace('×', '*').replace('÷', '/')
+        normalized = normalized.replace('×', '*').replace('÷', '/').replace('Ã—', '*').replace('Ã·', '/')
         return re.sub(r'[^a-z0-9+\-*/().]', '', normalized)
+
+    def _clean_verified_question(self, text: str) -> str:
+        cleaned = str(text or '').strip()
+        for marker in (
+            'Now try this step:',
+            'Try this same question again:',
+            'Try the same question one more time:',
+            'Try this same question:',
+        ):
+            if cleaned.startswith(marker):
+                cleaned = cleaned.split(marker, 1)[-1].strip()
+        return cleaned

@@ -105,7 +105,15 @@ async def _run() -> list[str]:
         _expect(aligned_state.problem_status != 'tutor_practice' and aligned_state.mode != 'tutor_practice_question', 'Student-entered problem stayed trapped in tutor-practice mode.', failures)
         _expect(aligned_state.current_question != topic_state.current_question, 'Student-entered problem kept the old tutor-practice question active.', failures)
         _expect(aligned_state.tutor_practice_question_id == '' and not aligned_state.tutor_practice_hint_1 and not aligned_state.tutor_practice_explanation, 'Student-entered problem kept tutor-practice metadata after switching flows.', failures)
+        _expect(not aligned_state.support_per_step and not aligned_state.attempts_per_step, 'Student-entered problem kept tutor-practice attempt or hint history after switching flows.', failures)
+        _expect(aligned_state.helper_branch.status == 'idle' and not aligned_state.queued_followup_questions, 'Student-entered problem kept tutor-practice helper or queued follow-up state.', failures)
         _expect(aligned_state.expected_answer == '6', 'Student-entered problem did not store its own expected answer after leaving tutor practice.', failures)
+
+        ambiguous_from_practice = await _send('A shop sold 15 items. How many are left?', topic_state)
+        ambiguous_practice_state = ambiguous_from_practice.tutoring_state
+        _expect(ambiguous_from_practice.model == 'deterministic-word-problem-clarification', 'Ambiguous student-entered problem from tutor practice did not enter clarification.', failures)
+        _expect(ambiguous_practice_state.problem_status != 'tutor_practice' and ambiguous_practice_state.mode == 'clarify_word_problem', 'Ambiguous student-entered problem from tutor practice stayed trapped in tutor-practice mode.', failures)
+        _expect(ambiguous_practice_state.tutor_practice_question_id == '' and not ambiguous_practice_state.tutor_practice_hint_1, 'Ambiguous student-entered problem from tutor practice kept tutor-practice metadata.', failures)
 
         practice_hint_1 = await _send('give me a hint', topic_state)
         practice_hint_2 = await _send("I still don't understand", practice_hint_1.tutoring_state)

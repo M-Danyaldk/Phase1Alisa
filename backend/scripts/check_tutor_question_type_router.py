@@ -106,6 +106,28 @@ def main() -> None:
     )
     _expect(infer_active_question_type(conceptual) == 'conceptual_math', 'Conceptual Math question type was not detected.', failures)
 
+    reading = TutoringState(
+        current_subject='ELA',
+        current_question='What is the main idea of the story?',
+        active_problem='What is the main idea of the story?',
+        skill='main idea and key details',
+        mode='practice',
+        status='waiting_for_student',
+        problem_status='awaiting_step',
+    )
+    _expect(infer_active_question_type(reading) == 'reading_text', 'Reading question type was not detected.', failures)
+
+    writing = TutoringState(
+        current_subject='Writing',
+        current_question='Write one clear sentence about your favorite hobby.',
+        active_problem='Write one clear sentence about your favorite hobby.',
+        skill='complete sentences',
+        mode='practice',
+        status='waiting_for_student',
+        problem_status='awaiting_step',
+    )
+    _expect(infer_active_question_type(writing) == 'writing_text', 'Writing question type was not detected.', failures)
+
     if failures:
         print('Tutor question-type router check failed:')
         for failure in failures:

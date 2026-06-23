@@ -60,9 +60,17 @@ def has_active_student_math_flow(state: TutoringState) -> bool:
     )
 
 
-def tutor_practice_choice_intent(state: TutoringState, effective_message: str) -> str:
+def tutor_practice_choice_intent(
+    state: TutoringState,
+    effective_message: str,
+    intent_label: str = '',
+) -> str:
     if state.mode != 'awaiting_more_practice_choice' or state.status != 'waiting_for_student':
         return ''
+    if intent_label == 'continuation_yes':
+        return 'yes'
+    if intent_label == 'continuation_no':
+        return 'no'
     if extract_math_expression(effective_message):
         return ''
     text = ' '.join(str(effective_message or '').lower().split())
@@ -147,12 +155,44 @@ def history_has_opening_math_prompt(history: list[ChatHistoryItem] | list) -> bo
     return any(marker in text for marker in mood_markers) and any(marker in text for marker in quick_markers)
 
 
-def tutor_math_starter_reply(question: TutorMathPracticeQuestion, display_question: Callable[[str], str], *, rich_text: bool) -> str:
+def tutor_math_starter_reply(
+    question: TutorMathPracticeQuestion,
+    display_question: Callable[[str], str],
+    *,
+    rich_text: bool,
+    intro_text: str = '',
+) -> str:
     label = '**Question:**' if rich_text else 'Question:'
+    intro = str(intro_text or '').strip() or "That's good to hear. Let's start with one quick Math question."
     return (
-        "That's good to hear. Let's start with one quick Math question.\n\n"
+        f"{intro}\n\n"
         f"{label} {display_question(question.question)}"
     )
+
+
+def opening_math_starter_override(intent_label: str, emotion: str = '') -> bool:
+    if intent_label in {'greeting', 'acknowledge'}:
+        return True
+    return intent_label == 'emotion' and emotion != 'crisis'
+
+
+def opening_math_starter_intro(intent_label: str, emotion: str = '') -> str:
+    if intent_label == 'emotion':
+        gentle_emotions = {
+            'tired',
+            'frustrated',
+            'upset',
+            'sad',
+            'nervous',
+            'overwhelmed',
+            'discouraged',
+        }
+        if emotion in gentle_emotions:
+            return "Thanks for telling me. We can take this one step at a time. Let's start with one quick Math question."
+        return "Thanks for telling me. Let's start with one quick Math question."
+    if intent_label in {'greeting', 'acknowledge'}:
+        return "Thanks for telling me. Let's start with one quick Math question."
+    return ''
 
 
 def tutor_math_next_practice_reply(question: TutorMathPracticeQuestion, display_question: Callable[[str], str], *, rich_text: bool) -> str:

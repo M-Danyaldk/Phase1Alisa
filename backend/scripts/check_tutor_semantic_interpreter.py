@@ -84,8 +84,9 @@ async def main() -> None:
     word_answer_router = FakeRouter(_payload())
     word_answer_classifier = TutorIntentClassifier(TutorSemanticInterpreter(word_answer_router))
     word_answer_result = await word_answer_classifier.classify_if_needed('Math', 'seventy-eight', history, state)
-    _expect(word_answer_router.calls == 1, 'Number-word answer did not invoke semantic interpretation.', failures)
-    _expect(word_answer_result.label == 'answer_current_step' and word_answer_result.answer == '78', 'Number-word answer was not extracted safely.', failures)
+    _expect(word_answer_router.calls == 0, 'Number-word answer unnecessarily invoked semantic interpretation.', failures)
+    _expect(word_answer_result.label == 'answer_current_step', 'Number-word answer was not preserved as the current-step answer.', failures)
+    _expect(word_answer_result.interpretation_source != 'llm_schema', 'Number-word answer should now stay on the deterministic route.', failures)
 
     deterministic_router = FakeRouter(_payload())
     deterministic_classifier = TutorIntentClassifier(TutorSemanticInterpreter(deterministic_router))
@@ -133,10 +134,16 @@ async def main() -> None:
     continuation_router = FakeRouter(_payload(
         intent='continuation_yes',
         confidence='high',
+        message_kind='continuation_choice',
         answer=None,
         question_type='continuation_choice',
         refers_to_task='active_task',
         requested_action='continue',
+        contains_math_problem=False,
+        contains_answer_attempt=False,
+        contains_help_request=False,
+        contains_emotion_signal=False,
+        continuation_choice='yes',
         interpretation_note='Student wants another practice question.',
     ))
     continuation_interpreter = TutorSemanticInterpreter(continuation_router)
@@ -148,6 +155,76 @@ async def main() -> None:
     )
     _expect(continuation_result.intent == 'continuation_yes', 'Continuation choice semantic intent was not preserved.', failures)
     _expect(continuation_result.question_type == 'continuation_choice', 'Continuation choice lost the question type contract.', failures)
+    _expect(continuation_result.continuation_choice == 'yes', 'Continuation choice detail was not preserved.', failures)
+
+    opening_state = TutoringState(
+        current_subject='Math',
+        mode='opening_checkin',
+        status='ready_for_mini_checkin',
+    )
+    opening_history = [
+        ChatHistoryItem(
+            role='msalisia',
+            content="Hey Sajjad! How are you feeling today? Then I'll ask one quick Math question so I know how to help.",
+        )
+    ]
+    opening_router = FakeRouter(_payload(
+        intent='new_problem',
+        confidence='high',
+        message_kind='opening_reply',
+        answer=None,
+        normalized_expression='8 + 9',
+        problem=None,
+        question_type=None,
+        refers_to_task='new_task',
+        requested_action='solve',
+        emotion='happy',
+        contains_math_problem=True,
+        contains_answer_attempt=False,
+        contains_help_request=False,
+        contains_emotion_signal=True,
+        opening_acknowledgement='I am happy',
+        interpretation_note='Student replied to the opening check-in and also supplied a Math problem.',
+    ))
+    opening_classifier = TutorIntentClassifier(TutorSemanticInterpreter(opening_router))
+    opening_result = await opening_classifier.classify_if_needed(
+        'Math',
+        'I am happy and 8 + 9',
+        opening_history,
+        opening_state,
+    )
+    _expect(opening_router.calls == 1, 'Mixed opening reply did not invoke semantic interpretation.', failures)
+    _expect(opening_result.label == 'new_problem', 'Mixed opening reply did not route through the structured new-problem foundation.', failures)
+    _expect(opening_result.normalized_expression == '8 + 9', 'Mixed opening reply did not preserve the embedded Math expression.', failures)
+    _expect(opening_result.interpretation_source == 'llm_schema', 'Mixed opening reply did not record schema interpretation source.', failures)
+
+    opening_only_router = FakeRouter(_payload(
+        intent='acknowledge',
+        confidence='high',
+        message_kind='opening_reply',
+        answer=None,
+        normalized_expression=None,
+        problem=None,
+        question_type=None,
+        refers_to_task='no_task',
+        requested_action='none',
+        emotion='happy',
+        contains_math_problem=False,
+        contains_answer_attempt=False,
+        contains_help_request=False,
+        contains_emotion_signal=True,
+        opening_acknowledgement='I am feeling happy',
+        interpretation_note='Student replied to the opening check-in with a positive feeling.',
+    ))
+    opening_only_classifier = TutorIntentClassifier(TutorSemanticInterpreter(opening_only_router))
+    opening_only_result = await opening_only_classifier.classify_if_needed(
+        'Math',
+        'I am feeling happy',
+        opening_history,
+        opening_state,
+    )
+    _expect(opening_only_router.calls == 1, 'Natural opening-feeling reply did not invoke semantic interpretation.', failures)
+    _expect(opening_only_result.label == 'acknowledge', 'Natural opening-feeling reply did not preserve its opening acknowledgement route.', failures)
 
     invalid_router = FakeRouter({**_payload(), 'active_problem': 'hijacked'})
     invalid_classifier = TutorIntentClassifier(TutorSemanticInterpreter(invalid_router))

@@ -27,13 +27,14 @@ class TutorSemanticPolicy:
 
     def resolve(self, interpretation: TutorInputInterpretation, state: TutoringState) -> TutorSemanticPolicyDecision:
         label = self._mapped_label(interpretation)
+        active_question_type = infer_active_question_type(state)
         decision = TutorSemanticPolicyDecision(
             label=label,
             confidence=interpretation.confidence,
             reason=interpretation.interpretation_note,
             answer=interpretation.answer or '',
             normalized_expression=interpretation.normalized_expression or '',
-            question_type=interpretation.question_type or '',
+            question_type=interpretation.question_type or (active_question_type if active_question_type != 'unknown' else ''),
             requested_action=interpretation.requested_action,
             refers_to_task=interpretation.refers_to_task,
             needs_clarification=interpretation.needs_clarification,
@@ -44,6 +45,10 @@ class TutorSemanticPolicy:
 
         if label in self.STATE_CHANGING_LABELS and interpretation.confidence != 'high':
             return self._clarify(decision, interpretation)
+
+        route_mismatch = self._route_mismatch(interpretation, active_question_type)
+        if route_mismatch:
+            return self._clarify(decision, interpretation, route_mismatch)
 
         if interpretation.intent == 'answer_current_step':
             if not self._has_current_step(state):
@@ -118,8 +123,8 @@ class TutorSemanticPolicy:
             'greeting': 'greeting',
             'acknowledge': 'acknowledge',
             'answer_current_step': 'answer_current_step',
-            'continuation_yes': 'continue_current',
-            'continuation_no': 'clarification_about_context',
+            'continuation_yes': 'continuation_yes',
+            'continuation_no': 'continuation_no',
             'new_problem': 'new_problem',
             'related_question': 'related_question',
             'side_question': 'related_question',
@@ -161,6 +166,24 @@ class TutorSemanticPolicy:
             'allowed': False,
             'reason': reason or decision.reason,
         })
+
+    def _route_mismatch(self, interpretation: TutorInputInterpretation, active_question_type: str) -> str:
+        interpreted = interpretation.question_type or ''
+        if not interpreted or interpreted == 'unknown' or active_question_type == 'unknown':
+            return ''
+        if interpreted == active_question_type:
+            return ''
+        compatible_routes = {
+            ('arithmetic_single_step', 'arithmetic_multi_step'),
+            ('arithmetic_multi_step', 'arithmetic_single_step'),
+            ('conceptual_math', 'fraction_comparison'),
+            ('conceptual_math', 'equivalent_fraction'),
+            ('fraction_comparison', 'conceptual_math'),
+            ('equivalent_fraction', 'conceptual_math'),
+        }
+        if (interpreted, active_question_type) in compatible_routes:
+            return ''
+        return f'Interpreted route {interpreted} did not match the active route {active_question_type}.'
 
     def _has_current_step(self, state: TutoringState) -> bool:
         return bool((state.current_question or state.current_step).strip() and state.problem_status not in {'finished', 'idle'})

@@ -193,6 +193,18 @@ async def _run() -> list[str]:
                 'Voice correct second answer on negative-number tutor practice was incorrectly hidden behind the response guard.',
                 failures,
             )
+            spoken_corrected_voice_practice = await _turn(service, 'negative four', wrong_voice_practice['tutoring_state'])
+            _expect(
+                spoken_corrected_voice_practice['model'] == 'deterministic-voice-tutor-math-practice-check',
+                'Voice spoken correct second answer on negative-number tutor practice escaped the tutor-practice checker.',
+                failures,
+            )
+            _expect(
+                "Yes, that's correct!" in spoken_corrected_voice_practice['assistant_text']
+                and spoken_corrected_voice_practice['tutoring_state'].final_answer == '-4',
+                'Voice spoken correct second answer on negative-number tutor practice was not accepted.',
+                failures,
+            )
 
         followup_history = [{
             'role': 'msalisia',

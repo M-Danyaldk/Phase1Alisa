@@ -254,6 +254,13 @@ async def _voice_matrix(failures: list[str]) -> None:
         {'role': 'student', 'content': '4'},
         {'role': 'msalisia', 'content': wrong['assistant_text']},
     ])
+    spoken_corrected = await _send_voice(service, 'negative four', wrong['tutoring_state'], history=history)
+    _expect(
+        ("Yes, that's correct!" in spoken_corrected['assistant_text'] or "Yes, that's right!" in spoken_corrected['assistant_text'])
+        and spoken_corrected['tutoring_state'].final_answer == '-4',
+        'Voice spoken corrected negative answer was not accepted cleanly.',
+        failures,
+    )
     corrected = await _send_voice(service, '-4', wrong['tutoring_state'], history=history)
     history.extend([
         {'role': 'student', 'content': '-4'},
@@ -275,8 +282,22 @@ async def _voice_matrix(failures: list[str]) -> None:
     _expect('What is -7 + 3?' in followup['assistant_text'], 'Voice follow-up question did not appear.', failures)
 
     first_followup = await _send_voice(service, '2', followup['tutoring_state'], history=history)
+    history.extend([
+        {'role': 'student', 'content': '2'},
+        {'role': 'msalisia', 'content': first_followup['assistant_text']},
+    ])
     _expect('-7 + 3' in first_followup['assistant_text'] and '-9 + 5' not in first_followup['assistant_text'], 'Voice follow-up answer leaked to the previous problem.', failures)
     _expect(first_followup['tutoring_state'].attempt_count > 0 or first_followup['tutoring_state'].attempts_per_step, 'Voice follow-up answer did not track attempts.', failures)
+    repaired = await _send_voice(service, '22', first_followup['tutoring_state'], history=history)
+    history.extend([
+        {'role': 'student', 'content': '22'},
+        {'role': 'msalisia', 'content': repaired['assistant_text']},
+    ])
+    _expect('What Math problem should we work on?' not in repaired['assistant_text'], 'Voice guard fallback replaced the active follow-up prompt.', failures)
+    after_repair = await _send_voice(service, '43', repaired['tutoring_state'], history=history)
+    lower_reply = after_repair['assistant_text'].lower()
+    _expect('what math problem should we work on?' not in lower_reply, 'Voice repair text leaked into the next prompt.', failures)
+    _expect('that message will not count as an answer attempt' not in lower_reply, 'Voice repair warning leaked into the next prompt.', failures)
 
     practice = await _send_voice(
         service,
@@ -295,6 +316,24 @@ async def _voice_matrix(failures: list[str]) -> None:
     _expect(switched['model'] == 'deterministic-voice-structured-word-problem', 'Voice tutor-practice to student-entered problem did not use structured Math flow.', failures)
     _expect(switched['tutoring_state'].problem_status != 'tutor_practice', 'Voice student-entered problem stayed trapped in tutor-practice mode.', failures)
     _expect(switched['tutoring_state'].expected_answer == '6', 'Voice student-entered problem did not store its own answer.', failures)
+    switched_subject = await _send_voice(
+        service,
+        'switch to reading',
+        TutoringState(
+            current_subject='Math',
+            active_problem='3/4 + 1/4',
+            current_question='What is 3/4 + 1/4?',
+            expected_answer='1',
+            attempt_count=2,
+            mode='practice',
+            status='waiting_for_student',
+        ),
+        thread_id='voice-math-thread',
+    )
+    _expect(switched_subject['subject_changed'] and switched_subject['resolved_subject'] == 'ELA', 'Voice subject switch did not resolve to reading.', failures)
+    _expect(switched_subject['tutoring_state'].current_subject == 'ELA', 'Voice subject switch returned the wrong tutoring state.', failures)
+    _expect(not switched_subject['tutoring_state'].active_problem and switched_subject['tutoring_state'].attempt_count == 0, 'Voice subject switch retained Math state.', failures)
+    _expect(switched_subject['thread_id'] != 'voice-math-thread', 'Voice subject switch reused the old Math thread.', failures)
 
     safety_state = TutoringState(
         current_subject='Math',

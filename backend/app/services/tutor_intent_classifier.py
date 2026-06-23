@@ -17,7 +17,7 @@ from ..tutoring_logic import (
     detect_switch_task_intent,
     detect_tutor_concern_intent,
 )
-from ..assessment_validation import normalize_word_numbers_in_text
+from ..assessment_validation import extract_numeric_value, normalize_word_numbers_in_text
 from .tutor_semantic_interpreter import TutorSemanticInterpreter
 from .tutor_question_type_router import infer_active_question_type
 from .tutor_semantic_policy import TutorSemanticPolicy
@@ -50,6 +50,8 @@ NON_ANSWER_INTENTS = {
     'greeting',
     'acknowledge',
     'continue_current',
+    'continuation_yes',
+    'continuation_no',
     'related_question',
     'new_problem',
     'switch_request',
@@ -149,6 +151,7 @@ class TutorIntentClassifier:
     ) -> IntentClassificationResult:
         text = _normalized(message)
         question_type = infer_active_question_type(state)
+        opening_turn = self._is_opening_turn(state)
         if not text:
             return IntentClassificationResult()
 
@@ -181,6 +184,8 @@ class TutorIntentClassifier:
             )
 
         if self._is_acknowledgement(text):
+            if opening_turn:
+                return IntentClassificationResult()
             return self._result(
                 label='acknowledge',
                 confidence='high',
@@ -197,6 +202,12 @@ class TutorIntentClassifier:
                 emotion=emotion,
                 question_type=question_type,
             )
+
+        if opening_turn:
+            if detect_math_expression(message) and bool(re.search(r'[a-zA-Z]', message)):
+                return IntentClassificationResult()
+            if self._opening_requires_semantic_fallback(message, text):
+                return IntentClassificationResult()
 
         if self._is_pause_request(text):
             return self._result(
@@ -225,6 +236,17 @@ class TutorIntentClassifier:
                 question_type=question_type,
                 requested_action='resume',
                 refers_to_task='paused_task',
+            )
+
+        if subject == 'Math' and _has_unfinished_main_problem(state) and self._looks_like_spoken_numeric_answer(message, state):
+            return self._result(
+                label='answer_current_step',
+                confidence='high',
+                reason='Student supplied a short spoken-number answer to the active Math step.',
+                question_type=question_type,
+                requested_action='check_answer',
+                refers_to_task='active_task',
+                answer=message.strip(),
             )
 
         requested_topic = self._requested_math_topic(subject, text)
@@ -354,8 +376,17 @@ class TutorIntentClassifier:
     ) -> bool:
         text = _normalized(message)
         active_question_type = infer_active_question_type(state)
+        opening_turn = self._is_opening_turn(state)
         if not text:
             return False
+        if opening_turn:
+            if detect_explicit_subject_switch(message):
+                return False
+            if detect_switch_task_intent(message):
+                return False
+            if self._detected_emotion(text):
+                return False
+            return self._opening_requires_semantic_fallback(message, text)
         if not self._has_semantic_context(state, active_question_type):
             return False
         if detect_explicit_subject_switch(message):
@@ -644,6 +675,52 @@ class TutorIntentClassifier:
             return True
         return _has_unfinished_main_problem(state)
 
+    def _is_opening_turn(self, state: TutoringState) -> bool:
+        return (
+            state.mode == 'opening_checkin'
+            or state.status == 'ready_for_mini_checkin'
+        ) and not (
+            state.current_question.strip()
+            or state.current_step.strip()
+            or state.active_problem.strip()
+            or state.main_problem.strip()
+        )
+
+    def _opening_requires_semantic_fallback(self, message: str, text: str) -> bool:
+        if not text:
+            return False
+        if detect_math_expression(message) and bool(re.search(r'[a-zA-Z]', message)):
+            return True
+        if any(marker in text for marker in (
+            'i feel',
+            'i am feeling',
+            "i'm feeling",
+            'im feeling',
+            'but ',
+            ' and ',
+        )):
+            return True
+        nuanced_feelings = {
+            'happy',
+            'unhappy',
+            'confused',
+            'excited',
+            'scared',
+            'worried',
+            'nervous',
+            'sad',
+            'upset',
+            'frustrated',
+            'overwhelmed',
+            'tired',
+            'angry',
+            'mad',
+        }
+        words = set(re.findall(r"[a-z']+", text))
+        if words & nuanced_feelings:
+            return True
+        return False
+
     def _looks_like_word_problem(self, text: str) -> bool:
         numbers = re.findall(r'\d+(?:\.\d+)?', text)
         if len(numbers) < 2:
@@ -667,6 +744,18 @@ class TutorIntentClassifier:
             'seats',
         )
         return len(text) >= 35 and any(marker in text for marker in word_problem_markers)
+
+    def _looks_like_spoken_numeric_answer(self, message: str, state: TutoringState) -> bool:
+        if not (state.current_question.strip() or state.current_step.strip()):
+            return False
+        text = _normalized(message)
+        if not text or '?' in text or len(text) > 40:
+            return False
+        if detect_math_expression(message):
+            return False
+        if extract_numeric_value(text) is None:
+            return False
+        return bool(re.fullmatch(r"(?:negative|minus)?\s*[a-z0-9./-]+(?:\s+[a-z0-9./-]+){0,3}", text))
 
     async def _classify_with_llm(
         self,

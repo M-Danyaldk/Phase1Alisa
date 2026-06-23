@@ -136,16 +136,44 @@ def main() -> None:
         status='waiting_for_student',
         problem_status='finished',
     ))
-    _expect(continuation_yes.label == 'continue_current' and continuation_yes.allowed, 'Continuation yes was not allowed through the policy.', failures)
+    _expect(continuation_yes.label == 'continuation_yes' and continuation_yes.allowed, 'Continuation yes was not allowed through the policy.', failures)
 
     stronger_hint = policy.resolve(_payload(
         intent='stronger_hint_request',
         answer=None,
-        question_type='conceptual_math',
+        question_type='arithmetic_single_step',
         requested_action='give_hint',
         interpretation_note='Student asked for a stronger hint.',
     ), active)
     _expect(stronger_hint.label == 'help_request' and stronger_hint.allowed, 'Stronger hint request was not mapped into help routing.', failures)
+
+    reading_state = start_task(TutoringState(
+        current_subject='ELA',
+        active_problem='What is the main idea of the story?',
+        current_question='What is the main idea of the story?',
+        expected_answer='The big message of the story.',
+        skill='main idea and key details',
+        problem_status='awaiting_step',
+        mode='practice',
+        status='waiting_for_student',
+    ), 'What is the main idea of the story?')
+    reading_answer = policy.resolve(_payload(
+        answer='The big message of the story.',
+        question_type='reading_text',
+        interpretation_note='Student answered the current reading question.',
+    ), reading_state)
+    _expect(reading_answer.label == 'answer_current_step' and reading_answer.allowed, 'Reading answer route was not allowed through deterministic policy.', failures)
+
+    mismatched_route = policy.resolve(_payload(
+        answer='7/8',
+        question_type='fraction_comparison',
+        interpretation_note='Route mismatch for current active prompt.',
+    ), reading_state)
+    _expect(
+        mismatched_route.label == 'clarification_about_context' and not mismatched_route.allowed,
+        'Route mismatch did not get blocked by deterministic policy.',
+        failures,
+    )
 
     continuation_without_prompt = policy.resolve(_payload(
         intent='continuation_yes',

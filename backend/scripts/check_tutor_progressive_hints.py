@@ -238,6 +238,23 @@ async def _check_strict_llm_fallback(failures: list[str]) -> None:
     _expect('llm_concept' not in mismatch_support.shown_hint_ids, 'Route-mismatched LLM hint was still recorded.', failures)
     _expect('same denominator' in mismatch_text.lower() or 'numerator' in mismatch_text.lower(), 'Rejected route-mismatched hint did not fall back to the grounded fraction hint.', failures)
 
+    guard_leak_router = _FakeHintRouter(json.dumps({
+        'level': 1,
+        'hint_kind': 'concept',
+        'hint_text': 'I understand. That message will not count as an answer attempt.',
+        'follow_up_question': 'What Math problem should we work on?',
+        'reveals_final_answer': False,
+    }))
+    guard_text, guard_state, guard_model, _ = await build_progressive_hint_reply_with_fallback(
+        word_state,
+        help_request=True,
+        router=guard_leak_router,
+    )
+    guard_support = current_step_support(guard_state)
+    _expect(guard_model == 'deterministic-progressive-hint', 'Guard-leak hint text was not rejected.', failures)
+    _expect('llm_concept' not in guard_support.shown_hint_ids, 'Guard-leak hint was still recorded as an LLM hint.', failures)
+    _expect('what math problem should we work on' not in guard_text.lower(), 'Rejected guard-leak hint text reached the student.', failures)
+
 
 if __name__ == '__main__':
     main()
