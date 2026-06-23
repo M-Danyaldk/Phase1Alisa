@@ -123,6 +123,114 @@ def tutor_practice_choice_intent(
     return 'unclear'
 
 
+def continuation_choice_intent(
+    state: TutoringState,
+    effective_message: str,
+    intent_label: str = '',
+) -> str:
+    if state.mode != 'awaiting_more_practice_choice' or state.status != 'waiting_for_student':
+        return ''
+    if intent_label == 'related_question':
+        return 'explain'
+    base_choice = tutor_practice_choice_intent(state, effective_message, intent_label)
+    if base_choice in {'yes', 'no'}:
+        return base_choice
+    if extract_math_expression(effective_message) or intent_label in {'new_problem', 'switch_request', 'topic_switch'}:
+        return ''
+    text = ' '.join(str(effective_message or '').lower().split())
+    if not text:
+        return 'unclear'
+    explanation_markers = (
+        'explain',
+        'why',
+        'how',
+        'what do you mean',
+        'where did',
+        'how did',
+        'why is',
+        'why was',
+    )
+    if any(text.startswith(marker) or f' {marker} ' in f' {text} ' for marker in explanation_markers):
+        return 'explain'
+    return base_choice or 'unclear'
+
+
+def continuation_explanation_reply(state: TutoringState) -> str:
+    explanation = str(state.continuation_origin_explanation or '').strip()
+    problem = str(state.continuation_origin_problem or 'that problem').strip()
+    answer = str(state.continuation_origin_answer or state.final_answer or '').strip()
+    origin_type = str(state.continuation_origin_type or '').strip()
+    if explanation:
+        body = explanation
+    elif origin_type == 'fraction_comparison' and ' or ' in problem:
+        body = f'{problem} is solved by comparing which fraction is larger. The correct answer is {answer}.'
+    elif origin_type == 'equivalent_fraction':
+        body = f'{problem} is about finding the fraction with the same value. The correct answer is {answer}.'
+    elif answer:
+        body = f'{problem} = {answer}.'
+    else:
+        body = f"Let's look back at {problem} one step at a time."
+    return (
+        f"{body}\n\n"
+        "Would you like another practice question, or a new Math problem?"
+    )
+
+
+def math_fallback_reply(state: TutoringState) -> str:
+    question = str(state.current_question or state.current_step or '').strip()
+    problem = str(state.active_problem or state.main_problem or '').strip()
+    if state.mode == 'awaiting_more_practice_choice' or (
+        state.problem_status == 'finished'
+        and not question
+        and not problem
+    ):
+        return 'Would you like another practice question, a quick explanation of the last one, or a new Math problem?'
+    if question:
+        return (
+            "Let's stay with the current Math problem one step at a time.\n\n"
+            f'{question}'
+        )
+    if problem:
+        return (
+            "Let's stay with this Math problem one step at a time.\n\n"
+            f'**Problem:** {problem}'
+        )
+    return 'Send me the Math problem you want to work on, and I will help one step at a time.'
+
+
+def finish_with_continuation_choice(
+    state: TutoringState,
+    *,
+    student_answer: str,
+    correctness_status: str,
+    final_answer: str,
+    origin_problem: str,
+    origin_type: str,
+    origin_explanation: str,
+    revealed: bool = False,
+    memory_note: str = '',
+) -> TutoringState:
+    finished_state = state.model_copy(update={
+        'active_problem': '',
+        'current_step': '',
+        'current_question': '',
+        'expected_answer': '',
+        'student_answer': student_answer,
+        'correctness_status': correctness_status,
+        'answer_revealed': revealed,
+        'final_answer': final_answer,
+        'continuation_origin_problem': origin_problem,
+        'continuation_origin_answer': final_answer,
+        'continuation_origin_type': origin_type,
+        'continuation_origin_explanation': origin_explanation,
+        'problem_status': 'finished',
+        'mode': 'awaiting_more_practice_choice',
+        'status': 'waiting_for_student',
+        'memory_note': memory_note,
+    })
+    return complete_active_task(finished_state)
+
+
 def choice_marker_matches(text: str, marker: str) -> bool:
     if text == marker:
         return True
@@ -310,21 +418,17 @@ def finished_tutor_practice_state(
     *,
     revealed: bool = False,
 ) -> TutoringState:
-    finished_state = state.model_copy(update={
-        'active_problem': '',
-        'current_step': '',
-        'current_question': '',
-        'expected_answer': '',
-        'student_answer': student_answer,
-        'correctness_status': correctness_status,
-        'answer_revealed': revealed,
-        'final_answer': expected_answer,
-        'problem_status': 'finished',
-        'mode': 'awaiting_more_practice_choice',
-        'status': 'waiting_for_student',
-        'memory_note': f'Finished tutor practice question: {state.current_question}',
-    })
-    return complete_active_task(finished_state)
+    return finish_with_continuation_choice(
+        state,
+        student_answer=student_answer,
+        correctness_status=correctness_status,
+        final_answer=expected_answer,
+        origin_problem=state.current_question or state.active_problem,
+        origin_type='tutor_practice',
+        origin_explanation=state.tutor_practice_explanation or f'The answer is {expected_answer}.',
+        revealed=revealed,
+        memory_note=f'Finished tutor practice question: {state.current_question}',
+    )
 
 
 def next_recent_tutor_practice_ids(previous_ids: list[str] | tuple[str, ...] | None, question_id: str) -> list[str]:

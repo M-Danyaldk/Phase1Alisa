@@ -24,6 +24,7 @@ from backend.scripts.check_tutor_topic_lessons import main as tutor_topic_lesson
 from backend.scripts.check_tutor_topic_e2e_matrix import main as tutor_topic_e2e_matrix_main
 from backend.scripts.check_tutor_subject_baseline import main as tutor_subject_baseline_main
 from backend.scripts.check_tutor_progressive_hints import main as tutor_progressive_hints_main
+from backend.scripts.check_tutor_fallback_tightening import main as tutor_fallback_tightening_main
 
 import asyncio
 
@@ -67,6 +68,9 @@ def main() -> None:
     print('')
     print('Running tutor progressive-hint check...')
     tutor_progressive_hints_main()
+    print('')
+    print('Running tutor fallback-tightening check...')
+    tutor_fallback_tightening_main()
     print('')
     print('Running tutor word-problem schema check...')
     tutor_word_problem_schema_main()

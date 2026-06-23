@@ -89,6 +89,27 @@ async def _run() -> list[str]:
     word_problem_module.LLMRouter = _WordProblemRouter
     try:
         initial = TutoringState(current_subject='Math')
+        direct_arithmetic = await _send('9 + 10', initial)
+        _expect(direct_arithmetic.model == 'deterministic-arithmetic_single_step-start', 'Bare arithmetic did not start deterministic student-entered Math flow.', failures)
+        _expect(direct_arithmetic.tutoring_state.active_problem == '9 + 10', 'Bare arithmetic did not store the active problem.', failures)
+        _expect(direct_arithmetic.tutoring_state.current_question == 'What is 9 + 10?', 'Bare arithmetic did not store the visible current question.', failures)
+        _expect(direct_arithmetic.tutoring_state.expected_answer == '19', 'Bare arithmetic did not store the expected answer.', failures)
+        direct_correct = await _send('19', direct_arithmetic.tutoring_state)
+        _expect(direct_correct.model == 'deterministic-student-arithmetic-completion', 'Correct bare arithmetic answer did not use deterministic completion.', failures)
+        _expect(direct_correct.tutoring_state.final_answer == '19', 'Correct bare arithmetic answer did not store the final answer.', failures)
+        _expect(direct_correct.tutoring_state.active_task_id == '', 'Correct bare arithmetic answer left the task active.', failures)
+
+        reveal_start = await _send('12 - 20', initial)
+        reveal_wrong_1 = await _send('10', reveal_start.tutoring_state)
+        reveal_wrong_2 = await _send('12', reveal_wrong_1.tutoring_state)
+        reveal_wrong_3 = await _send('14', reveal_wrong_2.tutoring_state)
+        _expect(reveal_wrong_1.model.endswith('progressive-attempt-hint-1'), 'First wrong bare arithmetic answer did not use hint level 1.', failures)
+        _expect(reveal_wrong_2.model.endswith('progressive-attempt-hint-2'), 'Second wrong bare arithmetic answer did not use hint level 2.', failures)
+        _expect(reveal_wrong_3.model == 'deterministic-student-arithmetic-reveal', 'Third wrong bare arithmetic answer did not use deterministic reveal.', failures)
+        _expect('**Final answer:** -8.' in reveal_wrong_3.reply, 'Third wrong bare arithmetic answer did not reveal the final answer.', failures)
+        _expect(reveal_wrong_3.tutoring_state.final_answer == '-8', 'Third wrong bare arithmetic answer did not store the revealed answer.', failures)
+        _expect(reveal_wrong_3.tutoring_state.active_task_id == '', 'Third wrong bare arithmetic answer left the task active.', failures)
+
         topic_started = await _send('teach me fraction', initial)
         topic_state = topic_started.tutoring_state
         _expect(topic_started.model == 'deterministic-math-topic-switch', 'Topic request did not use deterministic topic-start flow.', failures)
@@ -139,7 +160,13 @@ async def _run() -> list[str]:
         topic_answer = await _send('1/4', helped_state)
         _expect(topic_answer.model == 'deterministic-tutor-math-practice-check', 'Topic starter answer did not use tutor-practice checking.', failures)
         _expect(topic_answer.tutoring_state.final_answer == '1/4', 'Topic starter answer did not finish with the expected answer.', failures)
-        _expect(topic_answer.tutoring_state.problem_status == 'idle', 'Finished topic starter did not return to idle live state.', failures)
+        _expect(
+            topic_answer.tutoring_state.problem_status == 'finished'
+            and topic_answer.tutoring_state.mode == 'awaiting_more_practice_choice'
+            and topic_answer.tutoring_state.continuation_origin_answer == '1/4',
+            'Finished topic starter did not enter continuation-choice mode cleanly.',
+            failures,
+        )
         _expect(
             any(
                 record.status == 'completed'

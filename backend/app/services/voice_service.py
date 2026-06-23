@@ -37,6 +37,12 @@ from .tutor_question_type_router import infer_active_question_type
 from .tutor_math_normalizer import TutorMathNormalizer
 from .tutor_math_response_guard import TutorMathResponseGuard
 from .tutor_progressive_hints import build_progressive_hint_reply, build_progressive_hint_reply_with_fallback
+from .tutor_student_arithmetic import (
+    StudentArithmeticTask,
+    apply_student_arithmetic_state,
+    build_student_arithmetic_start_reply,
+    parse_student_arithmetic_task,
+)
 from .tutor_word_problem import (
     StructuredWordProblem,
     TutorWordProblemInterpreter,
@@ -88,11 +94,15 @@ from ..utils.attempt_policy import ensure_answer_attempt_registered, preserve_at
 from ..utils.tutor_flow_alignment import align_tutor_practice_transition
 from ..utils.tutor_surface_parity import (
     correct_math_answer_reply as shared_correct_math_answer_reply,
+    continuation_choice_intent as shared_continuation_choice_intent,
+    continuation_explanation_reply as shared_continuation_explanation_reply,
+    finish_with_continuation_choice as shared_finish_with_continuation_choice,
     has_active_student_math_flow as shared_has_active_student_math_flow,
     history_content as shared_history_content,
     history_has_opening_math_prompt as shared_history_has_opening_math_prompt,
     history_role as shared_history_role,
     is_tutor_practice_question_state as shared_is_tutor_practice_question_state,
+    math_fallback_reply as shared_math_fallback_reply,
     opening_math_starter_intro as shared_opening_math_starter_intro,
     opening_math_starter_override as shared_opening_math_starter_override,
     should_start_tutor_math_practice as shared_should_start_tutor_math_practice,
@@ -118,6 +128,17 @@ def _correct_math_answer_reply(answer_check, state: TutoringState, current_step:
         state,
         current_step,
         display_expression=_display_math_expression_from_state,
+    )
+
+
+def _word_problem_reveal_reply(answer_check, state: TutoringState, current_step: str = '') -> str:
+    expected = answer_check.expected_answer or state.expected_answer or 'the answer'
+    expected_display = format_contextual_math_answer(state, expected)
+    expression = (_display_math_expression_from_state(state, current_step) or 'this problem').replace(' x ', ' × ')
+    return (
+        "Nice effort. Let's finish this one together.\n\n"
+        f"{expression} = {expected_display}.\n\n"
+        f"**Final answer:** {expected_display}."
     )
 
 
@@ -201,6 +222,68 @@ def _tutor_practice_choice_intent(state: TutoringState, effective_message: str, 
     return shared_tutor_practice_choice_intent(state, effective_message, intent_label)
 
 
+def _continuation_choice_intent(state: TutoringState, effective_message: str, intent_label: str = '') -> str:
+    return shared_continuation_choice_intent(state, effective_message, intent_label)
+
+
+def _continuation_explanation_reply(state: TutoringState) -> str:
+    return shared_continuation_explanation_reply(state)
+
+
+def _math_fallback_reply(state: TutoringState) -> str:
+    return shared_math_fallback_reply(state)
+
+
+def _finish_with_continuation_choice(
+    state: TutoringState,
+    *,
+    student_answer: str,
+    correctness_status: str,
+    final_answer: str,
+    origin_problem: str,
+    origin_type: str,
+    origin_explanation: str,
+    revealed: bool = False,
+    memory_note: str = '',
+) -> TutoringState:
+    return shared_finish_with_continuation_choice(
+        state,
+        student_answer=student_answer,
+        correctness_status=correctness_status,
+        final_answer=final_answer,
+        origin_problem=origin_problem,
+        origin_type=origin_type,
+        origin_explanation=origin_explanation,
+        revealed=revealed,
+        memory_note=memory_note,
+    )
+
+
+def _finish_single_step_word_problem(
+    state: TutoringState,
+    *,
+    student_answer: str,
+    correctness_status: str,
+    final_answer: str,
+    revealed: bool = False,
+) -> TutoringState:
+    finished_state = state.model_copy(update={
+        'active_problem': '',
+        'current_step': '',
+        'current_question': '',
+        'expected_answer': '',
+        'student_answer': student_answer,
+        'correctness_status': correctness_status,
+        'answer_revealed': revealed,
+        'final_answer': final_answer,
+        'problem_status': 'finished',
+        'mode': 'solve',
+        'status': 'idle',
+        'memory_note': f'Finished word problem: {state.active_problem or state.main_problem}',
+    })
+    return complete_active_task(finished_state)
+
+
 def _choice_marker_matches(text: str, marker: str) -> bool:
     if text == marker:
         return True
@@ -250,6 +333,20 @@ def _tutor_math_question_state(
 
 def _is_tutor_practice_question_state(state: TutoringState) -> bool:
     return shared_is_tutor_practice_question_state(state)
+
+
+def _is_locked_conceptual_math_state(state: TutoringState) -> bool:
+    return state.problem_kind in {
+        'fraction_comparison',
+        'decimal_comparison',
+        'percent_comparison',
+        'number_comparison',
+        'equivalent_fraction',
+    }
+
+
+def _is_locked_student_arithmetic_state(state: TutoringState) -> bool:
+    return state.problem_kind in {'arithmetic_single_step', 'arithmetic_multi_step'}
 
 
 def _tutor_practice_answer_reply(
@@ -430,6 +527,8 @@ def _display_math_expression_from_state(state: TutoringState, current_step: str 
 
 
 def _is_substep_of_active_problem(state: TutoringState, current_step: str = '') -> bool:
+    if _is_locked_student_arithmetic_state(state):
+        return False
     if has_structured_math_problem(state):
         return bool(state.main_problem and state.current_step_id)
     if state.problem_kind == 'word_problem' and not state.ordered_steps:
@@ -842,32 +941,39 @@ class VoiceService:
         effective_transcript = transcript
         word_problem = StructuredWordProblem(original_text=transcript)
         word_problem_candidate = False
+        student_arithmetic_task = StudentArithmeticTask()
         if subject == 'Math':
-            word_problem_interpreter = TutorWordProblemInterpreter()
-            word_problem_input = transcript
-            pending_word_problem = (
-                tutoring_state.pending_new_problem
-                if tutoring_state.pending_input_kind == 'ambiguous_word_problem'
-                else ''
-            )
-            if pending_word_problem:
-                word_problem_input = f'{pending_word_problem} The requested result is: {transcript}.'
-            word_problem_candidate = word_problem_interpreter.is_candidate(subject, word_problem_input)
-            word_problem = await word_problem_interpreter.interpret_if_needed(subject, word_problem_input)
-            if word_problem.accepted and pending_word_problem:
-                word_problem = word_problem.model_copy(update={'original_text': pending_word_problem})
-            if word_problem.accepted:
-                effective_transcript = word_problem.expression
-            else:
-                normalization = await TutorMathNormalizer().normalize_if_needed(subject, transcript, tutoring_state)
-                if normalization.normalized_expression:
-                    effective_transcript = normalization.normalized_expression
+            student_arithmetic_task = parse_student_arithmetic_task(transcript)
+            if not student_arithmetic_task.accepted:
+                word_problem_interpreter = TutorWordProblemInterpreter()
+                word_problem_input = transcript
+                pending_word_problem = (
+                    tutoring_state.pending_new_problem
+                    if tutoring_state.pending_input_kind == 'ambiguous_word_problem'
+                    else ''
+                )
+                if pending_word_problem:
+                    word_problem_input = f'{pending_word_problem} The requested result is: {transcript}.'
+                word_problem_candidate = word_problem_interpreter.is_candidate(subject, word_problem_input)
+                word_problem = await word_problem_interpreter.interpret_if_needed(subject, word_problem_input)
+                if word_problem.accepted and pending_word_problem:
+                    word_problem = word_problem.model_copy(update={'original_text': pending_word_problem})
+                if word_problem.accepted:
+                    effective_transcript = word_problem.expression
+                else:
+                    normalization = await TutorMathNormalizer().normalize_if_needed(subject, transcript, tutoring_state)
+                    if normalization.normalized_expression:
+                        effective_transcript = normalization.normalized_expression
 
         intent_assist = await TutorIntentClassifier().classify_if_needed(
             subject,
             effective_transcript,
             history,
             tutoring_state,
+        )
+        continuation_explain_requested = (
+            subject == 'Math'
+            and _continuation_choice_intent(tutoring_state, effective_transcript, intent_assist.label) == 'explain'
         )
         if intent_assist.label == 'answer_current_step' and intent_assist.answer:
             effective_transcript = intent_assist.answer
@@ -890,7 +996,7 @@ class VoiceService:
             detect_off_subject_request(subject, effective_transcript, tutoring_state)
             or subject_assist.label == 'off_subject'
             or uncertain_subject_boundary
-        ) and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'help_request', 'related_question', 'emotion', 'pause', 'resume', 'meta_feedback'}:
+        ) and not continuation_explain_requested and not word_problem_candidate and not intent_assist.needs_clarification and intent_assist.label not in {'help_request', 'related_question', 'emotion', 'pause', 'resume', 'meta_feedback'}:
             final_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
                 'current_subject': subject,
                 'student_answer': transcript,
@@ -955,9 +1061,9 @@ class VoiceService:
                 'subject_changed': subject_changed,
             }
 
-        practice_choice = _tutor_practice_choice_intent(tutoring_state, effective_transcript, intent_assist.label) if subject == 'Math' else ''
-        if practice_choice in {'yes', 'no', 'unclear'}:
-            if practice_choice == 'yes':
+        continuation_choice = _continuation_choice_intent(tutoring_state, effective_transcript, intent_assist.label) if subject == 'Math' else ''
+        if continuation_choice in {'yes', 'no', 'explain', 'unclear'}:
+            if continuation_choice == 'yes':
                 practice_question = select_tutor_math_question(
                     prompt_student.grade,
                     topic=tutoring_state.tutor_practice_topic or resolved_topic,
@@ -966,7 +1072,7 @@ class VoiceService:
                 formatted_reply = _tutor_math_next_practice_reply(practice_question)
                 final_state = _tutor_math_question_state(tutoring_state, subject, transcript, practice_question)
                 result_model = 'deterministic-voice-tutor-math-next-practice'
-            elif practice_choice == 'no':
+            elif continuation_choice == 'no':
                 formatted_reply = 'No problem. Nice work today.'
                 final_state = tutoring_state.model_copy(update={
                     'current_subject': subject,
@@ -990,10 +1096,23 @@ class VoiceService:
                     'mode': 'solve',
                     'status': 'finished',
                     'memory_note': 'Tutor practice paused after student chose to stop.',
+                    'continuation_origin_problem': '',
+                    'continuation_origin_answer': '',
+                    'continuation_origin_type': '',
+                    'continuation_origin_explanation': '',
                 })
                 result_model = 'deterministic-voice-tutor-math-practice-close'
+            elif continuation_choice == 'explain':
+                formatted_reply = _continuation_explanation_reply(tutoring_state)
+                final_state = tutoring_state.model_copy(update={
+                    'current_subject': subject,
+                    'student_answer': transcript,
+                    'mode': 'awaiting_more_practice_choice',
+                    'status': 'waiting_for_student',
+                })
+                result_model = 'deterministic-voice-tutor-math-practice-explain'
             else:
-                formatted_reply = 'Do you want another practice question, or are you done for now?'
+                formatted_reply = 'Would you like another practice question, a quick explanation of this one, or are you done for now?'
                 final_state = tutoring_state.model_copy(update={
                     'current_subject': subject,
                     'student_answer': transcript,
@@ -1164,7 +1283,8 @@ class VoiceService:
             })
             next_state = update_multi_step_progress(effective_transcript, next_state)
         elif next_state.mode != 'clarify_new_problem' and not side_problem_active:
-            next_state = update_multi_step_progress(effective_transcript, next_state)
+            if not _is_locked_student_arithmetic_state(tutoring_state):
+                next_state = update_multi_step_progress(effective_transcript, next_state)
         word_problem_started = bool(
             word_problem.accepted
             and (
@@ -1175,6 +1295,21 @@ class VoiceService:
         )
         if word_problem_started and not side_problem_active:
             next_state = apply_word_problem_state(tutoring_state, next_state, word_problem)
+        student_arithmetic_started = bool(
+            student_arithmetic_task.accepted
+            and not side_problem_active
+            and not word_problem_started
+            and (
+                not tutoring_state.active_task_id
+                or tutoring_state.problem_status in {'finished', 'idle'}
+                or (
+                    _is_tutor_practice_question_state(tutoring_state)
+                    and intent_assist.label in {'new_problem', 'switch_request'}
+                )
+            )
+        )
+        if student_arithmetic_started:
+            next_state = apply_student_arithmetic_state(tutoring_state, next_state, student_arithmetic_task)
         next_state = align_tutor_practice_transition(tutoring_state, next_state)
         if has_structured_math_problem(next_state) and not side_problem_active:
             active_task = next_state.main_problem or active_task
@@ -1192,7 +1327,73 @@ class VoiceService:
                 'student_answer': transcript,
                 'correctness_status': '',
             })
+        if student_arithmetic_started and not matched_structured_step:
+            formatted_reply = build_student_arithmetic_start_reply(student_arithmetic_task)
+            final_state = next_state
+            result_provider = 'local'
+            result_model = f'deterministic-{student_arithmetic_task.question_type}-start'
+            if chat_store and chat_thread_id:
+                try:
+                    message = await chat_store.store_message(parent_id, ChatMessageCreateRequest(
+                        thread_id=chat_thread_id,
+                        child_id=child_id,
+                        role='msalisia',
+                        content=formatted_reply,
+                        subject=subject,
+                        topic=resolved_topic,
+                        provider=result_provider,
+                        model=result_model,
+                        tutoring_state={**final_state.model_dump(), 'voice_mode': True},
+                    ))
+                    assistant_message_id = message.get('id')
+                    history_saved = True
+                except Exception as exc:
+                    logger.warning('Voice chat history save failed after student arithmetic start: %s', exc)
+                    history_error = CHAT_HISTORY_PUBLIC_ERROR
+
+            await learning_memory_service.record_exchange_summary(
+                parent_id=parent_id,
+                child_id=child_id,
+                subject=subject,
+                topic=resolved_topic,
+                grade_level=child.get('grade_level'),
+                working_level=(assessment_context or {}).get('assessed_level'),
+                student_message=transcript,
+                assistant_text=formatted_reply,
+                tutoring_state=final_state,
+                thread_id=chat_thread_id,
+                source='voice_session',
+                metadata={
+                    'provider': result_provider,
+                    'model': result_model,
+                    'topic_source': topic_resolution['source'],
+                    'assessed_level': topic_resolution.get('assessed_level'),
+                    'voice_mode': True,
+                },
+            )
+
+            return {
+                'assistant_text': formatted_reply,
+                'provider': result_provider,
+                'model': result_model,
+                'tutoring_state': final_state,
+                'thread_id': chat_thread_id,
+                'assistant_message_id': assistant_message_id,
+                'history_saved': history_saved,
+                'history_error': history_error,
+                'resolved_topic': resolved_topic,
+                'topic_source': topic_resolution['source'],
+                'assessed_level': topic_resolution.get('assessed_level'),
+                'resolved_subject': subject,
+                'subject_changed': subject_changed,
+            }
         answer_check = None
+        if (
+            subject == 'Math'
+            and _is_locked_student_arithmetic_state(next_state)
+            and intent_assist.label == 'answer_current_step'
+        ):
+            next_state = ensure_answer_attempt_registered(tutoring_state, next_state)
         if _should_run_answer_evaluation(
             next_state,
             tutoring_state,
@@ -1544,16 +1745,19 @@ class VoiceService:
             formatted_reply = build_structured_step_reply(next_state, final_state)
             result_provider = 'local'
             result_model = 'deterministic-structured-step-completion'
+            special_local_reply = True
         elif structured_progression and answer_check and answer_check.is_wrong and next_state.attempt_count in {1, 2}:
             formatted_reply, final_state, hint_model, _ = await build_progressive_hint_reply_with_fallback(next_state, help_request=False)
             formatted_reply = prepend_attempt_feedback(formatted_reply, next_state, transcript)
             result_provider = 'local'
             result_model = 'strict-llm-structured-step-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-structured-step-hint-{next_state.attempt_count}'
+            special_local_reply = True
         elif structured_progression and answer_check and answer_check.is_wrong and next_state.attempt_count >= 3:
             final_state = advance_structured_math_problem(next_state, answer_check.expected_answer or next_state.expected_answer)
             formatted_reply = build_structured_step_reply(next_state, final_state, reveal=True)
             result_provider = 'local'
             result_model = 'deterministic-structured-step-reveal'
+            special_local_reply = True
         elif (
             answer_check
             and answer_check.is_correct
@@ -1563,10 +1767,75 @@ class VoiceService:
             formatted_reply = _substep_correct_finish_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = 'deterministic-substep-completion'
+            special_local_reply = True
+        elif answer_check and answer_check.is_correct and subject == 'Math' and next_state.problem_kind == 'word_problem' and not next_state.ordered_steps:
+            final_answer = answer_check.expected_answer or next_state.expected_answer
+            formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
+            final_state = _finish_single_step_word_problem(
+                next_state,
+                student_answer=transcript,
+                correctness_status=answer_check.status,
+                final_answer=final_answer,
+            )
+            result_provider = 'local'
+            result_model = 'deterministic-voice-word-problem-completion'
+            special_local_reply = True
+        elif answer_check and answer_check.is_correct and subject == 'Math' and next_state.problem_kind == 'opening_arithmetic':
+            final_answer = answer_check.expected_answer or next_state.expected_answer
+            formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
+            final_state = _finish_with_continuation_choice(
+                next_state,
+                student_answer=transcript,
+                correctness_status='correct',
+                final_answer=final_answer,
+                origin_problem=next_state.current_question or next_state.active_problem,
+                origin_type='opening_arithmetic',
+                origin_explanation=f'{_display_math_expression_from_state(next_state, current_step)} = {final_answer}.',
+                memory_note=f'Finished opening arithmetic problem: {next_state.current_question or next_state.active_problem}',
+            )
+            formatted_reply = f"{formatted_reply}\n\nWould you like another practice question?"
+            result_provider = 'local'
+            result_model = 'deterministic-voice-opening-mixed-math-completion'
+            special_local_reply = True
+        elif answer_check and answer_check.is_correct and subject == 'Math' and _is_locked_conceptual_math_state(next_state):
+            final_answer = answer_check.expected_answer or next_state.expected_answer
+            formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
+            final_state = _finish_with_continuation_choice(
+                next_state,
+                student_answer=transcript,
+                correctness_status='correct',
+                final_answer=final_answer,
+                origin_problem=next_state.current_question or next_state.active_problem,
+                origin_type=next_state.problem_kind,
+                origin_explanation=f'The correct answer to {next_state.current_question or next_state.active_problem} is {final_answer}.',
+                memory_note=f'Finished conceptual Math problem: {next_state.current_question or next_state.active_problem}',
+            )
+            formatted_reply = f"{formatted_reply}\n\nWould you like another practice question?"
+            result_provider = 'local'
+            result_model = 'deterministic-voice-conceptual-math-completion'
+            special_local_reply = True
+        elif answer_check and answer_check.is_correct and subject == 'Math' and _is_locked_student_arithmetic_state(next_state):
+            final_answer = answer_check.expected_answer or next_state.expected_answer
+            formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
+            final_state = _finish_with_continuation_choice(
+                next_state,
+                student_answer=transcript,
+                correctness_status='correct',
+                final_answer=final_answer,
+                origin_problem=next_state.current_question or next_state.active_problem,
+                origin_type=next_state.problem_kind,
+                origin_explanation=f'{_display_math_expression_from_state(next_state, current_step)} = {final_answer}.',
+                memory_note=f'Finished student arithmetic problem: {next_state.current_question or next_state.active_problem}',
+            )
+            formatted_reply = f"{formatted_reply}\n\nWould you like another practice question?"
+            result_provider = 'local'
+            result_model = 'deterministic-voice-student-arithmetic-completion'
+            special_local_reply = True
         elif answer_check and answer_check.is_correct and subject == 'Math':
             formatted_reply = _correct_math_answer_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = 'deterministic-current-math-check'
+            special_local_reply = True
         elif (
             answer_check
             and answer_check.is_wrong
@@ -1577,10 +1846,60 @@ class VoiceService:
             formatted_reply = prepend_attempt_feedback(formatted_reply, next_state, transcript)
             result_provider = 'local'
             result_model = 'strict-llm-progressive-attempt-hint' if hint_model == 'strict-llm-progressive-hint' else f'deterministic-progressive-attempt-hint-{next_state.attempt_count}'
+            special_local_reply = True
         elif answer_check and subject != 'Math' and (answer_check.expected_answer or answer_check.feedback_note or answer_check.status in {'correct', 'incorrect', 'partially_correct'}):
             formatted_reply = _text_answer_check_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = f'deterministic-{subject.lower()}-text-check'
+            special_local_reply = True
+        elif (
+            answer_check
+            and answer_check.is_wrong
+            and subject == 'Math'
+            and next_state.attempt_count >= 3
+            and next_state.problem_kind == 'word_problem'
+            and not next_state.ordered_steps
+        ):
+            final_answer = answer_check.expected_answer or next_state.expected_answer
+            formatted_reply = _word_problem_reveal_reply(answer_check, next_state, current_step)
+            final_state = _finish_single_step_word_problem(
+                next_state,
+                student_answer=transcript,
+                correctness_status=answer_check.status,
+                final_answer=final_answer,
+                revealed=True,
+            )
+            result_provider = 'local'
+            result_model = 'deterministic-voice-word-problem-reveal'
+            special_local_reply = True
+        elif (
+            answer_check
+            and answer_check.is_wrong
+            and subject == 'Math'
+            and next_state.attempt_count >= 3
+            and _is_locked_student_arithmetic_state(next_state)
+        ):
+            final_answer = answer_check.expected_answer or next_state.expected_answer
+            formatted_reply = (
+                "Nice effort. Let's finish this one together.\n\n"
+                f"{_display_math_expression_from_state(next_state, current_step)} = {final_answer}.\n\n"
+                f"**Final answer:** {final_answer}.\n\n"
+                "Would you like another practice question?"
+            )
+            final_state = _finish_with_continuation_choice(
+                next_state,
+                student_answer=transcript,
+                correctness_status=answer_check.status,
+                final_answer=final_answer,
+                origin_problem=next_state.current_question or next_state.active_problem,
+                origin_type=next_state.problem_kind,
+                origin_explanation=f'{_display_math_expression_from_state(next_state, current_step)} = {final_answer}.',
+                revealed=True,
+                memory_note=f'Revealed student arithmetic problem: {next_state.current_question or next_state.active_problem}',
+            )
+            result_provider = 'local'
+            result_model = 'deterministic-voice-student-arithmetic-reveal'
+            special_local_reply = True
         elif (
             answer_check
             and answer_check.is_wrong
@@ -1591,6 +1910,21 @@ class VoiceService:
             formatted_reply = _substep_reveal_continue_reply(answer_check, next_state, current_step)
             result_provider = 'local'
             result_model = 'deterministic-substep-continuity'
+            special_local_reply = True
+        elif subject == 'Math' and (
+            _has_active_student_math_flow(next_state)
+            or next_state.problem_status == 'finished'
+            or next_state.mode == 'awaiting_more_practice_choice'
+        ):
+            final_state = preserve_attempt_progress(tutoring_state, next_state.model_copy(update={
+                'current_subject': subject,
+                'student_answer': transcript,
+                'correctness_status': '',
+            }))
+            formatted_reply = _math_fallback_reply(final_state)
+            result_provider = 'local'
+            result_model = 'deterministic-voice-math-fallback-tight'
+            special_local_reply = True
         else:
             result = await LLMRouter().generate(system=system, user=user, purpose='chat')
             formatted_reply = format_student_reply(result.text)

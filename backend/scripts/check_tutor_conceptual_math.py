@@ -110,7 +110,13 @@ async def _run_endpoint_checks(failures: list[str]) -> None:
 
         correct = await _send('7/8', hint.tutoring_state)
         _expect(correct.model == 'deterministic-conceptual-math-completion', f'Correct conceptual answer used {correct.model}.', failures)
-        _expect(correct.tutoring_state.problem_status == 'idle' and correct.tutoring_state.active_task_id == '', 'Correct conceptual answer did not close the active task.', failures)
+        _expect(
+            correct.tutoring_state.active_task_id == ''
+            and correct.tutoring_state.mode == 'awaiting_more_practice_choice'
+            and correct.tutoring_state.continuation_origin_answer == '7/8',
+            'Correct conceptual answer did not close the active task and enter continuation choice.',
+            failures,
+        )
         _expect(correct.tutoring_state.final_answer == '7/8', 'Correct conceptual answer did not preserve final answer in live state.', failures)
         _expect(
             any(record.status == 'completed' and record.problem_text == state.active_problem and record.final_answer == '7/8' for record in correct.tutoring_state.task_records),

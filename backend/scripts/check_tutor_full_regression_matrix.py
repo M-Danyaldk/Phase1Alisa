@@ -5,6 +5,7 @@ import backend.app.services.tutor_word_problem as word_problem_module
 import backend.app.services.voice_service as voice_module
 from backend.app.models import ChatHistoryItem, ChatRequest, StudentProfile, TutoringState
 from backend.app.services.llm.base import LLMResult
+from backend.app.tutor_math_practice_bank import TutorMathPracticeQuestion
 
 
 class _MemoryChatStore:
@@ -138,6 +139,8 @@ async def _chat_matrix(failures: list[str]) -> None:
     state = TutoringState(current_subject='Math')
 
     started = await _send_chat('-9 + 5', state, history=history)
+    _expect(started.model == 'deterministic-arithmetic_single_step-start', 'Chat bare arithmetic did not enter deterministic student arithmetic flow.', failures)
+    _expect(started.tutoring_state.expected_answer == '-4', 'Chat bare arithmetic did not store the expected answer.', failures)
     history.extend([
         ChatHistoryItem(role='student', content='-9 + 5'),
         ChatHistoryItem(role='msalisia', content=started.reply),
@@ -158,21 +161,67 @@ async def _chat_matrix(failures: list[str]) -> None:
         'Chat corrected negative answer was not accepted cleanly.',
         failures,
     )
+    _expect(corrected.model == 'deterministic-student-arithmetic-completion', 'Chat corrected bare arithmetic answer did not use deterministic completion.', failures)
     _expect('keep the answer hidden' not in corrected.reply.lower(), 'Chat tutor-practice still hid a correct answer.', failures)
+    _expect(corrected.tutoring_state.mode == 'awaiting_more_practice_choice', 'Chat corrected bare arithmetic answer did not enter continuation-choice mode.', failures)
+
+    natural_continue = await _send_chat('tell me another one please', corrected.tutoring_state, history=history)
+    _expect(
+        natural_continue.model == 'deterministic-tutor-math-next-practice'
+        and natural_continue.tutoring_state.mode == 'tutor_practice_question',
+        'Chat natural-language continuation yes did not start the next practice question.',
+        failures,
+    )
+
+    clarify_choice = await _send_chat('maybe', corrected.tutoring_state, history=history)
+    _expect(
+        clarify_choice.model == 'deterministic-tutor-math-practice-choice-clarify'
+        and clarify_choice.tutoring_state.mode == 'awaiting_more_practice_choice',
+        'Chat ambiguous continuation reply did not stay inside continuation-choice clarification.',
+        failures,
+    )
+
+    stop_choice = await _send_chat('no thanks', corrected.tutoring_state, history=history)
+    _expect(
+        stop_choice.model == 'deterministic-tutor-math-practice-close'
+        and stop_choice.tutoring_state.problem_status == 'idle'
+        and stop_choice.tutoring_state.mode == 'solve',
+        'Chat continuation stop did not close the finished practice cleanly.',
+        failures,
+    )
+
+    explain = await _send_chat('why is that right?', corrected.tutoring_state, history=history)
+    _expect(explain.model == 'deterministic-tutor-math-practice-explain', 'Chat continuation explanation did not use deterministic explain flow.', failures)
+    _expect('-9 + 5' in explain.reply and '-4' in explain.reply, 'Chat continuation explanation did not stay grounded in the completed problem.', failures)
+
+    new_problem = await _send_chat('9 + 10', explain.tutoring_state, history=history)
+    _expect(new_problem.model == 'deterministic-arithmetic_single_step-start', 'Chat new problem after continuation explain did not start a fresh arithmetic task.', failures)
+    _expect(new_problem.tutoring_state.expected_answer == '19', 'Chat new problem after continuation explain did not store the new expected answer.', failures)
 
     followup = await _send_chat('Ok now', corrected.tutoring_state, history=history)
     history.extend([
         ChatHistoryItem(role='student', content='Ok now'),
         ChatHistoryItem(role='msalisia', content=followup.reply),
     ])
-    _expect('What is -7 + 3?' in followup.reply, 'Chat follow-up question did not appear.', failures)
+    followup_question = followup.tutoring_state.current_question
+    _expect(
+        followup.model == 'deterministic-tutor-math-next-practice'
+        and bool(followup_question)
+        and followup.tutoring_state.mode == 'tutor_practice_question',
+        'Chat follow-up question did not appear.',
+        failures,
+    )
 
     first_followup = await _send_chat('2', followup.tutoring_state, history=history)
     history.extend([
         ChatHistoryItem(role='student', content='2'),
         ChatHistoryItem(role='msalisia', content=first_followup.reply),
     ])
-    _expect('-7 + 3' in first_followup.reply and '-9 + 5' not in first_followup.reply, 'Chat follow-up answer leaked to the previous problem.', failures)
+    _expect(
+        '-9 + 5' not in first_followup.reply and first_followup.tutoring_state.current_question == followup_question,
+        'Chat follow-up answer leaked to the previous problem.',
+        failures,
+    )
     _expect(first_followup.tutoring_state.attempt_count > 0 or first_followup.tutoring_state.attempts_per_step, 'Chat follow-up answer did not track attempts.', failures)
 
     repaired = await _send_chat('22', first_followup.tutoring_state, history=history)
@@ -273,20 +322,65 @@ async def _voice_matrix(failures: list[str]) -> None:
         failures,
     )
     _expect('keep the answer hidden' not in corrected['assistant_text'].lower(), 'Voice tutor-practice still hid a correct answer.', failures)
+    _expect(corrected['tutoring_state'].mode == 'awaiting_more_practice_choice', 'Voice corrected bare arithmetic answer did not enter continuation-choice mode.', failures)
+
+    natural_continue = await _send_voice(service, 'tell me another one please', corrected['tutoring_state'], history=history)
+    _expect(
+        natural_continue['model'] == 'deterministic-voice-tutor-math-next-practice'
+        and natural_continue['tutoring_state'].mode == 'tutor_practice_question',
+        'Voice natural-language continuation yes did not start the next practice question.',
+        failures,
+    )
+
+    clarify_choice = await _send_voice(service, 'maybe', corrected['tutoring_state'], history=history)
+    _expect(
+        clarify_choice['model'] == 'deterministic-voice-tutor-math-practice-choice-clarify'
+        and clarify_choice['tutoring_state'].mode == 'awaiting_more_practice_choice',
+        'Voice ambiguous continuation reply did not stay inside continuation-choice clarification.',
+        failures,
+    )
+
+    stop_choice = await _send_voice(service, 'no thanks', corrected['tutoring_state'], history=history)
+    _expect(
+        stop_choice['model'] == 'deterministic-voice-tutor-math-practice-close'
+        and stop_choice['tutoring_state'].problem_status == 'idle'
+        and stop_choice['tutoring_state'].mode == 'solve',
+        'Voice continuation stop did not close the finished practice cleanly.',
+        failures,
+    )
+
+    explain = await _send_voice(service, 'why is that right?', corrected['tutoring_state'], history=history)
+    _expect(explain['model'] == 'deterministic-voice-tutor-math-practice-explain', 'Voice continuation explanation did not use deterministic explain flow.', failures)
+    _expect('-9 + 5' in explain['assistant_text'] and '-4' in explain['assistant_text'], 'Voice continuation explanation did not stay grounded in the completed problem.', failures)
+
+    new_problem = await _send_voice(service, '9 + 10', explain['tutoring_state'], history=history)
+    _expect(new_problem['model'] == 'deterministic-arithmetic_single_step-start', 'Voice new problem after continuation explain did not start a fresh arithmetic task.', failures)
+    _expect(new_problem['tutoring_state'].expected_answer == '19', 'Voice new problem after continuation explain did not store the new expected answer.', failures)
 
     followup = await _send_voice(service, 'Ok now', corrected['tutoring_state'], history=history)
     history.extend([
         {'role': 'student', 'content': 'Ok now'},
         {'role': 'msalisia', 'content': followup['assistant_text']},
     ])
-    _expect('What is -7 + 3?' in followup['assistant_text'], 'Voice follow-up question did not appear.', failures)
+    followup_question = followup['tutoring_state'].current_question
+    _expect(
+        followup['model'] == 'deterministic-voice-tutor-math-next-practice'
+        and bool(followup_question)
+        and followup['tutoring_state'].mode == 'tutor_practice_question',
+        'Voice follow-up question did not appear.',
+        failures,
+    )
 
     first_followup = await _send_voice(service, '2', followup['tutoring_state'], history=history)
     history.extend([
         {'role': 'student', 'content': '2'},
         {'role': 'msalisia', 'content': first_followup['assistant_text']},
     ])
-    _expect('-7 + 3' in first_followup['assistant_text'] and '-9 + 5' not in first_followup['assistant_text'], 'Voice follow-up answer leaked to the previous problem.', failures)
+    _expect(
+        '-9 + 5' not in first_followup['assistant_text'] and first_followup['tutoring_state'].current_question == followup_question,
+        'Voice follow-up answer leaked to the previous problem.',
+        failures,
+    )
     _expect(first_followup['tutoring_state'].attempt_count > 0 or first_followup['tutoring_state'].attempts_per_step, 'Voice follow-up answer did not track attempts.', failures)
     repaired = await _send_voice(service, '22', first_followup['tutoring_state'], history=history)
     history.extend([
@@ -348,16 +442,31 @@ async def _voice_matrix(failures: list[str]) -> None:
 
 async def _run() -> list[str]:
     failures: list[str] = []
+    fixed_followup_question = TutorMathPracticeQuestion(
+        id='full-regression-fixed-followup',
+        grade=6,
+        topic='integer operations',
+        skill='integer addition',
+        question='What is 5 - 9?',
+        expected_answer='-4',
+        accepted_answers=('-4',),
+        hint_1='Think about starting at 5 and moving back 9.',
+        hint_2='5 - 9 lands 4 below zero.',
+        worked_explanation='5 - 9 = -4.',
+        difficulty='quick',
+    )
     originals = {
         'main_require_child_access': main_module.require_child_access,
         'main_ChatStore': main_module.ChatStore,
         'main_LearningProfileService': main_module.LearningProfileService,
         'main_LearningMemoryService': main_module.LearningMemoryService,
         'main_LLMRouter': main_module.LLMRouter,
+        'main_select_tutor_math_question': main_module.select_tutor_math_question,
         'voice_ChatStore': voice_module.ChatStore,
         'voice_LearningProfileService': voice_module.LearningProfileService,
         'voice_LearningMemoryService': voice_module.LearningMemoryService,
         'voice_LLMRouter': voice_module.LLMRouter,
+        'voice_select_tutor_math_question': voice_module.select_tutor_math_question,
         'word_problem_LLMRouter': word_problem_module.LLMRouter,
     }
     main_module.require_child_access = _fake_access
@@ -365,10 +474,12 @@ async def _run() -> list[str]:
     main_module.LearningProfileService = _LearningProfile
     main_module.LearningMemoryService = _LearningMemory
     main_module.LLMRouter = _Router
+    main_module.select_tutor_math_question = lambda *args, **kwargs: fixed_followup_question
     voice_module.ChatStore = _MemoryChatStore
     voice_module.LearningProfileService = _LearningProfile
     voice_module.LearningMemoryService = _LearningMemory
     voice_module.LLMRouter = _Router
+    voice_module.select_tutor_math_question = lambda *args, **kwargs: fixed_followup_question
     word_problem_module.LLMRouter = _WordProblemRouter
     _MemoryChatStore.thread_count = 0
     try:
@@ -380,10 +491,12 @@ async def _run() -> list[str]:
         main_module.LearningProfileService = originals['main_LearningProfileService']
         main_module.LearningMemoryService = originals['main_LearningMemoryService']
         main_module.LLMRouter = originals['main_LLMRouter']
+        main_module.select_tutor_math_question = originals['main_select_tutor_math_question']
         voice_module.ChatStore = originals['voice_ChatStore']
         voice_module.LearningProfileService = originals['voice_LearningProfileService']
         voice_module.LearningMemoryService = originals['voice_LearningMemoryService']
         voice_module.LLMRouter = originals['voice_LLMRouter']
+        voice_module.select_tutor_math_question = originals['voice_select_tutor_math_question']
         word_problem_module.LLMRouter = originals['word_problem_LLMRouter']
     return failures
 

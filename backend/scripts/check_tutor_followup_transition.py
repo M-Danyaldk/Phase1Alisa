@@ -4,6 +4,7 @@ import backend.app.main as main_module
 import backend.app.services.tutor_word_problem as word_problem_module
 from backend.app.models import ChatHistoryItem, ChatRequest, StudentProfile, TutoringState
 from backend.app.services.llm.base import LLMResult
+from backend.app.tutor_math_practice_bank import TutorMathPracticeQuestion
 
 
 class _MemoryChatStore:
@@ -89,6 +90,19 @@ async def _send(message: str, history: list[ChatHistoryItem], state: TutoringSta
 
 async def _run() -> list[str]:
     failures: list[str] = []
+    fixed_followup_question = TutorMathPracticeQuestion(
+        id='regression-fixed-followup',
+        grade=6,
+        topic='integer operations',
+        skill='integer addition',
+        question='What is 5 - 9?',
+        expected_answer='-4',
+        accepted_answers=('-4',),
+        hint_1='Think about starting at 5 and moving back 9.',
+        hint_2='5 - 9 lands 4 below zero.',
+        worked_explanation='5 - 9 = -4.',
+        difficulty='quick',
+    )
     originals = {
         'require_child_access': main_module.require_child_access,
         'ChatStore': main_module.ChatStore,
@@ -96,6 +110,7 @@ async def _run() -> list[str]:
         'LearningMemoryService': main_module.LearningMemoryService,
         'LLMRouter': main_module.LLMRouter,
         'WordProblemLLMRouter': word_problem_module.LLMRouter,
+        'select_tutor_math_question': main_module.select_tutor_math_question,
     }
     main_module.require_child_access = _fake_access
     main_module.ChatStore = _MemoryChatStore
@@ -103,6 +118,7 @@ async def _run() -> list[str]:
     main_module.LearningMemoryService = _LearningMemory
     main_module.LLMRouter = _Router
     word_problem_module.LLMRouter = _WordProblemRouter
+    main_module.select_tutor_math_question = lambda *args, **kwargs: fixed_followup_question
 
     try:
         history = [
@@ -137,9 +153,12 @@ async def _run() -> list[str]:
             ChatHistoryItem(role='msalisia', content=followup.reply),
         ])
 
+        followup_question = followup.tutoring_state.current_question
         _expect(
-            'What is -7 + 3?' in followup.reply,
-            'Follow-up prompt did not ask the expected quick practice question.',
+            followup.model == 'deterministic-tutor-math-next-practice'
+            and bool(followup_question)
+            and followup.tutoring_state.mode == 'tutor_practice_question',
+            'Follow-up prompt did not enter the next-practice question flow.',
             failures,
         )
 
@@ -150,7 +169,8 @@ async def _run() -> list[str]:
         ])
 
         _expect(
-            '-7 + 3' in first_followup_answer.reply and '-9 + 5' not in first_followup_answer.reply,
+            '-9 + 5' not in first_followup_answer.reply
+            and first_followup_answer.tutoring_state.current_question == followup_question,
             'First answer after the follow-up question leaked back to the earlier problem instead of the new practice question.',
             failures,
         )

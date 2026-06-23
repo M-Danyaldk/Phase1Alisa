@@ -329,12 +329,16 @@ def _clear_live_task_state(state: TutoringState) -> TutoringState:
         or state.mode in {'safety_support', 'emotional_support'}
         or state.status == 'waiting_for_trusted_adult'
     )
+    preserve_continuation_control = bool(
+        state.mode == 'awaiting_more_practice_choice'
+        and state.status == 'waiting_for_student'
+    )
     update = {
         field: getattr(defaults, field)
         for field in TASK_SNAPSHOT_FIELDS
         if field != 'current_subject'
     }
-    if preserve_support_control:
+    if preserve_support_control or preserve_continuation_control:
         update.update({
             'mode': state.mode,
             'status': state.status,

@@ -30,6 +30,7 @@ REQUIRED_FLOW_CHECKS = [
     'check_tutor_answer_attempt_feedback',
     'check_tutor_flow_alignment',
     'check_tutor_progressive_hints',
+    'check_tutor_fallback_tightening',
     'check_tutor_word_problem_schema',
     'check_tutor_interpretation_schema',
     'check_tutor_semantic_interpreter',

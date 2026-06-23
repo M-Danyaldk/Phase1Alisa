@@ -224,9 +224,12 @@ async def _run() -> list[str]:
             {'role': 'student', 'content': 'Ok now'},
             {'role': 'msalisia', 'content': voice_followup['assistant_text']},
         ])
+        followup_question = voice_followup['tutoring_state'].current_question
         _expect(
-            'What is -7 + 3?' in voice_followup['assistant_text'],
-            'Voice follow-up prompt did not ask the expected quick practice question.',
+            voice_followup['model'] == 'deterministic-voice-tutor-math-next-practice'
+            and bool(followup_question)
+            and voice_followup['tutoring_state'].mode == 'tutor_practice_question',
+            'Voice follow-up prompt did not start a fresh next-practice question cleanly.',
             failures,
         )
 
@@ -236,7 +239,8 @@ async def _run() -> list[str]:
             {'role': 'msalisia', 'content': first_followup_voice['assistant_text']},
         ])
         _expect(
-            '-7 + 3' in first_followup_voice['assistant_text'] and '-9 + 5' not in first_followup_voice['assistant_text'],
+            first_followup_voice['tutoring_state'].current_question == followup_question
+            and '-9 + 5' not in first_followup_voice['assistant_text'],
             'Voice first answer after the follow-up question leaked back to the earlier problem.',
             failures,
         )

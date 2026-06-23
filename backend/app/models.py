@@ -142,6 +142,10 @@ class TutoringState(BaseModel):
     return_step_index: int = 0
     return_step_id: str = ''
     final_answer: str = ''
+    continuation_origin_problem: str = ''
+    continuation_origin_answer: str = ''
+    continuation_origin_type: str = ''
+    continuation_origin_explanation: str = ''
     problem_status: str = 'idle'
     mode: str = 'solve'
     status: str = 'idle'
