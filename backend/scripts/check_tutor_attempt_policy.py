@@ -58,6 +58,7 @@ def main() -> None:
     first_reply, _ = _tutor_practice_answer_reply(first, 'wrong one', wrong_check, '')
     second_reply, _ = _tutor_practice_answer_reply(second, 'wrong two', wrong_check, '')
     third_reply, _ = _tutor_practice_answer_reply(third, 'wrong three', wrong_check, '')
+    _expect(first_reply.startswith('Good try.'), 'Practice first wrong answer did not acknowledge the child attempt before the hint.', failures)
     _expect(question.expected_answer not in first_reply, 'Practice first hint revealed the answer.', failures)
     _expect(question.expected_answer not in second_reply, 'Practice second hint revealed the answer.', failures)
     _expect(question.expected_answer in third_reply, 'Practice third attempt did not reveal the answer.', failures)

@@ -163,6 +163,17 @@ async def _run() -> list[str]:
                 'content': "Hey Sajjad! How are you doing today? Before we dive in, I'll ask one quick Math question so I know how to help.",
             }],
         )
+        practice_to_student_voice = await _turn(
+            service,
+            'There are 3 boxes with 2 balls in each box. How many balls are there?',
+            voice_practice['tutoring_state'],
+        )
+        aligned_voice_state = practice_to_student_voice['tutoring_state']
+        _expect(practice_to_student_voice['model'] == 'deterministic-voice-structured-word-problem', 'Voice tutor-practice to student-entered word problem did not use the structured Math path.', failures)
+        _expect(aligned_voice_state.problem_status != 'tutor_practice' and aligned_voice_state.mode != 'tutor_practice_question', 'Voice student-entered problem stayed trapped in tutor-practice mode.', failures)
+        _expect(aligned_voice_state.current_question != voice_practice['tutoring_state'].current_question, 'Voice student-entered problem kept the old tutor-practice question active.', failures)
+        _expect(aligned_voice_state.tutor_practice_question_id == '' and not aligned_voice_state.tutor_practice_hint_1 and not aligned_voice_state.tutor_practice_explanation, 'Voice student-entered problem kept tutor-practice metadata after switching flows.', failures)
+        _expect(aligned_voice_state.expected_answer == '6', 'Voice student-entered problem did not store its own expected answer after leaving tutor practice.', failures)
         if voice_practice['tutoring_state'].current_question == 'What is -9 + 5?':
             wrong_voice_practice = await _turn(service, '4', voice_practice['tutoring_state'])
             corrected_voice_practice = await _turn(service, '-4', wrong_voice_practice['tutoring_state'])

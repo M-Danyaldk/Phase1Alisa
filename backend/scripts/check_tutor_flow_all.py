@@ -4,11 +4,15 @@ from backend.scripts.check_tutor_edge_matrix import main as tutor_edge_matrix_ma
 from backend.scripts.check_tutor_intent_routing import main as tutor_intent_routing_main
 from backend.scripts.check_tutor_task_lifecycle import main as tutor_task_lifecycle_main
 from backend.scripts.check_tutor_attempt_policy import main as tutor_attempt_policy_main
+from backend.scripts.check_tutor_answer_attempt_feedback import main as tutor_answer_attempt_feedback_main
+from backend.scripts.check_tutor_flow_alignment import main as tutor_flow_alignment_main
+from backend.scripts.check_tutor_followup_transition import main as tutor_followup_transition_main
 from backend.scripts.check_tutor_word_problem_schema import main as tutor_word_problem_schema_main
 from backend.scripts.check_tutor_emotional_support import main as tutor_emotional_support_main
 from backend.scripts.check_tutor_math_response_guard import main as tutor_math_response_guard_main
 from backend.scripts.check_tutor_math_e2e import main as tutor_math_e2e_main
 from backend.scripts.check_tutor_voice_parity import main as tutor_voice_parity_main
+from backend.scripts.check_tutor_full_regression_matrix import main as tutor_full_regression_matrix_main
 from backend.scripts.check_tutor_generated_invariants import main as tutor_generated_invariants_main
 from backend.scripts.check_tutor_interpretation_schema import main as tutor_interpretation_schema_main
 from backend.scripts.check_tutor_semantic_interpreter import main as tutor_semantic_interpreter_main
@@ -44,6 +48,15 @@ def main() -> None:
     print('Running tutor attempt policy check...')
     tutor_attempt_policy_main()
     print('')
+    print('Running tutor answer-attempt feedback check...')
+    tutor_answer_attempt_feedback_main()
+    print('')
+    print('Running tutor flow-alignment check...')
+    tutor_flow_alignment_main()
+    print('')
+    print('Running tutor follow-up transition check...')
+    tutor_followup_transition_main()
+    print('')
     print('Running tutor progressive-hint check...')
     tutor_progressive_hints_main()
     print('')
@@ -76,6 +89,9 @@ def main() -> None:
     print('')
     print('Running tutor voice-parity check...')
     tutor_voice_parity_main()
+    print('')
+    print('Running tutor full regression matrix check...')
+    tutor_full_regression_matrix_main()
     print('')
     print('Running tutor generated-invariant check...')
     tutor_generated_invariants_main()

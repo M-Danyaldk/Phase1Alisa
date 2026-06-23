@@ -11,11 +11,16 @@ TutorIntent = Literal[
     'greeting',
     'acknowledge',
     'answer_current_step',
+    'continuation_yes',
+    'continuation_no',
     'new_problem',
     'related_question',
+    'side_question',
     'request_hint',
+    'stronger_hint_request',
     'request_explanation',
     'request_example',
+    'clarify_prompt',
     'continue_current',
     'switch_problem',
     'confirm_switch',
@@ -73,6 +78,18 @@ MathOperation = Literal[
     'unknown',
 ]
 ProblemKind = Literal['expression', 'word_problem', 'conceptual', 'geometry', 'measurement', 'data', 'unknown']
+QuestionType = Literal[
+    'arithmetic_single_step',
+    'arithmetic_multi_step',
+    'fraction_comparison',
+    'equivalent_fraction',
+    'conceptual_math',
+    'word_problem',
+    'continuation_choice',
+    'side_question',
+    'emotion_support',
+    'unknown',
+]
 QuantityRole = Literal[
     'given',
     'unknown',
@@ -173,6 +190,7 @@ class TutorInputInterpretation(StrictTutorSchema):
     answer: str | None = Field(default=None, max_length=240)
     normalized_expression: str | None = None
     problem: StructuredMathProblem | None = None
+    question_type: QuestionType | None = None
     refers_to_task: TaskReference
     requested_action: RequestedAction
     emotion: str | None = Field(default=None, max_length=60)
@@ -193,10 +211,16 @@ class TutorInputInterpretation(StrictTutorSchema):
             raise ValueError('A new or switched problem requires an expression or structured problem.')
         if self.intent == 'request_hint' and self.requested_action != 'give_hint':
             raise ValueError('A hint intent must request the give_hint action.')
+        if self.intent == 'stronger_hint_request' and self.requested_action != 'give_hint':
+            raise ValueError('A stronger hint intent must request the give_hint action.')
         if self.intent == 'request_explanation' and self.requested_action != 'explain':
             raise ValueError('An explanation intent must request the explain action.')
         if self.intent == 'request_example' and self.requested_action != 'give_example':
             raise ValueError('An example intent must request the give_example action.')
+        if self.intent == 'clarify_prompt' and self.requested_action != 'clarify':
+            raise ValueError('A clarify-prompt intent must request clarification help.')
+        if self.intent in {'continuation_yes', 'continuation_no'} and self.requested_action != 'continue':
+            raise ValueError('Continuation-choice intents must request a continue action.')
         if self.intent == 'emotion' and not self.emotion:
             raise ValueError('An emotion intent requires an emotion label.')
         if self.intent != 'emotion' and self.emotion is not None:
@@ -207,7 +231,9 @@ class TutorInputInterpretation(StrictTutorSchema):
             raise ValueError('Clarification requires one student-facing question.')
         if not self.needs_clarification and self.clarification_question is not None:
             raise ValueError('A clarification question cannot be supplied when clarification is false.')
-        if self.intent in {'greeting', 'acknowledge', 'continue_current', 'pause', 'resume'}:
+        if self.intent in {'greeting', 'acknowledge', 'continue_current', 'pause', 'resume', 'continuation_yes', 'continuation_no'}:
             if self.answer is not None or self.normalized_expression is not None or self.problem is not None:
                 raise ValueError('Conversation-control intents cannot carry answer or problem payloads.')
+        if self.question_type == 'continuation_choice' and self.intent not in {'continuation_yes', 'continuation_no', 'unclear'}:
+            raise ValueError('Continuation-choice question type must use continuation intent labels or unclear.')
         return self

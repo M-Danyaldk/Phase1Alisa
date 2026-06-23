@@ -111,6 +111,7 @@ class LLMRouter:
         confidence = 'low'
         answer = None
         expression = None
+        question_type = self._extract_labeled_value(user, 'Current question type').strip() or None
         refers_to_task = 'unknown'
         requested_action = 'clarify'
         needs_clarification = True
@@ -150,6 +151,7 @@ class LLMRouter:
             'answer': answer,
             'normalized_expression': expression,
             'problem': None,
+            'question_type': question_type,
             'refers_to_task': refers_to_task,
             'requested_action': requested_action,
             'emotion': None,

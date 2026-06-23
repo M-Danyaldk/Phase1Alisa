@@ -4,6 +4,7 @@ import re
 from ..models import ChatHistoryItem, TutoringState
 from ..schemas.tutor_interpretation import TutorInputInterpretation
 from .llm.router import LLMRouter
+from .tutor_question_type_router import infer_active_question_type
 
 
 def _history_role(item: ChatHistoryItem | dict) -> str:
@@ -31,6 +32,7 @@ class TutorSemanticInterpreter:
         history: list[ChatHistoryItem],
         state: TutoringState,
     ) -> TutorInputInterpretation:
+        active_question_type = infer_active_question_type(state)
         system = (
             'You are a strict tutor input interpreter for Grades 3-6. '
             'Return one JSON object only. It must validate against the supplied JSON schema. '
@@ -45,6 +47,7 @@ class TutorSemanticInterpreter:
             f'Current tutor subject: {subject}\n'
             f'Active task: {state.active_problem or state.main_problem or "none"}\n'
             f'Current step: {state.current_question or state.current_step or "none"}\n'
+            f'Current question type: {active_question_type}\n'
             f'Paused task available: {"yes" if state.paused_main_problem or any(record.status == "paused" for record in state.task_records) else "no"}\n'
             f'Recent history:\n{recent_history or "none"}\n'
             f'Student message: {message}'
@@ -52,6 +55,7 @@ class TutorSemanticInterpreter:
         try:
             result = await self.router.generate(system=system, user=user, purpose='classifier')
             parsed = self._extract_json(result.text)
+            parsed.setdefault('question_type', active_question_type if active_question_type != 'unknown' else None)
             return TutorInputInterpretation.model_validate(parsed)
         except Exception:
             return self.safe_unclear()
@@ -63,6 +67,7 @@ class TutorSemanticInterpreter:
             answer=None,
             normalized_expression=None,
             problem=None,
+            question_type=None,
             refers_to_task='unknown',
             requested_action='clarify',
             emotion=None,

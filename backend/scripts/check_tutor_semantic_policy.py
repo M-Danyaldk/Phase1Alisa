@@ -12,6 +12,7 @@ def _payload(**updates) -> TutorInputInterpretation:
         'answer': '78',
         'normalized_expression': None,
         'problem': None,
+        'question_type': None,
         'refers_to_task': 'active_task',
         'requested_action': 'check_answer',
         'emotion': None,
@@ -122,6 +123,42 @@ def main() -> None:
         interpretation_note='Student asked for a hint.',
     ), TutoringState(current_subject='Math'))
     _expect(hint_no_task.needs_clarification and not hint_no_task.allowed, 'Hint request without an active task was allowed.', failures)
+
+    continuation_yes = policy.resolve(_payload(
+        intent='continuation_yes',
+        answer=None,
+        question_type='continuation_choice',
+        requested_action='continue',
+        interpretation_note='Student wants another practice question.',
+    ), TutoringState(
+        current_subject='Math',
+        mode='awaiting_more_practice_choice',
+        status='waiting_for_student',
+        problem_status='finished',
+    ))
+    _expect(continuation_yes.label == 'continue_current' and continuation_yes.allowed, 'Continuation yes was not allowed through the policy.', failures)
+
+    stronger_hint = policy.resolve(_payload(
+        intent='stronger_hint_request',
+        answer=None,
+        question_type='conceptual_math',
+        requested_action='give_hint',
+        interpretation_note='Student asked for a stronger hint.',
+    ), active)
+    _expect(stronger_hint.label == 'help_request' and stronger_hint.allowed, 'Stronger hint request was not mapped into help routing.', failures)
+
+    continuation_without_prompt = policy.resolve(_payload(
+        intent='continuation_yes',
+        answer=None,
+        question_type='continuation_choice',
+        requested_action='continue',
+        interpretation_note='Student wants another practice question.',
+    ), active)
+    _expect(
+        continuation_without_prompt.label == 'clarification_about_context' and not continuation_without_prompt.allowed,
+        'Continuation intent was allowed without an active continuation-choice prompt.',
+        failures,
+    )
 
     if failures:
         print('Tutor semantic policy check failed:')

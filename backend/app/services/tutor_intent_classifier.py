@@ -19,6 +19,7 @@ from ..tutoring_logic import (
 )
 from ..assessment_validation import normalize_word_numbers_in_text
 from .tutor_semantic_interpreter import TutorSemanticInterpreter
+from .tutor_question_type_router import infer_active_question_type
 from .tutor_semantic_policy import TutorSemanticPolicy
 
 INTENT_LABELS = {
@@ -26,11 +27,16 @@ INTENT_LABELS = {
     'acknowledge',
     'continue_current',
     'answer_current_step',
+    'continuation_yes',
+    'continuation_no',
     'related_question',
     'new_problem',
+    'side_question',
     'switch_request',
     'topic_switch',
     'help_request',
+    'stronger_hint_request',
+    'clarify_prompt',
     'emotion',
     'pause',
     'resume',
@@ -110,6 +116,7 @@ class IntentClassificationResult(BaseModel):
     confidence: str = 'low'
     reason: str = ''
     emotion: str = ''
+    question_type: str = ''
     requested_topic: str = ''
     answer: str = ''
     normalized_expression: str = ''
@@ -141,129 +148,199 @@ class TutorIntentClassifier:
         state: TutoringState,
     ) -> IntentClassificationResult:
         text = _normalized(message)
+        question_type = infer_active_question_type(state)
         if not text:
             return IntentClassificationResult()
 
+        if question_type == 'continuation_choice':
+            if self._is_continuation_yes(text):
+                return self._result(
+                    label='continuation_yes',
+                    confidence='high',
+                    reason='Student accepted the continuation-choice prompt.',
+                    question_type=question_type,
+                    requested_action='continue',
+                    refers_to_task='active_task',
+                )
+            if self._is_continuation_no(text):
+                return self._result(
+                    label='continuation_no',
+                    confidence='high',
+                    reason='Student declined the continuation-choice prompt.',
+                    question_type=question_type,
+                    requested_action='continue',
+                    refers_to_task='active_task',
+                )
+
         if self._is_greeting(text):
-            return IntentClassificationResult(
+            return self._result(
                 label='greeting',
                 confidence='high',
                 reason='Student greeted the tutor rather than answering a learning question.',
+                question_type=question_type,
             )
 
         if self._is_acknowledgement(text):
-            return IntentClassificationResult(
+            return self._result(
                 label='acknowledge',
                 confidence='high',
                 reason='Student acknowledged the tutor without submitting an answer.',
+                question_type=question_type,
             )
 
         emotion = self._detected_emotion(text)
         if emotion:
-            return IntentClassificationResult(
+            return self._result(
                 label='emotion',
                 confidence='high',
                 reason='Student expressed an emotional state rather than submitting an answer.',
                 emotion=emotion,
+                question_type=question_type,
             )
 
         if self._is_pause_request(text):
-            return IntentClassificationResult(
+            return self._result(
                 label='pause',
                 confidence='high',
                 reason='Student asked to pause or take a break.',
+                question_type=question_type,
+                requested_action='pause',
             )
 
         if self._is_continue_request(text) and not self._has_paused_task(state):
-            return IntentClassificationResult(
+            return self._result(
                 label='continue_current',
                 confidence='high',
                 reason='Student asked to continue the current active task.',
+                question_type=question_type,
+                requested_action='continue',
+                refers_to_task='active_task',
             )
 
         if self._is_resume_request(text):
-            return IntentClassificationResult(
+            return self._result(
                 label='resume',
                 confidence='high',
                 reason='Student asked to resume a saved task.',
+                question_type=question_type,
+                requested_action='resume',
+                refers_to_task='paused_task',
             )
 
         requested_topic = self._requested_math_topic(subject, text)
         if requested_topic:
-            return IntentClassificationResult(
+            return self._result(
                 label='topic_switch',
                 confidence='high',
                 reason='Student clearly requested a different Math topic.',
                 requested_topic=requested_topic,
+                question_type=question_type,
+                requested_action='switch',
+                refers_to_task='new_task',
             )
 
         if detect_explicit_subject_switch(message) or detect_switch_task_intent(message):
-            return IntentClassificationResult(
+            return self._result(
                 label='switch_request',
                 confidence='high',
                 reason='Student clearly asked to switch the current task.',
+                question_type=question_type,
+                requested_action='switch',
+                refers_to_task='new_task',
             )
 
         if detect_tutor_concern_intent(message) or re.search(
             r'\b(you already|wrong question|that was wrong|you changed|you forgot|not what i asked)\b',
             text,
         ):
-            return IntentClassificationResult(
+            return self._result(
                 label='meta_feedback',
                 confidence='high',
                 reason='Student is commenting on the tutor or the conversation flow.',
+                question_type=question_type,
             )
 
         if detect_context_clarification_intent(message):
-            return IntentClassificationResult(
+            return self._result(
                 label='clarification_about_context',
                 confidence='high',
                 reason='Student is clarifying which task the conversation is about.',
+                question_type=question_type,
+                requested_action='clarify',
             )
 
         if detect_homework_or_skip_intent(message):
-            return IntentClassificationResult(
+            return self._result(
                 label='help_request',
                 confidence='high',
                 reason='Student requested homework help or asked to skip the current check.',
+                question_type=question_type,
+                requested_action='give_hint',
+                refers_to_task='active_task',
             )
 
         if detect_definition_intent(message):
-            return IntentClassificationResult(
+            return self._result(
                 label='related_question',
                 confidence='high',
                 reason='Student asked for a definition or explanation.',
+                question_type=question_type,
+                requested_action='explain',
+                refers_to_task='active_task',
+            )
+
+        if self._is_stronger_hint_request(text):
+            return self._result(
+                label='stronger_hint_request',
+                confidence='high',
+                reason='Student explicitly asked for another or stronger hint.',
+                question_type=question_type,
+                requested_action='give_hint',
+                refers_to_task='active_task',
             )
 
         if self._is_help_request(text):
-            return IntentClassificationResult(
+            return self._result(
                 label='help_request',
                 confidence='high',
                 reason='Student asked for help rather than submitting an answer.',
+                question_type=question_type,
+                requested_action='give_hint',
+                refers_to_task='active_task',
             )
 
         if self._looks_like_related_question(text, state):
-            return IntentClassificationResult(
+            return self._result(
                 label='related_question',
                 confidence='high',
                 reason='Student asked why or how the current Math step works.',
+                question_type=question_type,
+                requested_action='explain',
+                refers_to_task='active_task',
             )
 
         if self._looks_like_word_problem(text):
-            return IntentClassificationResult(
+            return self._result(
                 label='new_problem',
                 confidence='high',
                 reason='Student supplied a new text-based Math problem.',
+                question_type=question_type,
+                requested_action='solve',
+                refers_to_task='new_task',
             )
 
         if _has_unfinished_main_problem(state) and _looks_like_answer_to_current_math_step(
             message,
             state.current_question or state.current_step,
         ):
-            return IntentClassificationResult(
+            return self._result(
                 label='answer_current_step',
                 confidence='high',
                 reason='Student supplied a likely answer to the active step.',
+                question_type=question_type,
+                requested_action='check_answer',
+                refers_to_task='active_task',
+                answer=message.strip(),
             )
 
         return IntentClassificationResult()
@@ -276,9 +353,10 @@ class TutorIntentClassifier:
         state: TutoringState,
     ) -> bool:
         text = _normalized(message)
+        active_question_type = infer_active_question_type(state)
         if not text:
             return False
-        if not _has_unfinished_main_problem(state):
+        if not self._has_semantic_context(state, active_question_type):
             return False
         if detect_explicit_subject_switch(message):
             return False
@@ -339,6 +417,9 @@ class TutorIntentClassifier:
         if word_number_answer:
             return True
         return False
+
+    def _result(self, **updates) -> IntentClassificationResult:
+        return IntentClassificationResult(**updates)
 
     async def classify_if_needed(
         self,
@@ -535,10 +616,33 @@ class TutorIntentClassifier:
             text,
         ))
 
+    def _is_stronger_hint_request(self, text: str) -> bool:
+        return bool(re.search(
+            r'^(?:another|one more|stronger|better|bigger)\s+hint\b|^(?:give me|show me)\s+(?:another|one more|a stronger|more)\s+hint\b|^more help\b',
+            text,
+        ))
+
+    def _is_continuation_yes(self, text: str) -> bool:
+        return bool(re.fullmatch(
+            r'(?:yes|yeah|yep|sure|okay|ok|please do|continue|go ahead|another one|one more|more|yes please|sure please|ok yes|okay yes|keep going)[!. ]*',
+            text,
+        ))
+
+    def _is_continuation_no(self, text: str) -> bool:
+        return bool(re.fullmatch(
+            r'(?:no|no thanks|not now|stop|i am done|i\'m done|im done|maybe later|not today)[!. ]*',
+            text,
+        ))
+
     def _looks_like_related_question(self, text: str, state: TutoringState) -> bool:
         if not _has_unfinished_main_problem(state):
             return False
         return bool(re.match(r'^(why|how|what do you mean|where did|how did|why do|why did)\b', text))
+
+    def _has_semantic_context(self, state: TutoringState, active_question_type: str) -> bool:
+        if active_question_type in {'continuation_choice', 'side_question', 'emotion_support'}:
+            return True
+        return _has_unfinished_main_problem(state)
 
     def _looks_like_word_problem(self, text: str) -> bool:
         numbers = re.findall(r'\d+(?:\.\d+)?', text)
@@ -578,6 +682,7 @@ class TutorIntentClassifier:
             confidence=decision.confidence,
             reason=decision.reason,
             emotion=interpretation.emotion or '',
+            question_type=decision.question_type,
             answer=decision.answer,
             normalized_expression=decision.normalized_expression,
             requested_action=decision.requested_action,

@@ -66,6 +66,8 @@ async def main() -> None:
         results[message] = result
         _expect(result.label == expected_label, f'{message!r} classified as {result.label!r}, expected {expected_label!r}.', failures)
 
+    _expect(results['66'].question_type == 'arithmetic_single_step', 'Numeric answer did not preserve the active arithmetic question type.', failures)
+    _expect(results['66'].requested_action == 'check_answer', 'Numeric answer did not preserve the check-answer action.', failures)
     _expect(results['I want to learn fractions'].requested_topic == 'fraction', 'Fraction topic request did not preserve its requested topic.', failures)
     _expect(results['fractions'].requested_topic == 'fraction', 'Bare fraction topic did not normalize to fraction.', failures)
     _expect(results['frction'].requested_topic == 'fraction', 'Misspelled fraction topic did not normalize to fraction.', failures)
@@ -137,6 +139,27 @@ async def main() -> None:
     _expect(lcm_state.current_question == 'What is the LCM of 3 and 4?', 'LCM topic lesson did not store the starter question.', failures)
     _expect(lcm_state.expected_answer == '12', 'LCM topic lesson did not store the expected answer.', failures)
     _expect('LCM means Least Common Multiple' in lcm_reply, 'LCM topic reply did not include the mini explanation.', failures)
+
+    stronger_hint = await classifier.classify_if_needed('Math', 'another hint please', history, state)
+    _expect(stronger_hint.label == 'stronger_hint_request', 'Explicit stronger-hint request was not separated from general help.', failures)
+    _expect(stronger_hint.requested_action == 'give_hint', 'Stronger-hint request did not preserve the hint action.', failures)
+    _expect(stronger_hint.question_type == 'arithmetic_single_step', 'Stronger-hint request lost the active question type.', failures)
+
+    continuation_state = TutoringState(
+        current_subject='Math',
+        mode='awaiting_more_practice_choice',
+        status='waiting_for_student',
+        problem_status='finished',
+        tutor_practice_topic='fractions',
+    )
+    continuation_history = [ChatHistoryItem(role='msalisia', content='Would you like another practice question?')]
+    continuation_yes = await classifier.classify_if_needed('Math', 'yes please', continuation_history, continuation_state)
+    continuation_no = await classifier.classify_if_needed('Math', 'no thanks', continuation_history, continuation_state)
+    _expect(continuation_yes.label == 'continuation_yes', 'Continuation yes was not routed from the active continuation prompt.', failures)
+    _expect(continuation_no.label == 'continuation_no', 'Continuation no was not routed from the active continuation prompt.', failures)
+    _expect(continuation_yes.question_type == 'continuation_choice', 'Continuation yes did not preserve continuation question type.', failures)
+    _expect(continuation_yes.requested_action == 'continue', 'Continuation yes did not preserve continue action.', failures)
+    _expect(not _should_grade_tutor_practice(continuation_state, continuation_yes.label), 'Continuation reply was incorrectly allowed into tutor-practice grading.', failures)
 
     if failures:
         print('Tutor intent routing check failed:')

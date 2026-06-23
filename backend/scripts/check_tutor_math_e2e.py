@@ -99,6 +99,14 @@ async def _run() -> list[str]:
         _expect(topic_state.expected_answer == '1/4', 'Topic-start did not store the expected answer.', failures)
         _expect(topic_state.attempt_count == 0, 'Topic-start counted the topic request as an answer attempt.', failures)
 
+        practice_to_student_problem = await _send('There are 3 boxes with 2 balls in each box. How many balls are there?', topic_state)
+        aligned_state = practice_to_student_problem.tutoring_state
+        _expect(practice_to_student_problem.model == 'deterministic-structured-word-problem', 'Tutor-practice to student-entered word problem did not use the structured Math path.', failures)
+        _expect(aligned_state.problem_status != 'tutor_practice' and aligned_state.mode != 'tutor_practice_question', 'Student-entered problem stayed trapped in tutor-practice mode.', failures)
+        _expect(aligned_state.current_question != topic_state.current_question, 'Student-entered problem kept the old tutor-practice question active.', failures)
+        _expect(aligned_state.tutor_practice_question_id == '' and not aligned_state.tutor_practice_hint_1 and not aligned_state.tutor_practice_explanation, 'Student-entered problem kept tutor-practice metadata after switching flows.', failures)
+        _expect(aligned_state.expected_answer == '6', 'Student-entered problem did not store its own expected answer after leaving tutor practice.', failures)
+
         practice_hint_1 = await _send('give me a hint', topic_state)
         practice_hint_2 = await _send("I still don't understand", practice_hint_1.tutoring_state)
         practice_wrong = await _send('2/4', practice_hint_2.tutoring_state)

@@ -68,6 +68,66 @@ def main() -> None:
     division_second_text, _ = build_progressive_hint_reply(division_first, help_request=True)
     _expect('4 × ? = 36' in division_second_text, 'Division strategy did not use inverse multiplication.', failures)
 
+    fraction_compare = start_task(
+        TutoringState(
+            current_subject='Math',
+            active_problem='Which is larger: 7/8 or 5/8?',
+            current_step='Which is larger: 7/8 or 5/8?',
+            current_question='Which is larger: 7/8 or 5/8?',
+            expected_answer='7/8',
+            skill='fraction comparison',
+            tutor_practice_topic='equivalent fractions and decimals',
+            problem_status='tutor_practice',
+            mode='tutor_practice_question',
+            status='waiting_for_student',
+        ),
+        'Which is larger: 7/8 or 5/8?',
+        subject='Math',
+    )
+    fraction_text_1, fraction_state_1 = build_progressive_hint_reply(fraction_compare, help_request=True)
+    fraction_text_2, _ = build_progressive_hint_reply(fraction_state_1, help_request=True)
+    _expect('same denominator' in fraction_text_1.lower() or 'numerator' in fraction_text_1.lower(), 'Fraction-comparison first hint was not route-aware.', failures)
+    _expect('7 or 5' in fraction_text_2 or '7/8' in fraction_text_2, 'Fraction-comparison stronger hint did not stay grounded in the actual choices.', failures)
+
+    equivalent = start_task(
+        TutoringState(
+            current_subject='Math',
+            active_problem='What fraction is equivalent to 1/2: 2/4 or 1/4?',
+            current_step='What fraction is equivalent to 1/2: 2/4 or 1/4?',
+            current_question='What fraction is equivalent to 1/2: 2/4 or 1/4?',
+            expected_answer='2/4',
+            skill='equivalent fractions',
+            tutor_practice_topic='equivalent fractions and decimals',
+            problem_status='tutor_practice',
+            mode='tutor_practice_question',
+            status='waiting_for_student',
+        ),
+        'What fraction is equivalent to 1/2: 2/4 or 1/4?',
+        subject='Math',
+    )
+    equivalent_text_1, equivalent_state_1 = build_progressive_hint_reply(equivalent, help_request=True)
+    equivalent_text_2, _ = build_progressive_hint_reply(equivalent_state_1, help_request=True)
+    _expect('equivalent fractions name the same amount' in equivalent_text_1.lower(), 'Equivalent-fraction first hint did not explain the equivalence idea.', failures)
+    _expect('same amount as 1/2' in equivalent_text_2.lower(), 'Equivalent-fraction stronger hint did not stay anchored to the target fraction.', failures)
+
+    conceptual = start_task(
+        TutoringState(
+            current_subject='Math',
+            active_problem='How many fourths make one whole?',
+            current_step='How many fourths make one whole?',
+            current_question='How many fourths make one whole?',
+            expected_answer='4',
+            skill='unit fractions',
+            problem_status='tutor_practice',
+            mode='tutor_practice_question',
+            status='waiting_for_student',
+        ),
+        'How many fourths make one whole?',
+        subject='Math',
+    )
+    conceptual_text, _ = build_progressive_hint_reply(conceptual, help_request=True)
+    _expect('whole' in conceptual_text.lower() and 'equal parts' in conceptual_text.lower(), 'Conceptual-math hint was not grounded in the whole/parts idea.', failures)
+
     asyncio.run(_check_strict_llm_fallback(failures))
 
     if failures:
@@ -144,6 +204,39 @@ async def _check_strict_llm_fallback(failures: list[str]) -> None:
     _expect(leak_model == 'deterministic-progressive-hint', 'Answer-leaking strict fallback hint was not rejected.', failures)
     _expect('llm_concept' not in leak_support.shown_hint_ids, 'Rejected strict hint was still recorded as an LLM hint.', failures)
     _expect('The answer is 800' not in leak_text, 'Rejected strict hint text was shown to the student.', failures)
+
+    fraction_state = start_task(
+        TutoringState(
+            current_subject='Math',
+            active_problem='Which is larger: 7/8 or 5/8?',
+            current_step='Which is larger: 7/8 or 5/8?',
+            current_question='Which is larger: 7/8 or 5/8?',
+            expected_answer='7/8',
+            skill='fraction comparison',
+            tutor_practice_topic='equivalent fractions and decimals',
+            problem_status='tutor_practice',
+            mode='tutor_practice_question',
+            status='waiting_for_student',
+        ),
+        'Which is larger: 7/8 or 5/8?',
+        subject='Math',
+    )
+    mismatch_router = _FakeHintRouter(json.dumps({
+        'level': 1,
+        'hint_kind': 'concept',
+        'hint_text': 'Use the related multiplication fact: 8 × ? = 7.',
+        'follow_up_question': '',
+        'reveals_final_answer': False,
+    }))
+    mismatch_text, mismatch_state, mismatch_model, _ = await build_progressive_hint_reply_with_fallback(
+        fraction_state,
+        help_request=True,
+        router=mismatch_router,
+    )
+    mismatch_support = current_step_support(mismatch_state)
+    _expect(mismatch_model == 'deterministic-progressive-hint', 'Route-mismatched fraction hint was not rejected.', failures)
+    _expect('llm_concept' not in mismatch_support.shown_hint_ids, 'Route-mismatched LLM hint was still recorded.', failures)
+    _expect('same denominator' in mismatch_text.lower() or 'numerator' in mismatch_text.lower(), 'Rejected route-mismatched hint did not fall back to the grounded fraction hint.', failures)
 
 
 if __name__ == '__main__':

@@ -16,6 +16,7 @@ CRITICAL_PYTHON_FILES = [
     'backend/app/services/tutor_word_problem.py',
     'backend/app/schemas/tutor_interpretation.py',
     'backend/app/utils/task_lifecycle.py',
+    'backend/scripts/check_tutor_full_regression_matrix.py',
     'backend/scripts/check_tutor_flow_all.py',
 ]
 
@@ -26,6 +27,8 @@ REQUIRED_FLOW_CHECKS = [
     'check_tutor_intent_routing',
     'check_tutor_task_lifecycle',
     'check_tutor_attempt_policy',
+    'check_tutor_answer_attempt_feedback',
+    'check_tutor_flow_alignment',
     'check_tutor_progressive_hints',
     'check_tutor_word_problem_schema',
     'check_tutor_interpretation_schema',
@@ -34,7 +37,11 @@ REQUIRED_FLOW_CHECKS = [
     'check_tutor_emotional_support',
     'check_tutor_math_response_guard',
     'check_tutor_math_e2e',
+    'check_tutor_followup_transition',
+    'check_tutor_topic_e2e_matrix',
+    'check_tutor_subject_baseline',
     'check_tutor_voice_parity',
+    'check_tutor_full_regression_matrix',
     'check_tutor_generated_invariants',
     'check_tutor_production_readiness',
 ]

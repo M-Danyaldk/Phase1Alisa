@@ -30,6 +30,7 @@ def main() -> None:
         'answer': 'seventy-eight',
         'normalized_expression': None,
         'problem': None,
+        'question_type': 'arithmetic_single_step',
         'refers_to_task': 'active_task',
         'requested_action': 'check_answer',
         'emotion': None,
@@ -61,6 +62,7 @@ def main() -> None:
         'answer': None,
         'normalized_expression': '7 * 2',
         'problem': word_problem.model_dump(),
+        'question_type': 'word_problem',
         'refers_to_task': 'new_task',
         'requested_action': 'solve',
         'emotion': None,
@@ -87,6 +89,23 @@ def main() -> None:
     })
     _expect(fraction_problem.operation == 'equivalent_fraction', 'Equivalent-fraction operation was not supported.', failures)
 
+    continuation = TutorInputInterpretation.model_validate({
+        'schema_version': '1.0',
+        'intent': 'continuation_yes',
+        'confidence': 'high',
+        'answer': None,
+        'normalized_expression': None,
+        'problem': None,
+        'question_type': 'continuation_choice',
+        'refers_to_task': 'active_task',
+        'requested_action': 'continue',
+        'emotion': None,
+        'needs_clarification': False,
+        'clarification_question': None,
+        'interpretation_note': 'Student wants another practice question.',
+    })
+    _expect(continuation.question_type == 'continuation_choice', 'Continuation choice question type was not preserved.', failures)
+
     unclear = TutorInputInterpretation.model_validate({
         'schema_version': '1.0',
         'intent': 'unclear',
@@ -94,6 +113,7 @@ def main() -> None:
         'answer': None,
         'normalized_expression': None,
         'problem': None,
+        'question_type': None,
         'refers_to_task': 'unknown',
         'requested_action': 'none',
         'emotion': None,
@@ -111,6 +131,14 @@ def main() -> None:
     _expect_rejected({**base, 'intent': 'answer_current_step', 'answer': None}, 'Answer intent without an answer was accepted.', failures)
     _expect_rejected({**base, 'confidence': 'low'}, 'Low confidence without clarification was accepted.', failures)
     _expect_rejected({**base, 'intent': 'greeting', 'answer': '78'}, 'Greeting was allowed to carry an answer payload.', failures)
+    _expect_rejected({
+        **continuation.model_dump(),
+        'answer': 'yes',
+    }, 'Continuation choice was allowed to carry an answer payload.', failures)
+    _expect_rejected({
+        **continuation.model_dump(),
+        'intent': 'related_question',
+    }, 'Continuation question type was allowed to use the wrong intent label.', failures)
     _expect_rejected({
         **base,
         'intent': 'switch_problem',

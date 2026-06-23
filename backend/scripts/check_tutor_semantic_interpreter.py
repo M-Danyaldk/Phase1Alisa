@@ -31,6 +31,7 @@ def _payload(**updates) -> dict:
         'answer': '78',
         'normalized_expression': None,
         'problem': None,
+        'question_type': 'arithmetic_single_step',
         'refers_to_task': 'active_task',
         'requested_action': 'check_answer',
         'emotion': None,
@@ -72,6 +73,7 @@ async def main() -> None:
     _expect(answer_router.calls == 1, 'Ambiguous answer wording did not invoke the semantic interpreter exactly once.', failures)
     _expect(answer_result.label == 'answer_current_step', 'High-confidence semantic answer did not route to the current step.', failures)
     _expect(answer_result.answer == '78', 'Semantic interpreter did not preserve the extracted final answer.', failures)
+    _expect(answer_result.question_type == 'arithmetic_single_step', 'Semantic interpreter did not preserve the question type contract.', failures)
     _expect(answer_result.interpretation_source == 'llm_schema', 'Semantic result did not record its schema source.', failures)
     _expect(
         not TutorMathNormalizer().should_use_fallback('Math', 'I got 80 first, but my final answer should be 78.', state),
@@ -127,6 +129,25 @@ async def main() -> None:
     )
     _expect(related_result.label == 'related_question', 'Medium-confidence non-mutating explanation request was not allowed.', failures)
     _expect(not related_result.needs_clarification, 'Clear non-mutating explanation request was unnecessarily blocked.', failures)
+
+    continuation_router = FakeRouter(_payload(
+        intent='continuation_yes',
+        confidence='high',
+        answer=None,
+        question_type='continuation_choice',
+        refers_to_task='active_task',
+        requested_action='continue',
+        interpretation_note='Student wants another practice question.',
+    ))
+    continuation_interpreter = TutorSemanticInterpreter(continuation_router)
+    continuation_result = await continuation_interpreter.interpret(
+        'Math',
+        'yes please',
+        history,
+        state,
+    )
+    _expect(continuation_result.intent == 'continuation_yes', 'Continuation choice semantic intent was not preserved.', failures)
+    _expect(continuation_result.question_type == 'continuation_choice', 'Continuation choice lost the question type contract.', failures)
 
     invalid_router = FakeRouter({**_payload(), 'active_problem': 'hijacked'})
     invalid_classifier = TutorIntentClassifier(TutorSemanticInterpreter(invalid_router))

@@ -9,6 +9,7 @@ from ..assessment_validation import extract_math_expression, format_fraction, no
 from ..models import TutorStepSupportState, TutoringState
 from ..utils.attempt_policy import attempt_scope_key
 from .llm.router import LLMRouter
+from .tutor_question_type_router import infer_active_question_type
 
 
 MAX_HELP_LEVEL = 4
@@ -78,6 +79,9 @@ class TutorProgressiveHintGenerator:
         user = json.dumps({
             'level': level,
             'required_hint_kind': expected_kind,
+            'question_type': infer_active_question_type(state),
+            'skill': state.skill,
+            'topic': state.tutor_practice_topic,
             'current_problem': state.full_problem or state.main_problem or state.active_problem,
             'current_step': state.current_step or state.current_question,
             'current_question': state.current_question,
@@ -140,7 +144,7 @@ def build_progressive_hint_reply(state: TutoringState, *, help_request: bool) ->
         )
 
     expression = _current_expression(state)
-    hint = _hint_for_level(expression, level, state.expected_answer)
+    hint = _hint_for_state(state, level)
     question = _display_expression(expression) or state.current_question or state.current_step
     headings = {
         1: 'Here is the first hint.',
@@ -184,6 +188,9 @@ def _should_try_llm_fallback(state: TutoringState, level: int, support: TutorSte
     hint_id = _hint_id(level)
     if f'llm_{hint_id}' in support.shown_hint_ids:
         return False
+    question_type = infer_active_question_type(state)
+    if question_type in {'fraction_comparison', 'equivalent_fraction', 'conceptual_math', 'word_problem'}:
+        return True
     expression = _current_expression(state)
     if _simple_expression(expression):
         return False
@@ -211,6 +218,8 @@ def _validate_llm_hint(proposal: StrictHintProposal, state: TutoringState, level
             return False
         if re.search(r'\b(?:the\s+)?answer\s+(?:is|equals|=)\b|\bfinal answer\b', combined):
             return False
+    if not _hint_matches_question_route(hint, follow_up, state, level):
+        return False
     return True
 
 
@@ -233,7 +242,16 @@ def _current_expression(state: TutoringState) -> str:
     return extract_math_expression(normalized) or normalized.strip()
 
 
-def _hint_for_level(expression: str, level: int, expected_answer: str) -> str:
+def _hint_for_state(state: TutoringState, level: int) -> str:
+    question_type = infer_active_question_type(state)
+    if question_type == 'fraction_comparison':
+        return _fraction_comparison_hint(state, level)
+    if question_type == 'equivalent_fraction':
+        return _equivalent_fraction_hint(state, level)
+    if question_type == 'conceptual_math':
+        return _conceptual_math_hint(state, level)
+
+    expression = _current_expression(state)
     parsed = _simple_expression(expression)
     if not parsed:
         if level == 1:
@@ -242,7 +260,7 @@ def _hint_for_level(expression: str, level: int, expected_answer: str) -> str:
             return 'Name the operation for this step, then use only the numbers shown in it.'
         if level == 3:
             return 'Write the operation as a number sentence before calculating.'
-        return f'The current step result is {expected_answer}.' if expected_answer else 'Work through the current number sentence one operation at a time.'
+        return f'The current step result is {state.expected_answer}.' if state.expected_answer else 'Work through the current number sentence one operation at a time.'
 
     left, operator, right = parsed
     if level == 1:
@@ -253,8 +271,138 @@ def _hint_for_level(expression: str, level: int, expected_answer: str) -> str:
         return _worked_substep_hint(left, operator, right)
 
     value = safe_eval_expression(f'{left} {operator} {right}')
-    answer = format_fraction(value) if value is not None else expected_answer
+    answer = format_fraction(value) if value is not None else state.expected_answer
     return f'{_display_expression(left)} {_display_operator(operator)} {_display_expression(right)} = {answer}.'
+
+
+def _fraction_comparison_hint(state: TutoringState, level: int) -> str:
+    choices = _comparison_choices(state)
+    if len(choices) < 2:
+        return _conceptual_math_hint(state, level)
+    left, right = choices[0], choices[1]
+    left_num, left_den = _fraction_parts(left)
+    right_num, right_den = _fraction_parts(right)
+    if level == 1:
+        if left_den and left_den == right_den:
+            return 'Both fractions have the same denominator, so look closely at the numerators.'
+        return 'Compare the two fractions by noticing which amount is larger.'
+    if level == 2:
+        if left_den and left_den == right_den:
+            return f'Both fractions are in {left_den}ths. Decide which numerator is greater: {left_num} or {right_num}.'
+        return f'Look at the two choices carefully: {left} and {right}. Which one shows more of the whole?'
+    if level == 3:
+        if left_den and left_den == right_den:
+            bigger = left if int(left_num) > int(right_num) else right
+            return f'When the denominators match, the fraction with the bigger numerator is larger. Now choose between {left} and {right}.'
+        return f'Say each choice out loud as part of a whole, then decide whether {left} or {right} is larger.'
+    expected = state.expected_answer or left
+    return f'The larger fraction here is {expected}.'
+
+
+def _equivalent_fraction_hint(state: TutoringState, level: int) -> str:
+    choices = _comparison_choices(state)
+    prompt = ' '.join([state.current_question, state.current_step, state.active_problem]).lower()
+    target_fraction = _first_fraction_in_text(prompt)
+    if level == 1:
+        return 'Equivalent fractions name the same amount, even if the numbers look different.'
+    if level == 2:
+        if target_fraction:
+            return f'Think about which choice shows the same amount as {target_fraction}.'
+        return 'Look for the choice that keeps the same amount of the whole.'
+    if level == 3:
+        if choices:
+            return f'Check each choice one at a time and keep the one that matches the same amount.'
+        return 'Write the starting fraction and compare it to the answer choice you picked.'
+    expected = state.expected_answer or (choices[0] if choices else '')
+    return f'The equivalent fraction for this step is {expected}.'
+
+
+def _conceptual_math_hint(state: TutoringState, level: int) -> str:
+    prompt = ' '.join([state.current_question, state.current_step, state.active_problem]).lower()
+    if 'whole' in prompt and ('fourths' in prompt or 'fourths' in state.current_question.lower()):
+        if level == 1:
+            return 'A whole is made of all the equal parts together.'
+        if level == 2:
+            return 'If something is split into fourths, count how many fourth-size pieces make the full whole.'
+        if level == 3:
+            return 'Four fourths make one whole, so count 1/4, 2/4, 3/4, 4/4.'
+        return f'The current step answer is {state.expected_answer}.' if state.expected_answer else 'The whole is made from all of the equal parts.'
+    if level == 1:
+        return 'Focus on the Math idea the question is asking about before you calculate anything.'
+    if level == 2:
+        return 'Use the words in the question to decide what Math rule or meaning fits this step.'
+    if level == 3:
+        return 'Say the Math idea in your own words, then use that idea to answer the question.'
+    return f'The current step answer is {state.expected_answer}.' if state.expected_answer else 'Use the Math idea from the question to finish the step.'
+
+
+def _hint_matches_question_route(hint: str, follow_up: str, state: TutoringState, level: int) -> bool:
+    combined = f'{hint} {follow_up}'.lower()
+    question_type = infer_active_question_type(state)
+    current_text = ' '.join([
+        str(state.full_problem or ''),
+        str(state.main_problem or ''),
+        str(state.active_problem or ''),
+        str(state.current_step or ''),
+        str(state.current_question or ''),
+    ]).lower()
+
+    if question_type == 'fraction_comparison':
+        choices = _comparison_choices(state)
+        allowed_markers = {'fraction', 'fractions', 'larger', 'greater', 'numerator', 'denominator', 'same'}
+        if not any(marker in combined for marker in allowed_markers):
+            return False
+        if level < MAX_HELP_LEVEL and 'multiplication fact' in combined:
+            return False
+        if choices and not any(choice.lower().replace(' ', '') in combined.replace(' ', '') for choice in choices):
+            return 'numerator' in combined or 'denominator' in combined
+    if question_type == 'equivalent_fraction':
+        if not any(marker in combined for marker in {'equivalent', 'same amount', 'fraction', 'whole'}):
+            return False
+        if level < MAX_HELP_LEVEL and any(marker in combined for marker in {'larger', 'greater'}) and 'same amount' not in combined:
+            return False
+    if question_type == 'conceptual_math':
+        if 'what is' in combined and level < 4:
+            return False
+        if not any(token in current_text for token in ('fraction', 'whole', 'numerator', 'denominator', 'decimal', 'ratio', 'percent')):
+            return True
+        if not any(token in combined for token in ('whole', 'part', 'fraction', 'numerator', 'denominator', 'decimal', 'ratio', 'percent')):
+            return False
+    if question_type == 'word_problem':
+        numbers = re.findall(r'-?\d+(?:\.\d+)?(?:/\d+)?', current_text)
+        if numbers and not any(number in combined for number in numbers[:3]):
+            if not any(marker in combined for marker in ('total', 'altogether', 'occupied', 'empty', 'difference', 'groups', 'each', 'rows', 'seats', 'whole')):
+                return False
+    return True
+
+
+def _comparison_choices(state: TutoringState) -> list[str]:
+    text = ' '.join([
+        str(state.current_question or ''),
+        str(state.current_step or ''),
+        str(state.active_problem or ''),
+    ])
+    matches = re.findall(r'-?\d+(?:\.\d+)?(?:\s*/\s*-?\d+(?:\.\d+)?)?%?', text)
+    choices: list[str] = []
+    seen: set[str] = set()
+    for match in matches:
+        cleaned = match.replace(' ', '')
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            choices.append(cleaned)
+    return choices[:2]
+
+
+def _fraction_parts(value: str) -> tuple[str, str]:
+    match = re.fullmatch(r'(-?\d+)\s*/\s*(-?\d+)', str(value or '').strip())
+    if not match:
+        return '', ''
+    return match.group(1), match.group(2)
+
+
+def _first_fraction_in_text(text: str) -> str:
+    match = re.search(r'-?\d+\s*/\s*-?\d+', str(text or ''))
+    return match.group(0).replace(' ', '') if match else ''
 
 
 def _simple_expression(expression: str) -> tuple[str, str, str] | None:
