@@ -224,13 +224,25 @@ def _choice_marker_matches(text: str, marker: str) -> bool:
     return bool(re.search(rf'(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])', text))
 
 
+def _history_role(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('role') or '')
+    return str(getattr(item, 'role', '') or '')
+
+
+def _history_content(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('content') or '')
+    return str(getattr(item, 'content', '') or '')
+
+
 def _history_has_opening_math_prompt(history: list[ChatHistoryItem]) -> bool:
     if not history:
         return False
     last = history[-1]
-    if getattr(last, 'role', '') != 'msalisia':
+    if _history_role(last) != 'msalisia':
         return False
-    text = ' '.join(str(getattr(last, 'content', '') or '').lower().split())
+    text = ' '.join(_history_content(last).lower().split())
     mood_markers = ('how are you', 'how are you doing', 'how are you feeling', 'before we start')
     quick_markers = ('quick math', 'quick thing', 'quick question', 'know how to help')
     return any(marker in text for marker in mood_markers) and any(marker in text for marker in quick_markers)
@@ -297,8 +309,7 @@ def _tutor_math_question_state(
 
 def _is_tutor_practice_question_state(state: TutoringState) -> bool:
     return (
-        state.mode == 'tutor_practice_question'
-        and state.status == 'waiting_for_student'
+        state.problem_status == 'tutor_practice'
         and bool(state.current_question.strip())
         and bool(state.expected_answer.strip())
     )
@@ -1324,7 +1335,7 @@ class VoiceService:
             *directives,
         ]
         system = compact_chat_system_prompt(prompt_student, subject, resolved_topic, directives, active_task, assessment_context)
-        recent_history = '\n'.join([f'{item.role}: {item.content}' for item in history[-4:]])
+        recent_history = '\n'.join([f'{_history_role(item)}: {_history_content(item)}' for item in history[-4:]])
         state_summary = (
             f"Mode: {next_state.mode}; "
             f"Attempt count: {next_state.attempt_count}; "
@@ -1360,7 +1371,7 @@ class VoiceService:
             result_model = 'deterministic-voice-safety-support-lock'
             special_local_reply = True
         elif is_tutor_practice_answer_like(tutoring_state, effective_transcript):
-            practice_state = ensure_answer_attempt_registered(tutoring_state, next_state).model_copy(update={
+            practice_state = ensure_answer_attempt_registered(tutoring_state, tutoring_state).model_copy(update={
                 'current_subject': subject,
             })
             formatted_reply, final_state = _tutor_practice_answer_reply(
@@ -1465,7 +1476,7 @@ class VoiceService:
                 or is_tutor_practice_answer_like(tutoring_state, effective_transcript)
             )
         ):
-            practice_state = ensure_answer_attempt_registered(tutoring_state, next_state).model_copy(update={
+            practice_state = ensure_answer_attempt_registered(tutoring_state, tutoring_state).model_copy(update={
                 'current_subject': subject,
             })
             formatted_reply, final_state = _tutor_practice_answer_reply(
@@ -1675,9 +1686,10 @@ class VoiceService:
         math_response_guard = TutorMathResponseGuard()
         math_guard_result = None
         if subject == 'Math':
+            guard_state = final_state if special_local_reply else next_state
             math_guard_result = math_response_guard.validate(
                 formatted_reply,
-                next_state,
+                guard_state,
                 intent_label=intent_assist.label,
                 source=result_model,
             )

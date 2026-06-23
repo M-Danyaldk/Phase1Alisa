@@ -136,6 +136,35 @@ async def _run() -> list[str]:
         )
         _expect(topic_answer.tutoring_state.active_task_id == '', 'Finished topic starter task remained active.', failures)
 
+        negative_practice = await _send(
+            'just okay',
+            TutoringState(current_subject='Math', mode='opening_checkin', status='ready_for_mini_checkin'),
+        )
+        _expect(
+            negative_practice.model == 'deterministic-tutor-math-starter'
+            and negative_practice.tutoring_state.problem_status == 'tutor_practice',
+            'Opening mini-check did not start a tutor-practice Math question.',
+            failures,
+        )
+        if negative_practice.tutoring_state.current_question == 'What is -9 + 5?':
+            first_wrong_negative = await _send('4', negative_practice.tutoring_state)
+            corrected_negative = await _send('-4', first_wrong_negative.tutoring_state)
+            _expect(
+                corrected_negative.model == 'deterministic-tutor-math-practice-check',
+                f'Correct second answer on negative-number tutor practice used {corrected_negative.model} instead of tutor-practice checking.',
+                failures,
+            )
+            _expect(
+                "Yes, that's correct!" in corrected_negative.reply and corrected_negative.tutoring_state.final_answer == '-4',
+                'Correct second answer on negative-number tutor practice was not accepted.',
+                failures,
+            )
+            _expect(
+                'keep the answer hidden' not in corrected_negative.reply.lower(),
+                'Correct second answer on negative-number tutor practice was incorrectly hidden behind the response guard.',
+                failures,
+            )
+
         started = await _send('There are 7 boxes and each box has space for 2 balls. How many balls are needed?', topic_answer.tutoring_state)
         state = started.tutoring_state
         _expect(started.model == 'deterministic-structured-word-problem', 'Word problem did not enter deterministic structured flow.', failures)

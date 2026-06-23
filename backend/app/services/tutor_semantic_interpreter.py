@@ -6,6 +6,18 @@ from ..schemas.tutor_interpretation import TutorInputInterpretation
 from .llm.router import LLMRouter
 
 
+def _history_role(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('role') or '')
+    return str(getattr(item, 'role', '') or '')
+
+
+def _history_content(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('content') or '')
+    return str(getattr(item, 'content', '') or '')
+
+
 class TutorSemanticInterpreter:
     """Use an LLM as a typed language interpreter, never as a state manager."""
 
@@ -28,7 +40,7 @@ class TutorSemanticInterpreter:
             'Use high confidence only when the meaning and task reference are clear. '
             f'JSON schema: {json.dumps(TutorInputInterpretation.model_json_schema(), separators=(",", ":"))}'
         )
-        recent_history = '\n'.join(f'{item.role}: {item.content}' for item in history[-4:])
+        recent_history = '\n'.join(f'{_history_role(item)}: {_history_content(item)}' for item in history[-4:])
         user = (
             f'Current tutor subject: {subject}\n'
             f'Active task: {state.active_problem or state.main_problem or "none"}\n'

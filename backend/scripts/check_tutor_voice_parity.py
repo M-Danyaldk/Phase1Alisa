@@ -34,6 +34,28 @@ class _LearningMemory:
 
 class _Router:
     async def generate(self, system: str, user: str, purpose: str = 'chat') -> LLMResult:
+        if 'Student says: Ok now' in user or 'Student says: ok now' in user:
+            return LLMResult(
+                text='Great job!\n\nQuick practice question:\nWhat is -7 + 3?',
+                provider='voice_e2e_fake',
+                model='deterministic',
+            )
+        if 'Student says: 22' in user:
+            return LLMResult(
+                text='Not quite. Try that answer again.',
+                provider='voice_e2e_fake',
+                model='deterministic',
+            )
+        if 'Student says: 43' in user:
+            return LLMResult(
+                text=(
+                    'Here is the first hint.\n\n'
+                    'Focus only on the current step and identify what the question asks you to find.\n\n'
+                    'Now try this step: whatever'
+                ),
+                provider='voice_e2e_fake',
+                model='deterministic',
+            )
         return LLMResult(
             text='Nice try. 7 × 2 = 12. What is 7 × 2?',
             provider='voice_e2e_fake',
@@ -131,6 +153,105 @@ async def _run() -> list[str]:
 
         shared = await _turn(service, '24 balls are shared equally among 6 boxes. How many balls go in each box?', TutoringState(current_subject='Math'))
         _expect(shared['tutoring_state'].expected_answer == '4', 'Voice equal-sharing word problem was not division.', failures)
+
+        voice_practice = await _turn(
+            service,
+            'just okay',
+            TutoringState(current_subject='Math', mode='opening_checkin', status='ready_for_mini_checkin'),
+            history=[{
+                'role': 'msalisia',
+                'content': "Hey Sajjad! How are you doing today? Before we dive in, I'll ask one quick Math question so I know how to help.",
+            }],
+        )
+        if voice_practice['tutoring_state'].current_question == 'What is -9 + 5?':
+            wrong_voice_practice = await _turn(service, '4', voice_practice['tutoring_state'])
+            corrected_voice_practice = await _turn(service, '-4', wrong_voice_practice['tutoring_state'])
+            _expect(
+                corrected_voice_practice['model'] == 'deterministic-voice-tutor-math-practice-check',
+                'Voice correct second answer on negative-number tutor practice escaped the tutor-practice checker.',
+                failures,
+            )
+            _expect(
+                "Yes, that's correct!" in corrected_voice_practice['assistant_text']
+                and corrected_voice_practice['tutoring_state'].final_answer == '-4',
+                'Voice correct second answer on negative-number tutor practice was not accepted.',
+                failures,
+            )
+            _expect(
+                'keep the answer hidden' not in corrected_voice_practice['assistant_text'].lower(),
+                'Voice correct second answer on negative-number tutor practice was incorrectly hidden behind the response guard.',
+                failures,
+            )
+
+        followup_history = [{
+            'role': 'msalisia',
+            'content': "Hey Dam! How are you doing today? After you let me know, I'm going to ask you one quick Math question so I know exactly how to help you today. Sound good?",
+        }]
+        followup_state = TutoringState(current_subject='Math')
+        for transcript in ['-9 + 5', '4', '-4']:
+            result = await _turn(service, transcript, followup_state, history=followup_history)
+            followup_history.extend([
+                {'role': 'student', 'content': transcript},
+                {'role': 'msalisia', 'content': result['assistant_text']},
+            ])
+            followup_state = result['tutoring_state']
+
+        voice_followup = await _turn(service, 'Ok now', followup_state, history=followup_history)
+        followup_history.extend([
+            {'role': 'student', 'content': 'Ok now'},
+            {'role': 'msalisia', 'content': voice_followup['assistant_text']},
+        ])
+        _expect(
+            'What is -7 + 3?' in voice_followup['assistant_text'],
+            'Voice follow-up prompt did not ask the expected quick practice question.',
+            failures,
+        )
+
+        first_followup_voice = await _turn(service, '2', voice_followup['tutoring_state'], history=followup_history)
+        followup_history.extend([
+            {'role': 'student', 'content': '2'},
+            {'role': 'msalisia', 'content': first_followup_voice['assistant_text']},
+        ])
+        _expect(
+            '-7 + 3' in first_followup_voice['assistant_text'] and '-9 + 5' not in first_followup_voice['assistant_text'],
+            'Voice first answer after the follow-up question leaked back to the earlier problem.',
+            failures,
+        )
+        _expect(
+            bool(
+                first_followup_voice['tutoring_state'].current_question
+                or first_followup_voice['tutoring_state'].current_step
+                or first_followup_voice['tutoring_state'].active_problem
+            ),
+            'Voice first answer after the follow-up question did not preserve active prompt state.',
+            failures,
+        )
+        _expect(
+            first_followup_voice['tutoring_state'].attempt_count > 0
+            or first_followup_voice['tutoring_state'].attempts_per_step,
+            'Voice first answer after the follow-up question did not register attempt tracking.',
+            failures,
+        )
+
+        repaired_voice = await _turn(service, '22', first_followup_voice['tutoring_state'], history=followup_history)
+        followup_history.extend([
+            {'role': 'student', 'content': '22'},
+            {'role': 'msalisia', 'content': repaired_voice['assistant_text']},
+        ])
+        _expect(
+            'What Math problem should we work on?' not in repaired_voice['assistant_text'],
+            'Voice guard fallback replaced the active follow-up question with a generic recovery prompt.',
+            failures,
+        )
+
+        after_repair_voice = await _turn(service, '43', repaired_voice['tutoring_state'], history=followup_history)
+        lower_voice_reply = after_repair_voice['assistant_text'].lower()
+        _expect(
+            'what math problem should we work on?' not in lower_voice_reply
+            and 'that message will not count as an answer attempt' not in lower_voice_reply,
+            'Voice guard repair text leaked into the next active tutoring prompt.',
+            failures,
+        )
 
         crisis = await _turn(service, "I don't feel safe", state)
         locked = await _turn(service, 'continue', crisis['tutoring_state'])

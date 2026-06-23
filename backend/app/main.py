@@ -11,7 +11,7 @@ from .curriculum import curriculum_payload
 from .database import init_db
 from .assessment_validation import extract_math_expression, normalize_math_text
 from .assessment_selector import previous_versions_from_assessments, select_next_assessment_version
-from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatOpeningRequest, ChatOpeningResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
+from .models import AssessmentNextRequest, AssessmentRequest, AssessmentResult, AssessmentSelectionResponse, ChatHistoryItem, ChatOpeningRequest, ChatOpeningResponse, ChatRequest, ChatResponse, ChildAssessmentResult, HomeworkFeedbackResponse, StudentProfile, TutoringState
 from .prompts import compact_chat_system_prompt, tutor_opening_system_prompt
 from .routers.chat_history import router as chat_history_router
 from .routes.admin import router as admin_router
@@ -958,7 +958,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         *directives,
     ]
     system = compact_chat_system_prompt(prompt_student, payload.subject, resolved_topic, directives, active_task, assessment_context)
-    history = '\n'.join([f'{item.role}: {item.content}' for item in payload.history[-4:]])
+    history = '\n'.join([f'{_history_role(item)}: {_history_content(item)}' for item in payload.history[-4:]])
     state_summary = (
         f"Mode: {tutoring_state.mode}; "
         f"Attempt count: {tutoring_state.attempt_count}; "
@@ -996,7 +996,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         result_fallback_used = False
         special_local_reply = True
     elif is_tutor_practice_answer_like(payload.tutoring_state, effective_message):
-        practice_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state).model_copy(update={
+        practice_state = ensure_answer_attempt_registered(payload.tutoring_state, payload.tutoring_state).model_copy(update={
             'current_subject': payload.subject,
         })
         formatted_reply, next_state = _tutor_practice_answer_reply(
@@ -1097,7 +1097,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         _should_grade_tutor_practice(payload.tutoring_state, intent_assist.label)
         or is_tutor_practice_answer_like(payload.tutoring_state, effective_message)
     ):
-        practice_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state).model_copy(update={
+        practice_state = ensure_answer_attempt_registered(payload.tutoring_state, payload.tutoring_state).model_copy(update={
             'current_subject': payload.subject,
         })
         formatted_reply, next_state = _tutor_practice_answer_reply(
@@ -1329,9 +1329,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     math_response_guard = TutorMathResponseGuard()
     math_guard_result = None
     if payload.subject == 'Math':
+        guard_state = next_state if special_local_reply else tutoring_state
         math_guard_result = math_response_guard.validate(
             formatted_reply,
-            tutoring_state,
+            guard_state,
             intent_label=intent_assist.label,
             source=result_model,
         )
@@ -1745,8 +1746,7 @@ def _tutor_math_question_state(
 
 def _is_tutor_practice_question_state(state: TutoringState) -> bool:
     return (
-        state.mode == 'tutor_practice_question'
-        and state.status == 'waiting_for_student'
+        state.problem_status == 'tutor_practice'
         and bool(state.current_question.strip())
         and bool(state.expected_answer.strip())
     )
@@ -1950,6 +1950,18 @@ def _homework_context_available(message: str, topic: str, history: list) -> bool
         'assignment',
         'ms. alisia looked at',
     ))
+
+
+def _history_role(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('role') or '')
+    return str(getattr(item, 'role', '') or '')
+
+
+def _history_content(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('content') or '')
+    return str(getattr(item, 'content', '') or '')
 
 
 def _student_from_child_for_assessment(student: StudentProfile, child: dict) -> StudentProfile:

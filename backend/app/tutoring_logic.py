@@ -629,10 +629,23 @@ def infer_skill(subject: str, topic: str, message: str) -> str:
     return topic.strip().title() if topic.strip() else 'Practice'
 
 
+def _history_role(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('role') or '')
+    return str(getattr(item, 'role', '') or '')
+
+
+def _history_content(item: ChatHistoryItem | dict) -> str:
+    if isinstance(item, dict):
+        return str(item.get('content') or '')
+    return str(getattr(item, 'content', '') or '')
+
+
 def _extract_last_assistant_question(history: list[ChatHistoryItem]) -> str:
     for item in reversed(history):
-        if item.role == 'msalisia' and '?' in item.content:
-            return item.content.strip()
+        content = _history_content(item)
+        if _history_role(item) == 'msalisia' and '?' in content and not _is_guard_repair_prompt(content):
+            return content.strip()
     return ''
 
 
@@ -657,11 +670,26 @@ def _is_substep_of_active_problem(active_problem: str, current_step: str) -> boo
     return detect_math_expression(active_problem) or detect_math_expression(current_step)
 
 
+def _is_guard_repair_prompt(content: str) -> bool:
+    text = _normalized(content)
+    if not text:
+        return False
+    return (
+        'that message will not count as an answer attempt' in text
+        or text == 'what math problem should we work on?'
+        or (
+            text.startswith('i understand.')
+            and 'what math problem should we work on?' in text
+        )
+    )
+
+
 def is_answering_tutor_question(history: list[ChatHistoryItem]) -> bool:
     if not history:
         return False
     previous = history[-1]
-    return previous.role == 'msalisia' and '?' in previous.content
+    content = _history_content(previous)
+    return _history_role(previous) == 'msalisia' and '?' in content and not _is_guard_repair_prompt(content)
 
 
 def _is_opening_human_moment_question(content: str) -> bool:
@@ -702,7 +730,7 @@ def _is_opening_followup(history: list[ChatHistoryItem], state: TutoringState) -
         return False
     if state.current_question.strip() or state.current_step.strip():
         return False
-    return _is_opening_human_moment_question(history[-1].content)
+    return _is_opening_human_moment_question(_history_content(history[-1]))
 
 
 def infer_active_problem(message: str, history: list[ChatHistoryItem], state: TutoringState | None = None) -> str:
@@ -713,8 +741,9 @@ def infer_active_problem(message: str, history: list[ChatHistoryItem], state: Tu
         return message.strip()
 
     for item in reversed(history):
-        if item.role == 'student' and _looks_like_new_problem(item.content):
-            return item.content.strip()
+        content = _history_content(item)
+        if _history_role(item) == 'student' and _looks_like_new_problem(content):
+            return content.strip()
 
     return (state.active_problem if state else '').strip()
 
@@ -856,7 +885,7 @@ def build_chat_directives(
     if assisted_intent_label == 'new_problem' and unfinished_main_problem and not switch_task and not answer_to_current_math_step:
         needs_new_problem_clarification = True
     if unfinished_main_problem and not switch_task and (related_to_active_problem or needs_new_problem_clarification):
-        active_problem = state.main_problem or state.active_problem or active_problem
+        active_problem = state.active_problem or state.main_problem or active_problem
 
     if (
         state.mode == 'resume_paused_problem'
@@ -930,6 +959,8 @@ def build_chat_directives(
         assisted_intent_label == 'answer_current_step'
         or (is_answering_tutor_question(history) and not opening_followup and not direct_question_override)
     )
+    if answering_tutor_question and (state.current_question.strip() or state.current_step.strip()):
+        active_problem = state.active_problem or state.current_question or state.current_step or active_problem
 
     attempt_state = register_answer_attempt(state, is_answer=answering_tutor_question)
     attempt_count = attempt_state.attempt_count if answering_tutor_question else 0
@@ -1587,6 +1618,14 @@ def _build_memory_note(active_problem: str, reply: str, previous_note: str) -> s
     return previous_note
 
 
+def _followup_math_expected_answer(question: str) -> str:
+    expression = extract_math_expression(question)
+    if not expression:
+        return ''
+    value = safe_eval_expression(expression)
+    return format_fraction(value) if value is not None else ''
+
+
 def update_tutoring_state_after_reply(
     state: TutoringState,
     user_message: str,
@@ -1720,6 +1759,45 @@ def update_tutoring_state_after_reply(
             memory_note=_build_memory_note(active_problem, reply, state.memory_note),
         )
 
+    if (
+        next_step
+        and state.current_subject == 'Math'
+        and state.problem_status in {'finished', 'idle'}
+        and state.status in {'idle', 'finished', 'solving'}
+        and not state.current_question.strip()
+        and not state.current_step.strip()
+    ):
+        followup_expected_answer = _followup_math_expected_answer(next_step)
+        structured_fields = _clear_pending_problem_fields(_structured_state_fields(state))
+        structured_fields['problem_status'] = 'awaiting_step'
+        followup_state = TutoringState(
+            **structured_fields,
+            active_problem=next_step,
+            current_subject=state.current_subject,
+            current_step=next_step,
+            current_question=next_step,
+            expected_answer=followup_expected_answer,
+            student_answer=state.student_answer,
+            correctness_status='',
+            skill=state.skill,
+            step_number=1,
+            attempt_count=0,
+            hint_given=False,
+            answer_revealed=False,
+            next_similar_question='',
+            mode='practice',
+            status='waiting_for_student',
+            memory_note=_build_memory_note(next_step, reply, state.memory_note),
+        )
+        return transition_to_task(
+            state,
+            followup_state,
+            next_step,
+            subject=state.current_subject,
+            source='assistant_followup',
+            previous='pause',
+        )
+
     if next_step:
         return TutoringState(
             **_clear_pending_problem_fields(_structured_state_fields(state)),
@@ -1739,6 +1817,49 @@ def update_tutoring_state_after_reply(
             mode='practice',
             status='waiting_for_student',
             memory_note=_build_memory_note(active_problem, reply, state.memory_note),
+        )
+
+    if (
+        state.current_subject == 'Math'
+        and state.problem_status in {'awaiting_step', 'in_progress'}
+        and (state.current_question.strip() or state.current_step.strip())
+        and (
+            state.correctness_status in {'incorrect', 'partially_correct', 'unclear'}
+            or state.attempt_count > 0
+        )
+        and any(
+            marker in _normalized(reply)
+            for marker in (
+                'now try this step:',
+                'try this same question',
+                'try the same question',
+                'here is the first hint',
+                'here is a stronger hint',
+                "let's work one small part together",
+            )
+        )
+    ):
+        attempt_state = register_answer_attempt(state) if state.attempt_count <= 0 else state
+        preserved_prompt = attempt_state.current_question or attempt_state.current_step
+        preserved_problem = attempt_state.active_problem or preserved_prompt
+        return TutoringState(
+            **_clear_pending_problem_fields(_structured_state_fields(attempt_state)),
+            active_problem=preserved_problem,
+            current_subject=attempt_state.current_subject,
+            current_step=attempt_state.current_step or preserved_prompt,
+            current_question=preserved_prompt,
+            expected_answer=attempt_state.expected_answer,
+            student_answer=attempt_state.student_answer,
+            correctness_status=attempt_state.correctness_status or 'incorrect',
+            skill=attempt_state.skill,
+            step_number=attempt_state.step_number,
+            attempt_count=attempt_state.attempt_count,
+            hint_given=attempt_state.hint_given,
+            answer_revealed=attempt_state.answer_revealed,
+            next_similar_question='',
+            mode='practice',
+            status='waiting_for_student',
+            memory_note=_build_memory_note(preserved_problem, reply, state.memory_note),
         )
 
     terminal_state = TutoringState(
