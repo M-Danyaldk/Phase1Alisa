@@ -3,7 +3,7 @@ from fractions import Fraction
 
 from pydantic import BaseModel, Field
 
-from ..assessment_validation import normalize_math_text, safe_eval_expression
+from ..assessment_validation import extract_math_expression, normalize_math_text, safe_eval_expression
 from ..models import TutoringState
 from ..utils.task_lifecycle import reconcile_task_lifecycle
 
@@ -139,7 +139,11 @@ class TutorMathResponseGuard:
     def _missing_required_step_prompt(self, text: str, state: TutoringState) -> bool:
         unresolved = bool(state.current_question or state.current_step)
         retrying = state.correctness_status in {'incorrect', 'partially_correct', 'unclear'} and state.attempt_count < 3
-        return unresolved and retrying and '?' not in text
+        if not unresolved or not retrying:
+            return False
+        if '?' in text:
+            return False
+        return not self._contains_verified_step_prompt(text, state)
 
     def _uses_wrong_answer_language(self, text: str) -> bool:
         if re.search(r'\bwill not count (?:as|against)\b', text, re.I):
@@ -152,16 +156,22 @@ class TutorMathResponseGuard:
         if 'non_answer_graded_as_wrong' in violations:
             opening = 'I understand. That message will not count as an answer attempt.'
         elif 'incorrect_arithmetic' in violations or 'incorrect_answer_claim' in violations:
-            opening = 'Let me correct that and keep us on the verified Math step.'
+            opening = 'Let me fix that wording and use the saved Math step.'
         elif 'premature_answer_reveal' in violations:
-            opening = 'Letâ€™s keep the answer hidden and work through the current step.'
+            opening = 'We will keep the answer hidden for now and use the saved step.'
+        elif 'stale_problem_reference' in violations:
+            opening = 'That reply drifted, so I am returning to the saved problem.'
+        elif 'multiple_questions' in violations:
+            opening = 'I will keep this to one question.'
+        elif 'missing_current_step_prompt' in violations:
+            opening = 'Here is the saved step to try.'
         else:
-            opening = 'Letâ€™s stay with the current Math problem one step at a time.'
+            opening = 'Here is the saved Math work.'
         if question:
             return f'{opening}\n\n{question}'
         if problem:
-            return f'{opening}\n\n**Problem:** {problem}'
-        return f'{opening}\n\nWhat Math problem should we work on?'
+            return f'{opening}\n\n**Problem:** {problem}\n\nSend your next step or answer for this problem.'
+        return f'{opening}\n\nSend one clear Math problem, and I will help with it step by step.'
 
     def _response_kind(self, text: str, state: TutoringState, intent_label: str) -> str:
         lower = text.lower()
@@ -185,6 +195,16 @@ class TutorMathResponseGuard:
         normalized = normalize_math_text(str(text or '')).lower()
         normalized = normalized.replace('×', '*').replace('÷', '/').replace('Ã—', '*').replace('Ã·', '/')
         return re.sub(r'[^a-z0-9+\-*/().]', '', normalized)
+
+    def _contains_verified_step_prompt(self, text: str, state: TutoringState) -> bool:
+        reply_expression = extract_math_expression(normalize_math_text(text))
+        reply_canonical = self._canonical_problem(reply_expression or text)
+        for source in (state.current_question, state.current_step):
+            step_expression = extract_math_expression(normalize_math_text(source))
+            step_canonical = self._canonical_problem(step_expression or source)
+            if step_canonical and step_canonical in reply_canonical:
+                return True
+        return False
 
     def _clean_verified_question(self, text: str) -> str:
         cleaned = str(text or '').strip()

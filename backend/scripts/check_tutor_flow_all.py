@@ -2,6 +2,13 @@ from backend.scripts.check_tutoring_ladder import main as tutoring_ladder_main
 from backend.scripts.check_tutor_flow_architecture import main as tutor_architecture_main
 from backend.scripts.check_tutor_edge_matrix import main as tutor_edge_matrix_main
 from backend.scripts.check_tutor_intent_routing import main as tutor_intent_routing_main
+from backend.scripts.check_tutor_phase1_input_policy import main as tutor_phase1_input_policy_main
+from backend.scripts.check_tutor_phase2_math_task_router import main as tutor_phase2_math_task_router_main
+from backend.scripts.check_tutor_phase3_concept_helper import main as tutor_phase3_concept_helper_main
+from backend.scripts.check_tutor_phase4_guard_preserves_useful_replies import main as tutor_phase4_guard_preserves_useful_replies_main
+from backend.scripts.check_tutor_phase4_third_wrong_reveal import main as tutor_phase4_third_wrong_reveal_main
+from backend.scripts.check_tutor_phase4_screenshot_regressions import main as tutor_phase4_screenshot_regressions_main
+from backend.scripts.check_tutor_phase4_voice_typed_parity import main as tutor_phase4_voice_typed_parity_main
 from backend.scripts.check_tutor_task_lifecycle import main as tutor_task_lifecycle_main
 from backend.scripts.check_tutor_attempt_policy import main as tutor_attempt_policy_main
 from backend.scripts.check_tutor_answer_attempt_feedback import main as tutor_answer_attempt_feedback_main
@@ -44,6 +51,27 @@ def main() -> None:
     print('')
     print('Running tutor intent routing check...')
     asyncio.run(tutor_intent_routing_main())
+    print('')
+    print('Running tutor Phase 1 input-policy check...')
+    tutor_phase1_input_policy_main()
+    print('')
+    print('Running tutor Phase 2 Math task-router check...')
+    tutor_phase2_math_task_router_main()
+    print('')
+    print('Running tutor Phase 3 concept/helper check...')
+    tutor_phase3_concept_helper_main()
+    print('')
+    print('Running tutor Phase 4 guard-preserve check...')
+    tutor_phase4_guard_preserves_useful_replies_main()
+    print('')
+    print('Running tutor Phase 4 third-wrong reveal check...')
+    tutor_phase4_third_wrong_reveal_main()
+    print('')
+    print('Running tutor Phase 4 screenshot regression check...')
+    tutor_phase4_screenshot_regressions_main()
+    print('')
+    print('Running tutor Phase 4 voice typed-parity check...')
+    tutor_phase4_voice_typed_parity_main()
     print('')
     print('Running tutor task lifecycle check...')
     tutor_task_lifecycle_main()

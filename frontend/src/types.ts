@@ -2,6 +2,7 @@ export type ParentView = 'home' | 'profile' | 'children' | 'reports' | 'homework
 export type ChildView = 'home' | 'learn' | 'assessments' | 'practice-math' | 'practice-ela' | 'practice-writing' | 'homework';
 export type View = ParentView | ChildView | 'onboarding' | 'admin';
 export type Subject = 'Math' | 'ELA' | 'Writing';
+export type TutorSurfaceContext = 'start_learning' | 'math_tutor' | 'reading_tutor' | 'writing_tutor';
 
 export type StudentProfile = {
   id?: number | string;

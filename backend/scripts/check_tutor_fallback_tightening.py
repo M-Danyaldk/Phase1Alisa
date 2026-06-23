@@ -22,9 +22,14 @@ def main() -> None:
     )
     active_reply = math_fallback_reply(active_step)
     _expect(
-        "Let's stay with the current Math problem one step at a time." in active_reply
+        'Here is the saved step to try.' in active_reply
         and 'What is -9 + 5?' in active_reply,
         'Active Math fallback did not stay grounded on the current step.',
+        failures,
+    )
+    _expect(
+        "Let's stay with the current Math problem" not in active_reply,
+        'Active Math fallback still used the old repetitive repair wording.',
         failures,
     )
 

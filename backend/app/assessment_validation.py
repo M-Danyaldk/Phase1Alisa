@@ -157,6 +157,8 @@ def normalize_math_text(text: str) -> str:
         normalized = normalized.replace(old, new)
     normalized = re.sub(r'(?<=\d)\s*x\s*(?=\d|\()', ' * ', normalized)
     normalized = re.sub(r'(?<=\))\s*x\s*(?=\d|\()', ' * ', normalized)
+    normalized = re.sub(r'(?<=\d)[ \t]*\?[ \t]*(?=\d|\()', ' * ', normalized)
+    normalized = re.sub(r'(?<=\))[ \t]*\?[ \t]*(?=\d|\()', ' * ', normalized)
     normalized = re.sub(r'(?<=[\d)])\s*(?=\()', ' * ', normalized)
     normalized = re.sub(r'(?<=\))\s*(?=\d)', ' * ', normalized)
     return normalized

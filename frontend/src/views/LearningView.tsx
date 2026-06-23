@@ -495,7 +495,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
       const outgoingTopic = detectedSubject ? subjectDefaults[activeSubject] : topic;
       const outgoingTopicSource: TopicSource = detectedSubject ? 'default' : topicSource;
       await markStudentActivity('message_sent', activeSubject, outgoingTopic);
-      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; resolved_subject?: Subject | null; subject_changed?: boolean; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, previous_subject: subjectChanged ? subject : undefined, topic: outgoingTopic, topic_source: outgoingTopicSource, message: messageText, history: turnContext.history, tutoring_state: turnContext.tutoringState, thread_id: requestThreadId }, headers);
+      const data = await apiPost<{ reply: string; provider: string; tutoring_state: TutoringState; thread_id?: string | null; history_saved?: boolean; history_error?: string | null; resolved_topic?: string | null; resolved_subject?: Subject | null; subject_changed?: boolean; topic_source?: TopicSource | null; assessed_level?: string | null }>('/api/chat', { student, child_id: childId || undefined, subject: activeSubject, previous_subject: subjectChanged ? subject : undefined, topic: outgoingTopic, topic_source: outgoingTopicSource, surface_context: 'start_learning', message: messageText, history: turnContext.history, tutoring_state: turnContext.tutoringState, thread_id: requestThreadId }, headers);
       const responseSubject = data.resolved_subject || activeSubject;
       const backendSubjectChanged = Boolean(data.subject_changed && responseSubject !== subject);
       setTutoringState(data.tutoring_state);
@@ -566,6 +566,7 @@ export function LearningView({ student, accessToken = '', childId = '', initialS
         subject,
         topic: outgoingTopic,
         topicSource: outgoingTopicSource,
+        surfaceContext: 'start_learning',
         history: messages.slice(-4),
         tutoringState,
         threadId: thread?.id,

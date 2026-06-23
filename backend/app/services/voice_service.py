@@ -66,6 +66,7 @@ from ..tutoring_logic import (
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
     build_temporary_math_problem_reply,
+    detect_definition_intent,
     detect_action_intent,
     detect_off_subject_request,
     resolve_explicit_subject_switch,
@@ -346,7 +347,7 @@ def _is_locked_conceptual_math_state(state: TutoringState) -> bool:
 
 
 def _is_locked_student_arithmetic_state(state: TutoringState) -> bool:
-    return state.problem_kind in {'arithmetic_single_step', 'arithmetic_multi_step'}
+    return state.problem_kind in {'arithmetic_single_step', 'arithmetic_multi_step', 'opening_arithmetic'}
 
 
 def _tutor_practice_answer_reply(
@@ -724,6 +725,7 @@ class VoiceService:
         subject: str,
         topic: str = 'general practice',
         topic_source: str = 'manual',
+        surface_context: str = 'start_learning',
         history: list[ChatHistoryItem] | None = None,
         tutoring_state: TutoringState | None = None,
         thread_id: str | None = None,
@@ -755,7 +757,7 @@ class VoiceService:
 
         current_state = tutoring_state or TutoringState()
         transition_allowed = current_state.mode != 'safety_support' and current_state.emotional_support_mode != 'safety'
-        activity_subject = resolve_explicit_subject_switch(transcript) if transition_allowed else None
+        activity_subject = resolve_explicit_subject_switch(transcript) if transition_allowed and _allows_subject_switch(surface_context) else None
         activity_subject = activity_subject or subject
         activity_topic = topic if activity_subject == subject else 'general practice'
 
@@ -781,6 +783,7 @@ class VoiceService:
                 history=history or [],
                 tutoring_state=current_state,
                 thread_id=thread_id,
+                surface_context=surface_context,
             ),
         )
 
@@ -875,11 +878,33 @@ class VoiceService:
         history: list[ChatHistoryItem],
         tutoring_state: TutoringState,
         thread_id: str | None,
+        surface_context: str = 'start_learning',
     ) -> dict:
         transition_allowed = tutoring_state.mode != 'safety_support' and tutoring_state.emotional_support_mode != 'safety'
         resolved_subject = resolve_explicit_subject_switch(transcript) if transition_allowed else None
         prior_subject = tutoring_state.current_subject or subject
         subject_changed = bool(resolved_subject and (resolved_subject != subject or prior_subject != resolved_subject))
+        if resolved_subject and not _allows_subject_switch(surface_context):
+            final_state = tutoring_state.model_copy(update={
+                'current_subject': subject,
+                'student_answer': transcript,
+                'correctness_status': '',
+            })
+            return {
+                'assistant_text': _blocked_subject_switch_reply(subject),
+                'provider': 'local',
+                'model': 'deterministic-voice-subject-switch-blocked',
+                'fallback_used': False,
+                'tutoring_state': final_state,
+                'thread_id': thread_id,
+                'history_saved': False,
+                'history_error': None,
+                'resolved_topic': topic,
+                'topic_source': topic_source,
+                'assessed_level': None,
+                'resolved_subject': subject,
+                'subject_changed': False,
+            }
         if resolved_subject:
             subject = resolved_subject
             if subject_changed:
@@ -944,6 +969,8 @@ class VoiceService:
         student_arithmetic_task = StudentArithmeticTask()
         if subject == 'Math':
             student_arithmetic_task = parse_student_arithmetic_task(transcript)
+            if student_arithmetic_task.accepted:
+                effective_transcript = normalize_math_text(student_arithmetic_task.expression)
             if not student_arithmetic_task.accepted:
                 word_problem_interpreter = TutorWordProblemInterpreter()
                 word_problem_input = transcript
@@ -964,6 +991,9 @@ class VoiceService:
                     normalization = await TutorMathNormalizer().normalize_if_needed(subject, transcript, tutoring_state)
                     if normalization.normalized_expression:
                         effective_transcript = normalization.normalized_expression
+                        normalized_arithmetic_task = parse_student_arithmetic_task(effective_transcript)
+                        if normalized_arithmetic_task.accepted:
+                            student_arithmetic_task = normalized_arithmetic_task
 
         intent_assist = await TutorIntentClassifier().classify_if_needed(
             subject,
@@ -1297,6 +1327,7 @@ class VoiceService:
             next_state = apply_word_problem_state(tutoring_state, next_state, word_problem)
         student_arithmetic_started = bool(
             student_arithmetic_task.accepted
+            and student_arithmetic_task.question_type != 'arithmetic_multi_step'
             and not side_problem_active
             and not word_problem_started
             and (
@@ -1915,7 +1946,7 @@ class VoiceService:
             _has_active_student_math_flow(next_state)
             or next_state.problem_status == 'finished'
             or next_state.mode == 'awaiting_more_practice_choice'
-        ):
+        ) and not (intent_assist.label == 'related_question' and detect_definition_intent(effective_transcript)):
             final_state = preserve_attempt_progress(tutoring_state, next_state.model_copy(update={
                 'current_subject': subject,
                 'student_answer': transcript,
@@ -1944,8 +1975,8 @@ class VoiceService:
         formatted_reply = ensure_contextual_final_answer(formatted_reply, next_state)
         math_response_guard = TutorMathResponseGuard()
         math_guard_result = None
+        guard_state = final_state if special_local_reply else next_state
         if subject == 'Math':
-            guard_state = final_state if special_local_reply else next_state
             math_guard_result = math_response_guard.validate(
                 formatted_reply,
                 guard_state,
@@ -1953,7 +1984,10 @@ class VoiceService:
                 source=result_model,
             )
             formatted_reply = math_guard_result.text
-        if not special_local_reply and not (
+        guard_repaired = bool(math_guard_result and math_guard_result.repaired)
+        if not special_local_reply and guard_repaired:
+            final_state = guard_state
+        elif not special_local_reply and not (
             next_state.mode not in {'clarify_new_problem', 'resume_paused_problem_notice'}
             and not should_send_structured_roadmap
             and structured_progression
@@ -2127,6 +2161,22 @@ class VoiceService:
         if isinstance(subjects, str):
             return [subject for subject in ['Math', 'ELA', 'Writing'] if subject in subjects]
         return []
+
+
+def _allows_subject_switch(surface_context: str) -> bool:
+    return (surface_context or 'start_learning') == 'start_learning'
+
+
+def _blocked_subject_switch_reply(subject: str) -> str:
+    subject_label = {
+        'Math': 'Math',
+        'ELA': 'reading',
+        'Writing': 'writing',
+    }.get(subject, 'this subject')
+    return (
+        f"Right now we are in {subject_label} practice. "
+        "To switch subjects, go back to Start Learning and choose the subject you want."
+    )
 
 
 def parse_voice_json(value: str, fallback: Any) -> Any:

@@ -17,6 +17,7 @@ class MathNormalizationResult(BaseModel):
 
 class TutorMathNormalizer:
     WORD_MATH_MARKERS = (
+        'negative',
         'plus',
         'minus',
         'times',
@@ -165,6 +166,7 @@ class TutorMathNormalizer:
         )
         for old, new in replacements:
             normalized = re.sub(rf'\b{re.escape(old)}\b', new, normalized)
+        normalized = re.sub(r'(?<!\d)\bnegative\s+(-?\d+(?:\.\d+)?)', r'-\1', normalized)
 
         normalized = normalized.replace(',', ' ')
         normalized = normalized.replace('=', ' ')

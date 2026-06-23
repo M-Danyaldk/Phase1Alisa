@@ -5,6 +5,7 @@ from .curriculum import LAUNCH_GRADES
 
 Subject = Literal['Math', 'ELA', 'Writing']
 TopicSource = Literal['manual', 'default', 'assessment']
+TutorSurfaceContext = Literal['start_learning', 'math_tutor', 'reading_tutor', 'writing_tutor']
 
 class StudentProfile(BaseModel):
     id: Optional[int] = None
@@ -156,6 +157,7 @@ class ChatRequest(BaseModel):
     subject: Subject
     topic: str = 'general practice'
     topic_source: TopicSource = 'manual'
+    surface_context: TutorSurfaceContext = 'start_learning'
     message: str
     history: List[ChatHistoryItem] = Field(default_factory=list)
     tutoring_state: TutoringState = Field(default_factory=TutoringState)

@@ -8,6 +8,7 @@ from ..services.tutor_answer_checker import TutorAnswerChecker
 from ..services.tutor_progressive_hints import build_progressive_hint_reply
 from ..tutor_math_practice_bank import TutorMathPracticeQuestion
 from ..tutor_math_practice_support import student_matches_expected_practice_answer
+from ..tutoring_logic import detect_definition_intent
 from ..utils.task_lifecycle import complete_active_task, transition_to_task
 from ..utils.tutor_flow_alignment import build_aligned_tutor_practice_state
 from ..utils.tutor_response import contextual_unit_feedback, format_contextual_math_answer
@@ -130,8 +131,10 @@ def continuation_choice_intent(
 ) -> str:
     if state.mode != 'awaiting_more_practice_choice' or state.status != 'waiting_for_student':
         return ''
-    if intent_label == 'related_question':
+    if intent_label == 'related_question' and not detect_definition_intent(effective_message):
         return 'explain'
+    if intent_label == 'related_question' and detect_definition_intent(effective_message):
+        return ''
     base_choice = tutor_practice_choice_intent(state, effective_message, intent_label)
     if base_choice in {'yes', 'no'}:
         return base_choice
@@ -187,13 +190,14 @@ def math_fallback_reply(state: TutoringState) -> str:
         return 'Would you like another practice question, a quick explanation of the last one, or a new Math problem?'
     if question:
         return (
-            "Let's stay with the current Math problem one step at a time.\n\n"
+            "Here is the saved step to try.\n\n"
             f'{question}'
         )
     if problem:
         return (
-            "Let's stay with this Math problem one step at a time.\n\n"
-            f'**Problem:** {problem}'
+            "Here is the saved problem.\n\n"
+            f'**Problem:** {problem}\n\n'
+            'Send your next step or answer for this problem.'
         )
     return 'Send me the Math problem you want to work on, and I will help one step at a time.'
 
@@ -402,12 +406,27 @@ def tutor_practice_answer_reply(
 
     expected = state.expected_answer or local_check.expected_answer
     explanation = state.tutor_practice_explanation or f'The answer is {expected}.'
+    reveal_explanation = _ensure_explicit_expected_answer(explanation, expected)
     reply = (
         "Nice effort. Let's finish this one together.\n\n"
-        f"{display_question(explanation)}\n\n"
+        f"{display_question(reveal_explanation)}\n\n"
         "Would you like another practice question?"
     )
     return reply, finished_tutor_practice_state(state, student_answer, 'incorrect', expected, revealed=True)
+
+
+def _ensure_explicit_expected_answer(explanation: str, expected: str) -> str:
+    clean_explanation = str(explanation or '').strip()
+    clean_expected = str(expected or '').strip()
+    if not clean_expected:
+        return clean_explanation
+    compact_explanation = re.sub(r'\s+', '', clean_explanation).lower()
+    compact_expected = re.sub(r'\s+', '', clean_expected).lower()
+    if compact_expected and compact_expected in compact_explanation:
+        return clean_explanation
+    if not clean_explanation:
+        return f'The answer is {clean_expected}.'
+    return f'The answer is {clean_expected}.\n\n{clean_explanation}'
 
 
 def finished_tutor_practice_state(

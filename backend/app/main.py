@@ -94,6 +94,7 @@ from .tutoring_logic import (
     build_resume_paused_problem_reply,
     build_switch_confirmation_reply,
     build_temporary_math_problem_reply,
+    detect_definition_intent,
     detect_action_intent,
     detect_off_subject_request,
     resolve_explicit_subject_switch,
@@ -297,6 +298,25 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     resolved_subject = resolve_explicit_subject_switch(payload.message) if subject_transition_allowed else None
     prior_subject = payload.previous_subject or payload.tutoring_state.current_subject or payload.subject
     subject_changed = bool(resolved_subject and (resolved_subject != payload.subject or prior_subject != resolved_subject))
+    if resolved_subject and not _allows_subject_switch(payload.surface_context):
+        blocked_state = payload.tutoring_state.model_copy(update={
+            'current_subject': payload.subject,
+            'student_answer': payload.message,
+            'correctness_status': '',
+        })
+        return ChatResponse(
+            reply=_blocked_subject_switch_reply(payload.subject, payload.surface_context),
+            provider='local',
+            model='deterministic-subject-switch-blocked',
+            fallback_used=False,
+            tutoring_state=blocked_state,
+            thread_id=payload.thread_id,
+            history_saved=False,
+            resolved_topic=payload.topic,
+            topic_source=payload.topic_source,
+            resolved_subject=payload.subject,
+            subject_changed=False,
+        )
     if resolved_subject:
         transition_updates = {'subject': resolved_subject}
         if subject_changed:
@@ -377,6 +397,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         conceptual_math_task = parse_conceptual_math_task(payload.message)
         if not conceptual_math_task.accepted:
             student_arithmetic_task = parse_student_arithmetic_task(payload.message)
+            if student_arithmetic_task.accepted:
+                effective_message = normalize_math_text(student_arithmetic_task.expression)
         if not conceptual_math_task.accepted and not student_arithmetic_task.accepted:
             word_problem_interpreter = TutorWordProblemInterpreter()
             word_problem_input = payload.message
@@ -397,6 +419,9 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
                 normalization = await TutorMathNormalizer().normalize_if_needed(payload.subject, payload.message, payload.tutoring_state)
                 if normalization.normalized_expression:
                     effective_message = normalization.normalized_expression
+                    normalized_arithmetic_task = parse_student_arithmetic_task(effective_message)
+                    if normalized_arithmetic_task.accepted:
+                        student_arithmetic_task = normalized_arithmetic_task
 
     intent_assist = await TutorIntentClassifier().classify_if_needed(
         payload.subject,
@@ -763,6 +788,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     )
     student_arithmetic_started = bool(
         student_arithmetic_task.accepted
+        and student_arithmetic_task.question_type != 'arithmetic_multi_step'
         and not side_problem_active
         and not word_problem_started
         and not conceptual_math_started
@@ -812,6 +838,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         effective_message,
         conceptual_math_task,
     )
+    if opening_mixed_expression and _looks_like_multi_step_math_expression(opening_mixed_expression):
+        opening_mixed_expression = ''
     if direct_answer_check and direct_answer_check.status != 'unclear' and not matched_structured_step:
         tutoring_state = ensure_answer_attempt_registered(payload.tutoring_state, tutoring_state)
         direct_attempt_count = tutoring_state.attempt_count
@@ -1724,7 +1752,7 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
         _has_active_student_math_flow(tutoring_state)
         or tutoring_state.problem_status == 'finished'
         or tutoring_state.mode == 'awaiting_more_practice_choice'
-    ):
+    ) and not (intent_assist.label == 'related_question' and detect_definition_intent(effective_message)):
         next_state = preserve_attempt_progress(tutoring_state, tutoring_state.model_copy(update={
             'current_subject': payload.subject,
             'student_answer': payload.message,
@@ -1755,8 +1783,8 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
     formatted_reply = ensure_contextual_final_answer(formatted_reply, tutoring_state)
     math_response_guard = TutorMathResponseGuard()
     math_guard_result = None
+    guard_state = next_state if special_local_reply else tutoring_state
     if payload.subject == 'Math':
-        guard_state = next_state if special_local_reply else tutoring_state
         math_guard_result = math_response_guard.validate(
             formatted_reply,
             guard_state,
@@ -1764,7 +1792,10 @@ async def chat(payload: ChatRequest, authorization: str = Header(default=''), x_
             source=result_model,
         )
         formatted_reply = math_guard_result.text
-    if not special_local_reply and not (
+    guard_repaired = bool(math_guard_result and math_guard_result.repaired)
+    if not special_local_reply and guard_repaired:
+        next_state = guard_state
+    elif not special_local_reply and not (
         tutoring_state.mode not in {'clarify_new_problem', 'resume_paused_problem_notice'}
         and not should_send_structured_roadmap
         and structured_progression
@@ -2191,7 +2222,7 @@ def _is_locked_conceptual_math_state(state: TutoringState) -> bool:
 
 
 def _is_locked_student_arithmetic_state(state: TutoringState) -> bool:
-    return state.problem_kind in {'arithmetic_single_step', 'arithmetic_multi_step'}
+    return state.problem_kind in {'arithmetic_single_step', 'arithmetic_multi_step', 'opening_arithmetic'}
 
 
 def _should_grade_tutor_practice(state: TutoringState, intent_label: str) -> bool:
@@ -2670,6 +2701,20 @@ def _normalized_full_math_problem(text: str) -> str:
     return expression
 
 
+def _looks_like_multi_step_math_expression(text: str) -> bool:
+    expression = extract_math_expression(normalize_math_text(text)) or normalize_math_text(text)
+    compact = expression.replace(' ', '')
+    if not compact:
+        return False
+    operator_count = 0
+    for index, character in enumerate(compact):
+        if character in {'+', '*', '/'}:
+            operator_count += 1
+        elif character == '-' and index > 0 and compact[index - 1] not in '+-*/(':
+            operator_count += 1
+    return operator_count >= 2 or ('(' in compact and ')' in compact)
+
+
 def _normalize_math_match_text(text: str) -> str:
     normalized = normalize_math_text(text)
     expression = extract_math_expression(normalized) or normalized
@@ -2917,6 +2962,22 @@ def _child_safe_assessment_result(result: AssessmentResult) -> ChildAssessmentRe
 
 def _subject_label(subject: str) -> str:
     return 'Reading' if subject == 'ELA' else subject
+
+
+def _allows_subject_switch(surface_context: str) -> bool:
+    return (surface_context or 'start_learning') == 'start_learning'
+
+
+def _blocked_subject_switch_reply(subject: str, surface_context: str = '') -> str:
+    subject_label = {
+        'Math': 'Math',
+        'ELA': 'reading',
+        'Writing': 'writing',
+    }.get(subject, 'this subject')
+    return (
+        f"Right now we are in {subject_label} practice. "
+        "To switch subjects, go back to Start Learning and choose the subject you want."
+    )
 
 
 def _child_safe_performance_label(score_label: str | None) -> str:

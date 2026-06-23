@@ -1,5 +1,5 @@
 import { apiPost, apiPostForm } from '../api';
-import { ChatMessage, StudentProfile, Subject, TopicSource, TutoringState } from '../../types';
+import { ChatMessage, StudentProfile, Subject, TopicSource, TutorSurfaceContext, TutoringState } from '../../types';
 import { VoiceMessageResponse, VoiceNudgeResponse } from '../../types/voice';
 
 function authHeaders(accessToken: string): Record<string, string> {
@@ -14,6 +14,7 @@ export function sendVoiceMessage({
   subject,
   topic,
   topicSource,
+  surfaceContext = 'start_learning',
   history,
   tutoringState,
   threadId,
@@ -25,6 +26,7 @@ export function sendVoiceMessage({
   subject: Subject;
   topic: string;
   topicSource: TopicSource;
+  surfaceContext?: TutorSurfaceContext;
   history: ChatMessage[];
   tutoringState: TutoringState;
   threadId?: string | null;
@@ -36,6 +38,7 @@ export function sendVoiceMessage({
   payload.append('subject', subject);
   payload.append('topic', topic);
   payload.append('topic_source', topicSource);
+  payload.append('surface_context', surfaceContext);
   payload.append('history_json', JSON.stringify(history));
   payload.append('tutoring_state_json', JSON.stringify(tutoringState));
   if (threadId) payload.append('thread_id', threadId);

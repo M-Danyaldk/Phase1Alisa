@@ -69,6 +69,7 @@ def build_tutor_practice_support_reply(state: TutoringState, student_message: st
     question = state.current_question or state.current_step or state.active_problem
     text = ' '.join(str(student_message or '').lower().split())
     hint_given = state.hint_given
+    fraction_context = _fraction_context(state)
 
     progressive_help = (
         action_intent in {'hint', 'explain_again'}
@@ -99,13 +100,20 @@ def build_tutor_practice_support_reply(state: TutoringState, student_message: st
     elif 'denominator' in text and _looks_fraction_topic(state):
         reply = (
             "The denominator is the bottom number in a fraction.\n\n"
-            "It tells how many equal parts make the whole. In this question, the whole has 4 equal parts.\n\n"
+            f"It tells how many equal parts make the whole. {fraction_context['denominator_sentence']}\n\n"
             f"Now try the same question:\n\n{question}"
         )
     elif 'numerator' in text and _looks_fraction_topic(state):
         reply = (
             "The numerator is the top number in a fraction.\n\n"
-            "It tells how many parts we are talking about. In this question, we are talking about 1 part.\n\n"
+            f"It tells how many parts we are talking about. {fraction_context['numerator_sentence']}\n\n"
+            f"Now try the same question:\n\n{question}"
+        )
+    elif _asks_fraction_definition(text) and _looks_fraction_topic(state):
+        reply = (
+            "A fraction shows part of a whole or part of a group.\n\n"
+            "The top number tells how many parts we have, and the bottom number tells how many equal parts make the whole. "
+            f"{fraction_context['fraction_sentence']}\n\n"
             f"Now try the same question:\n\n{question}"
         )
     elif 'example' in text:
@@ -143,6 +151,74 @@ def _looks_fraction_topic(state: TutoringState) -> bool:
         state.active_problem,
     ]).lower()
     return 'fraction' in joined or '/' in joined
+
+
+def _asks_fraction_definition(text: str) -> bool:
+    if 'fraction' not in text and 'fractions' not in text:
+        return False
+    return bool(re.search(r'\b(what is|what are|what does|what means|define|meaning of)\b', text))
+
+
+def _fraction_context(state: TutoringState) -> dict[str, str]:
+    joined = ' '.join([
+        state.current_question,
+        state.current_step,
+        state.active_problem,
+        state.expected_answer,
+    ])
+    fractions = _fraction_parts(joined)
+    if fractions:
+        numerators = [num for num, _den in fractions]
+        denominators = [den for _num, den in fractions]
+        return {
+            'numerator_sentence': f"In this question, {_value_phrase('the numerator', 'the numerators', numerators)}.",
+            'denominator_sentence': f"In this question, {_value_phrase('the denominator', 'the denominators', denominators)}.",
+            'fraction_sentence': f"Here, the fraction parts are {_fraction_parts_phrase(fractions)}.",
+        }
+
+    out_of_match = re.search(r'\b(-?\d+)\s+parts?\s+out\s+of\s+(-?\d+)\s+equal\s+parts?\b', joined, flags=re.IGNORECASE)
+    if out_of_match:
+        numerator, denominator = out_of_match.groups()
+        return {
+            'numerator_sentence': f"In this question, the numerator is {numerator}.",
+            'denominator_sentence': f"In this question, the denominator is {denominator}.",
+            'fraction_sentence': f"Here, {numerator}/{denominator} means {numerator} part out of {denominator} equal parts.",
+        }
+
+    return {
+        'numerator_sentence': 'In your question, look above the fraction bar to find it.',
+        'denominator_sentence': 'In your question, look below the fraction bar to find it.',
+        'fraction_sentence': 'Look for the top and bottom numbers around the fraction bar in this question.',
+    }
+
+
+def _fraction_parts(text: str) -> list[tuple[str, str]]:
+    parts: list[tuple[str, str]] = []
+    for match in re.finditer(r'(?<!\d)(-?\d+)\s*/\s*(-?\d+)(?!\d)', str(text or '')):
+        numerator, denominator = match.groups()
+        if denominator != '0':
+            parts.append((numerator, denominator))
+    return parts
+
+
+def _value_phrase(single_label: str, plural_label: str, values: list[str]) -> str:
+    unique_values = list(dict.fromkeys(values))
+    if len(unique_values) == 1:
+        return f'{single_label} is {unique_values[0]}'
+    return f"{plural_label} are {_join_values(unique_values)}"
+
+
+def _fraction_parts_phrase(fractions: list[tuple[str, str]]) -> str:
+    unique = list(dict.fromkeys([f'{num}/{den}' for num, den in fractions]))
+    return _join_values(unique)
+
+
+def _join_values(values: list[str]) -> str:
+    if len(values) <= 1:
+        return values[0] if values else ''
+    if len(values) == 2:
+        return f'{values[0]} and {values[1]}'
+    return f"{', '.join(values[:-1])}, and {values[-1]}"
 
 
 def _looks_like_short_numeric_response(text: str) -> bool:
